@@ -1,0 +1,2 @@
+ALTER TABLE t_knowledge_chunk
+    ADD COLUMN IF NOT EXISTS token_count INTEGER NOT NULL DEFAULT 0;

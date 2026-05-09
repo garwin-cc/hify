@@ -1,0 +1,344 @@
+/* =============================================================================
+   Element Plus 变量覆盖
+   将 Hify 设计 Token 映射到 Element Plus 内部变量，
+   使所有 el-* 组件自动继承设计系统，无需逐个覆盖组件样式。
+   ============================================================================= */
+
+:root {
+
+  /* ---------------------------------------------------------------------------
+     主题色（Element Plus 从这里派生 hover / light-N / dark-2 变体）
+  --------------------------------------------------------------------------- */
+  --el-color-primary:        #4C6EF5;
+  --el-color-primary-dark-2: #3A5BE0;
+
+  /* light 变体：按 10% 步进与白色混合 */
+  --el-color-primary-light-1: #5E7DF6;
+  --el-color-primary-light-2: #708BF7;
+  --el-color-primary-light-3: #829AF8;
+  --el-color-primary-light-4: #94A8F9;
+  --el-color-primary-light-5: #A6B7FA;
+  --el-color-primary-light-6: #B7C5FB;
+  --el-color-primary-light-7: #C9D4FC;
+  --el-color-primary-light-8: #DBE2FD;
+  --el-color-primary-light-9: #EDF1FE;
+
+  /* 语义色 */
+  --el-color-success:        #22C55E;
+  --el-color-success-light-3:#86EFAC;
+  --el-color-success-light-5:#BBF7D0;
+  --el-color-success-light-7:#DCFCE7;
+  --el-color-success-light-9:#F0FDF4;
+  --el-color-success-dark-2: #16A34A;
+
+  --el-color-warning:        #F59E0B;
+  --el-color-warning-light-3:#FCD34D;
+  --el-color-warning-light-5:#FDE68A;
+  --el-color-warning-light-7:#FEF3C7;
+  --el-color-warning-light-9:#FFFBEB;
+  --el-color-warning-dark-2: #D97706;
+
+  --el-color-danger:         #EF4444;
+  --el-color-danger-light-3: #FCA5A5;
+  --el-color-danger-light-5: #FECACA;
+  --el-color-danger-light-7: #FEE2E2;
+  --el-color-danger-light-9: #FFF1F2;
+  --el-color-danger-dark-2:  #DC2626;
+
+  --el-color-info:           #8891AA;
+  --el-color-info-light-3:   #C4C7D8;
+  --el-color-info-light-5:   #D4D6E2;
+  --el-color-info-light-7:   #E4E6EF;
+  --el-color-info-light-9:   #F0F2F9;
+  --el-color-info-dark-2:    #6B7190;
+
+  /* ---------------------------------------------------------------------------
+     背景色
+  --------------------------------------------------------------------------- */
+  --el-bg-color:         #FFFFFF;
+  --el-bg-color-page:    #F7F8FC;
+  --el-bg-color-overlay: #FFFFFF;
+
+  /* ---------------------------------------------------------------------------
+     文字色
+  --------------------------------------------------------------------------- */
+  --el-text-color-primary:     #0E1018;
+  --el-text-color-regular:     #454A62;
+  --el-text-color-secondary:   #8891AA;
+  --el-text-color-placeholder: #B8BECF;
+  --el-text-color-disabled:    #B8BECF;
+
+  /* ---------------------------------------------------------------------------
+     边框
+  --------------------------------------------------------------------------- */
+  --el-border-color:            #E2E5EF;
+  --el-border-color-light:      #EDF0F7;
+  --el-border-color-lighter:    #F0F2F9;
+  --el-border-color-extra-light:#F7F8FC;
+  --el-border-color-dark:       #C8CCE0;
+  --el-border-color-darker:     #B0B5CC;
+
+  /* ---------------------------------------------------------------------------
+     填充色（输入框、下拉等组件的背景）
+  --------------------------------------------------------------------------- */
+  --el-fill-color:         #F7F8FC;
+  --el-fill-color-light:   #F0F2F9;
+  --el-fill-color-lighter: #FAFBFD;
+  --el-fill-color-blank:   #FFFFFF;
+  --el-fill-color-dark:    #E4E8F2;
+  --el-fill-color-darker:  #D8DCF0;
+
+  /* ---------------------------------------------------------------------------
+     圆角（对齐 Hify tokens）
+  --------------------------------------------------------------------------- */
+  --el-border-radius-base:  6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-large: 8px;
+  --el-border-radius-round: 9999px;
+
+  /* ---------------------------------------------------------------------------
+     阴影
+  --------------------------------------------------------------------------- */
+  --el-box-shadow:        0 4px 8px  rgba(14, 16, 24, 0.08), 0 2px 4px rgba(14, 16, 24, 0.04);
+  --el-box-shadow-light:  0 1px 3px  rgba(14, 16, 24, 0.08), 0 1px 2px rgba(14, 16, 24, 0.04);
+  --el-box-shadow-lighter:0 1px 2px  rgba(14, 16, 24, 0.04);
+  --el-box-shadow-dark:   0 8px 24px rgba(14, 16, 24, 0.10), 0 4px 8px  rgba(14, 16, 24, 0.04);
+
+  /* ---------------------------------------------------------------------------
+     字体
+  --------------------------------------------------------------------------- */
+  --el-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                    system-ui, sans-serif;
+  --el-font-size-extra-large: 18px;
+  --el-font-size-large:       16px;
+  --el-font-size-medium:      15px;
+  --el-font-size-base:        14px;
+  --el-font-size-small:       13px;
+  --el-font-size-extra-small: 12px;
+
+  /* ---------------------------------------------------------------------------
+     动效
+  --------------------------------------------------------------------------- */
+  --el-transition-duration:      200ms;
+  --el-transition-duration-fast: 120ms;
+  --el-transition-function-ease-in-out-bezier: cubic-bezier(0.16, 1, 0.3, 1);
+  --el-transition-function-fast-bezier:        cubic-bezier(0.16, 1, 0.3, 1);
+  --el-transition-all:   all 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  --el-transition-color: color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ---------------------------------------------------------------------------
+     组件尺寸（保持 Element Plus 默认，略微调整以适应密集管理界面）
+  --------------------------------------------------------------------------- */
+  --el-component-size:       32px;   /* default：与 Linear 等一致 */
+  --el-component-size-large: 40px;
+  --el-component-size-small: 24px;
+
+  /* ---------------------------------------------------------------------------
+     Disabled 态（统一用 muted 背景 + disabled 文字色）
+  --------------------------------------------------------------------------- */
+  --el-disabled-bg-color:      #F0F2F9;
+  --el-disabled-border-color:  #E4E8F2;
+  --el-disabled-text-color:    #B8BECF;
+
+  /* ---------------------------------------------------------------------------
+     遮罩
+  --------------------------------------------------------------------------- */
+  --el-overlay-color:       rgba(13, 17, 23, 0.50);
+  --el-overlay-color-light: rgba(13, 17, 23, 0.30);
+  --el-overlay-color-lighter: rgba(13, 17, 23, 0.10);
+
+}
+
+/* ---------------------------------------------------------------------------
+   表格行 hover & stripe（Element Plus 默认是纯白，替换为 bg-subtle）
+--------------------------------------------------------------------------- */
+.el-table td.el-table__cell {
+  transition: background-color 120ms ease;
+}
+.el-table tr:hover > td.el-table__cell {
+  background-color: var(--bg-subtle) !important;
+}
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background-color: var(--color-bg-secondary);
+}
+.el-table th.el-table__cell {
+  background-color: var(--color-bg-secondary);
+  color: var(--text-secondary);
+  font-weight: var(--font-semibold);
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+}
+
+/* ---------------------------------------------------------------------------
+   按钮 — 主要操作：蓝紫渐变
+--------------------------------------------------------------------------- */
+.el-button--primary {
+  background: linear-gradient(135deg, #2C48C4 0%, #4C6EF5 55%, #0891B2 100%);
+  border-color: transparent !important;
+  font-weight: var(--font-medium);
+  letter-spacing: 0.01em;
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: linear-gradient(135deg, #1E30A0 0%, #3A5BE0 55%, #0E7490 100%);
+  border-color: transparent !important;
+  box-shadow: var(--shadow-glow-primary);
+}
+.el-button--primary:active {
+  background: linear-gradient(135deg, #121F77 0%, #2C48C4 55%, #155E75 100%);
+  border-color: transparent !important;
+}
+.el-button--primary.is-disabled,
+.el-button--primary:disabled {
+  background: linear-gradient(135deg, #829AF8 0%, #94A8F9 100%) !important;
+  border-color: transparent !important;
+  opacity: 0.65;
+  box-shadow: none;
+}
+
+/* 次要操作：白底 + 边框，hover 时边框变主色 */
+.el-button--default:not(.is-text):not(.is-link):not(.is-plain) {
+  background: var(--bg-surface);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+  font-weight: var(--font-medium);
+}
+.el-button--default:not(.is-text):not(.is-link):not(.is-plain):hover,
+.el-button--default:not(.is-text):not(.is-link):not(.is-plain):focus {
+  background: var(--bg-subtle);
+  border-color: var(--color-primary-300);
+  color: var(--color-primary);
+}
+.el-button--default:not(.is-text):not(.is-link):not(.is-plain):active {
+  background: var(--color-primary-50);
+  border-color: var(--color-primary);
+  color: var(--color-primary-700);
+}
+
+/* 危险操作：红色（Element Plus danger 色已覆盖，这里加 hover 光晕） */
+.el-button--danger:hover,
+.el-button--danger:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+/* ---------------------------------------------------------------------------
+   输入框焦点环
+--------------------------------------------------------------------------- */
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--color-primary) inset, var(--shadow-focus) !important;
+}
+
+/* ---------------------------------------------------------------------------
+   标签（Tag）— 使用设计系统圆角
+--------------------------------------------------------------------------- */
+.el-tag {
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: var(--font-medium);
+  letter-spacing: 0.02em;
+}
+
+/* ---------------------------------------------------------------------------
+   菜单（侧边栏）— 配合 tokens 中 sidebar-* 变量
+--------------------------------------------------------------------------- */
+.el-menu-item.is-active {
+  background-color: var(--sidebar-active) !important;
+  border-radius: var(--radius-md);
+}
+
+/* ---------------------------------------------------------------------------
+   对话框圆角
+--------------------------------------------------------------------------- */
+.el-dialog {
+  border-radius: var(--radius-xl) !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+.el-dialog__header {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: var(--space-4);
+  margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   下拉菜单
+--------------------------------------------------------------------------- */
+.el-dropdown-menu {
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+  border-color: var(--border-color-light) !important;
+  padding: var(--space-1) !important;
+}
+.el-dropdown-menu__item {
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+}
+
+/* ---------------------------------------------------------------------------
+   Pagination
+--------------------------------------------------------------------------- */
+.el-pagination button,
+.el-pagination .el-pager li {
+  border-radius: var(--radius-sm);
+}
+
+/* ---------------------------------------------------------------------------
+   Card
+--------------------------------------------------------------------------- */
+.el-card {
+  border-radius: var(--radius-lg) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.el-card__header {
+  border-bottom-color: var(--border-color) !important;
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+
+/* =============================================================================
+   页面布局工具类（配合 PageHeader 组件使用）
+   用法：<div class="page-content"> ... </div>
+   ============================================================================= */
+
+/* 页面内容容器：统一 24px 内边距，撑满高度 */
+.page-content {
+  padding: var(--page-padding);
+  min-height: 100%;
+}
+
+/* 内容卡片：白底 + 轻阴影 + 圆角，浮于 --color-bg-secondary 之上 */
+.hify-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color-light);
+  box-shadow: var(--shadow-sm);
+  padding: var(--card-padding);
+}
+.hify-card + .hify-card {
+  margin-top: var(--element-gap);
+}
+
+/* 无内边距变体（用于表格卡片，表格自带边距） */
+.hify-card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+.hify-card--flush .el-table {
+  border-radius: 0;
+}
+
+/* 卡片内部分区 */
+.hify-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--element-gap);
+  margin-bottom: var(--element-gap);
+  border-bottom: 1px solid var(--border-color-light);
+}
+.hify-card__title {
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}

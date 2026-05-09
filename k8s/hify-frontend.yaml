@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hify-frontend
+  labels:
+    app: hify-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hify-frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: hify-frontend
+    spec:
+      containers:
+        - name: hify-frontend
+          image: hify-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: BACKEND_HOST
+              value: hify-backend
+            - name: BACKEND_PORT
+              value: "8080"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hify-frontend
+  labels:
+    app: hify-frontend
+spec:
+  type: NodePort
+  selector:
+    app: hify-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080

@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hify-backend-config
+  labels:
+    app: hify-backend
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/hify?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true"
+  SPRING_DATA_REDIS_HOST: "redis"
+  SPRING_DATA_REDIS_PORT: "6379"
+  SPRING_DATA_REDIS_DATABASE: "0"
+  HIFY_POSTGRES_URL: "jdbc:postgresql://postgres:5432/hify_vector"
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hify-backend-secret
+  labels:
+    app: hify-backend
+type: Opaque
+stringData:
+  SPRING_DATASOURCE_USERNAME: "hify"
+  SPRING_DATASOURCE_PASSWORD: "change-me"
+  SPRING_DATA_REDIS_PASSWORD: "change-me"
+  HIFY_POSTGRES_USERNAME: "hify"
+  HIFY_POSTGRES_PASSWORD: "change-me"
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  GEMINI_API_KEY: ""
+  DASHSCOPE_API_KEY: ""
+  DEEPSEEK_API_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hify-backend
+  labels:
+    app: hify-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hify-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: hify-backend
+    spec:
+      containers:
+        - name: hify-backend
+          image: hify-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: hify-backend-config
+            - secretRef:
+                name: hify-backend-secret
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: uploads
+              mountPath: /app/upload
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: uploads
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hify-backend
+  labels:
+    app: hify-backend
+spec:
+  type: ClusterIP
+  selector:
+    app: hify-backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

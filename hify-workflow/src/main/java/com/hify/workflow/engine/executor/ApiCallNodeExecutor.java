@@ -1,0 +1,54 @@
+package com.hify.workflow.engine.executor;
+
+import com.hify.common.exception.BizException;
+import com.hify.common.exception.ErrorCode;
+import com.hify.common.http.LlmHttpClient;
+import com.hify.workflow.engine.ExecutionContext;
+import com.hify.workflow.engine.NodeConfigDef;
+import com.hify.workflow.engine.WorkflowNode;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+
+@Component
+@RequiredArgsConstructor
+public class ApiCallNodeExecutor extends AbstractNodeExecutor implements NodeExecutor {
+
+    private final LlmHttpClient llmHttpClient;
+
+    @Override
+    public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
+        try {
+            ApiCallConfig apiConfig = requireConfig(config, ApiCallConfig.class);
+            String url = ctx.resolve(apiConfig.url());
+            Map<String, String> headers = resolveHeaders(apiConfig.headers(), ctx);
+            String method = apiConfig.method() == null ? "GET" : apiConfig.method().toUpperCase(Locale.ROOT);
+            String response = switch (method) {
+                case "GET" -> llmHttpClient.get(url, headers, 60);
+                case "POST" -> llmHttpClient.post(url, headers, "{}");
+                default -> throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                        "API_CALL 暂只支持 GET/POST: " + method);
+            };
+            ctx.set(node.nodeKey(), outputVariable(apiConfig.outputVariable()), response);
+        } catch (Exception e) {
+            throw toExecuteException(node, e);
+        }
+    }
+
+    @Override
+    public String nodeType() {
+        return "API_CALL";
+    }
+
+    private Map<String, String> resolveHeaders(Map<String, String> headers, ExecutionContext ctx) {
+        if (headers == null || headers.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> resolved = new LinkedHashMap<>();
+        headers.forEach((key, value) -> resolved.put(key, ctx.resolve(value)));
+        return resolved;
+    }
+}

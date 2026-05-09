@@ -1,0 +1,4 @@
+interface:
+  display_name: "Service Unit Test"
+  short_description: "Plan and implement Service method unit tests with path analysis."
+  default_prompt: "/单测 <ServiceClass.method>: analyze paths, propose plan, confirm, implement tests, and verify."

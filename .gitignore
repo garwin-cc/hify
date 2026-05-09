@@ -1,0 +1,31 @@
+target/
+node_modules/
+dist/
+.next/
+*.class
+*.jar
+*.war
+
+.idea/
+*.iml
+.vscode/
+*.DS_Store
+
+# 环境配置（含 API Key，禁止提交）
+**/application-local.yml
+**/.env
+
+# p6spy 日志
+spy.log
+
+# 运行期文件
+logs/
+*.log
+*.pid
+hify-app/logs/
+hify-app/upload/
+
+# 前端缓存
+hify-web/node_modules/
+hify-web/dist/
+hify-web/.vite/

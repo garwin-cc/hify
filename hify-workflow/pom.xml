@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hify</groupId>
+        <artifactId>hify</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>hify-workflow</artifactId>
+    <name>Hify :: Workflow</name>
+    <description>简版工作流：顺序节点执行（开始→LLM→条件分支→工具调用→结束），JSON 配置驱动</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-common</artifactId>
+        </dependency>
+
+        <!-- 工作流节点执行需要 Agent 配置（系统提示词、模型绑定） -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-agent</artifactId>
+        </dependency>
+
+        <!-- LLM 节点：直接调用模型执行生成任务 -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-model</artifactId>
+        </dependency>
+
+        <!-- 工具调用节点：调用 MCP 工具 -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-mcp</artifactId>
+        </dependency>
+
+        <!-- 知识库节点：检索 RAG 分块 -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-knowledge</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

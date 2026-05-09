@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hify</groupId>
+        <artifactId>hify</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>hify-conversation</artifactId>
+    <name>Hify :: Conversation</name>
+    <description>对话引擎：多轮对话、SSE 流式响应、历史记录、上下文管理</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-common</artifactId>
+        </dependency>
+
+        <!--
+            对话时需要加载 Agent 配置（系统提示词、绑定模型等）。
+            通过 hify-agent 的 api/ 接口获取，transitive 带入 model/mcp/knowledge。
+        -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-agent</artifactId>
+        </dependency>
+
+        <!--
+            直接调用 LLM：发起流式或非流式请求。
+            对话是唯一直接驱动 LLM 调用的业务模块。
+        -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-model</artifactId>
+        </dependency>
+
+        <!-- MCP 工具调用：对话中执行 Agent 绑定的工具 -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-mcp</artifactId>
+        </dependency>
+
+        <!-- RAG 检索：根据用户输入查知识库，注入 LLM 上下文 -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-knowledge</artifactId>
+        </dependency>
+
+        <!-- Agent 绑定工作流后，对话入口触发同步工作流执行 -->
+        <dependency>
+            <groupId>com.hify</groupId>
+            <artifactId>hify-workflow</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,239 @@
+/* =============================================================================
+   Hify Design System — CSS Custom Properties
+   参考：Linear、Supabase
+   风格：浅底 + 科技感（蓝紫主色 + 青色辅色 + 深色侧边栏）
+   ============================================================================= */
+
+:root {
+
+  /* ---------------------------------------------------------------------------
+     Primary — 蓝靛色（科技感主色，用于按钮、链接、焦点环、活跃状态）
+     Base: #4C6EF5  HSL(230°, 90%, 59%)
+  --------------------------------------------------------------------------- */
+  --color-primary-50:  #EDF1FE;
+  --color-primary-100: #DBE2FD;
+  --color-primary-200: #C9D4FC;
+  --color-primary-300: #94A8F9;
+  --color-primary-400: #7A97F8;   /* hover 亮色变体 */
+  --color-primary-500: #4C6EF5;   /* ★ 品牌主色 */
+  --color-primary-600: #3A5BE0;   /* hover 深色 */
+  --color-primary-700: #2C48C4;   /* pressed */
+  --color-primary-800: #1E30A0;
+  --color-primary-900: #121F77;
+
+  /* 语义别名 */
+  --color-primary:         var(--color-primary-500);
+  --color-primary-hover:   var(--color-primary-600);
+  --color-primary-active:  var(--color-primary-700);
+  --color-primary-subtle:  var(--color-primary-50);
+  --color-primary-muted:   var(--color-primary-100);
+
+  /* ---------------------------------------------------------------------------
+     Secondary — 青色（数据状态、徽标、辅助强调）
+     Base: #06B6D4  HSL(189°, 94%, 43%)
+  --------------------------------------------------------------------------- */
+  --color-cyan-50:  #ECFEFF;
+  --color-cyan-100: #CFFAFE;
+  --color-cyan-200: #A5F3FC;
+  --color-cyan-300: #67E8F9;
+  --color-cyan-400: #22D3EE;
+  --color-cyan-500: #06B6D4;   /* ★ 辅助主色 */
+  --color-cyan-600: #0891B2;
+  --color-cyan-700: #0E7490;
+  --color-cyan-800: #155E75;
+  --color-cyan-900: #164E63;
+
+  --color-secondary:        var(--color-cyan-500);
+  --color-secondary-hover:  var(--color-cyan-600);
+  --color-secondary-subtle: var(--color-cyan-50);
+  --color-secondary-muted:  var(--color-cyan-100);
+
+  /* ---------------------------------------------------------------------------
+     全局深色背景（用于侧边栏、代码块等深色区域）
+     #0D1117 = 接近纯黑但带极轻蓝调，比纯黑更有层次感
+  --------------------------------------------------------------------------- */
+  --color-bg-dark:         #0D1117;
+  --color-bg-dark-raised:  #161B27;   /* 深色背景上的悬浮层 */
+  --color-bg-dark-active:  #1C2235;   /* 深色背景上的激活态 */
+
+  /* ---------------------------------------------------------------------------
+     Sidebar — 深色导航（深海军蓝，带轻微蓝调）
+  --------------------------------------------------------------------------- */
+  --sidebar-bg:            #0D1117;
+  --sidebar-hover:         #161B27;
+  --sidebar-active:        #1C2235;
+  --sidebar-border:        rgba(255, 255, 255, 0.06);
+  --sidebar-text:          #8B90A7;
+  --sidebar-text-hover:    #C4C7D8;
+  --sidebar-text-active:   #FFFFFF;
+  --sidebar-icon:          #636880;
+  --sidebar-icon-active:   #7A97F8;   /* primary-400，深底上更亮 */
+  --sidebar-section-title: #545870;
+  --sidebar-width:         220px;
+
+  /* ---------------------------------------------------------------------------
+     Background — 内容区（浅色系，带极轻蓝调，避免纯白的单调感）
+  --------------------------------------------------------------------------- */
+  --bg-app:            #F7F8FC;   /* 整体底色 */
+  --bg-surface:        #FFFFFF;   /* 卡片、面板 */
+  --bg-elevated:       #FFFFFF;   /* 弹窗、悬浮层（依靠阴影区分层级） */
+  --bg-subtle:         #F0F2F9;   /* 表格斑马纹、hover 状态 */
+  --bg-muted:          #E4E8F2;   /* 禁用态、骨架屏 */
+  --bg-overlay:        rgba(13, 17, 23, 0.50);  /* 模态蒙层 */
+  --color-bg-secondary:#F0F3F9;   /* 页面内容区底色（卡片浮于其上） */
+
+  /* ---------------------------------------------------------------------------
+     Layout 尺寸与间距
+  --------------------------------------------------------------------------- */
+  --topbar-height: 52px;
+  --page-padding:  24px;
+  --card-padding:  20px;
+  --element-gap:   16px;
+
+  /* ---------------------------------------------------------------------------
+     Text — 文字层级（配合浅底，保证足够对比度）
+  --------------------------------------------------------------------------- */
+  --text-primary:   #0E1018;   /* 标题、正文重要内容   对比度 ≥ 12:1 */
+  --text-secondary: #454A62;   /* 次要文字、标签        对比度 ≥ 7:1  */
+  --text-tertiary:  #8891AA;   /* 占位符、辅助说明     对比度 ≥ 4.5:1 */
+  --text-disabled:  #B8BECF;   /* 禁用态 */
+  --text-link:      var(--color-primary);
+  --text-link-hover: var(--color-primary-hover);
+  --text-inverse:   #FFFFFF;   /* 深底上的文字 */
+  --text-on-primary: #FFFFFF;  /* 主色按钮上的文字 */
+
+  /* ---------------------------------------------------------------------------
+     Border
+  --------------------------------------------------------------------------- */
+  --border-color:       #E2E5EF;   /* 默认边框（输入框、卡片分割线） */
+  --border-color-light: #EDF0F7;   /* 更轻的分割线 */
+  --border-color-strong:#C8CCE0;   /* 强调边框 */
+  --border-color-focus: var(--color-primary);  /* 焦点边框 */
+
+  /* ---------------------------------------------------------------------------
+     Semantic Colors — 状态语义色
+  --------------------------------------------------------------------------- */
+  /* Success */
+  --color-success:       #22C55E;
+  --color-success-bg:    #F0FDF4;
+  --color-success-border:#BBF7D0;
+  --color-success-text:  #15803D;
+
+  /* Warning */
+  --color-warning:       #F59E0B;
+  --color-warning-bg:    #FFFBEB;
+  --color-warning-border:#FDE68A;
+  --color-warning-text:  #B45309;
+
+  /* Error / Danger */
+  --color-error:         #EF4444;
+  --color-error-bg:      #FFF1F2;
+  --color-error-border:  #FECACA;
+  --color-error-text:    #DC2626;
+
+  /* Info（复用 cyan） */
+  --color-info:          var(--color-cyan-500);
+  --color-info-bg:       var(--color-cyan-50);
+  --color-info-border:   var(--color-cyan-200);
+  --color-info-text:     var(--color-cyan-700);
+
+  /* ---------------------------------------------------------------------------
+     Typography
+  --------------------------------------------------------------------------- */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+               system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code",
+               ui-monospace, "Courier New", monospace;
+
+  /* Font sizes（管理后台偏密集，base 用 14px） */
+  --text-xs:   11px;
+  --text-sm:   12px;
+  --text-base: 14px;   /* ★ 默认正文 */
+  --text-md:   15px;
+  --text-lg:   16px;
+  --text-xl:   18px;
+  --text-2xl:  20px;
+  --text-3xl:  24px;
+  --text-4xl:  30px;
+
+  /* Line heights */
+  --leading-tight:  1.25;
+  --leading-snug:   1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed:1.625;
+
+  /* Font weights */
+  --font-normal:   400;
+  --font-medium:   500;
+  --font-semibold: 600;
+  --font-bold:     700;
+
+  /* ---------------------------------------------------------------------------
+     Spacing（8px 基础网格）
+  --------------------------------------------------------------------------- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ---------------------------------------------------------------------------
+     Border Radius
+  --------------------------------------------------------------------------- */
+  --radius-xs:   3px;
+  --radius-sm:   4px;
+  --radius-md:   6px;    /* 默认：输入框、按钮、小卡片 */
+  --radius-lg:   8px;    /* 卡片、下拉 */
+  --radius-xl:   12px;   /* 大卡片、对话框 */
+  --radius-2xl:  16px;
+  --radius-full: 9999px; /* 标签、徽标、胶囊按钮 */
+
+  /* ---------------------------------------------------------------------------
+     Shadows（色调偏蓝，与整体色系统一）
+  --------------------------------------------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(14, 16, 24, 0.04);
+  --shadow-sm: 0 1px 3px rgba(14, 16, 24, 0.08),
+               0 1px 2px rgba(14, 16, 24, 0.04);
+  --shadow-md: 0 4px 8px rgba(14, 16, 24, 0.08),
+               0 2px 4px rgba(14, 16, 24, 0.04);
+  --shadow-lg: 0 8px 24px rgba(14, 16, 24, 0.10),
+               0 4px 8px  rgba(14, 16, 24, 0.04);
+  --shadow-xl: 0 20px 40px rgba(14, 16, 24, 0.12),
+               0 8px  16px rgba(14, 16, 24, 0.06);
+
+  /* 焦点环 & 科技感光晕（用于 focus-visible、激活状态） */
+  --shadow-focus:        0 0 0 3px rgba(76, 110, 245, 0.20);
+  --shadow-focus-error:  0 0 0 3px rgba(239, 68,  68,  0.20);
+  --shadow-glow-primary: 0 4px 16px rgba(76, 110, 245, 0.30);
+  --shadow-glow-cyan:    0 4px 16px rgba(6,  182, 212, 0.25);
+
+  /* ---------------------------------------------------------------------------
+     Transitions（ease-out-expo 曲线：快起慢收，给人"响应即时"的感觉）
+  --------------------------------------------------------------------------- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);  /* 轻弹簧，hover 微放大 */
+
+  --transition-fast:   120ms var(--ease-out-expo);   /* icon 变色、checkbox */
+  --transition-base:   200ms var(--ease-out-expo);   /* 按钮 hover、下拉展开 */
+  --transition-slow:   350ms var(--ease-out-expo);   /* 侧边栏折叠、页面切换 */
+  --transition-spring: 300ms var(--ease-spring);     /* 卡片弹出、toast */
+
+  /* ---------------------------------------------------------------------------
+     Z-index 层级
+  --------------------------------------------------------------------------- */
+  --z-base:     0;
+  --z-raised:   10;
+  --z-dropdown: 100;
+  --z-sticky:   200;
+  --z-overlay:  300;
+  --z-modal:    400;
+  --z-toast:    500;
+  --z-tooltip:  600;
+
+}

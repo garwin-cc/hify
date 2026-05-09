@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hify-backend-config
+  labels:
+    app: hify-backend
+data:
+  MYSQL_HOST: "mysql"
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "hify"
+  SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/hify?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true"
+
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  SPRING_DATA_REDIS_HOST: "redis"
+  SPRING_DATA_REDIS_PORT: "6379"
+  SPRING_DATA_REDIS_DATABASE: "0"
+
+  PGVECTOR_HOST: "postgres"
+  PGVECTOR_PORT: "5432"
+  PGVECTOR_DATABASE: "hify_vector"
+  HIFY_POSTGRES_URL: "jdbc:postgresql://postgres:5432/hify_vector"
+

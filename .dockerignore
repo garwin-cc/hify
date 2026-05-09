@@ -1,0 +1,13 @@
+.git
+.gitignore
+*.md
+.idea/
+.vscode/
+*.iml
+*.iws
+logs/
+docker/
+docker-compose.yml
+.env
+# 排除各模块 target/，在镜像内重新构建
+**/target/

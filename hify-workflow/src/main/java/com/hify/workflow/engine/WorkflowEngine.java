@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
+import com.hify.common.http.LlmApiException;
 import com.hify.workflow.domain.WorkflowEdgePo;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
@@ -37,6 +38,8 @@ public class WorkflowEngine {
     private static final String STATUS_RUNNING = "RUNNING";
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED = "FAILED";
+    private static final String STATUS_TIMEOUT = "TIMEOUT";
+    private static final String RUN_MODE_SYNC = "SYNC";
     private static final int MAX_STEPS = 50;
 
     private final WorkflowNodeMapper workflowNodeMapper;
@@ -48,13 +51,25 @@ public class WorkflowEngine {
     private final ObjectMapper objectMapper;
 
     public String execute(Long workflowId, String userMessage) {
+        WorkflowRunPo workflowRun = createWorkflowRun(workflowId, userMessage, RUN_MODE_SYNC, null);
+        return executeRun(workflowRun, workflowId, userMessage);
+    }
+
+    public String executeExistingRun(Long workflowRunId, Long workflowId, String userMessage) {
+        WorkflowRunPo workflowRun = workflowRunMapper.selectById(workflowRunId);
+        if (workflowRun == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + workflowRunId);
+        }
+        return executeRun(workflowRun, workflowId, userMessage);
+    }
+
+    private String executeRun(WorkflowRunPo workflowRun, Long workflowId, String userMessage) {
         long startedAt = System.currentTimeMillis();
         List<WorkflowNodePo> nodes = loadNodes(workflowId);
         List<WorkflowEdgePo> edges = loadEdges(workflowId);
         Map<String, WorkflowNodePo> nodeMap = toNodeMap(nodes);
         Map<String, List<WorkflowEdgePo>> edgeMap = toEdgeMap(edges);
         WorkflowNodePo startNode = requireStartNode(nodes);
-        WorkflowRunPo workflowRun = createWorkflowRun(workflowId, userMessage);
         ExecutionContext ctx = new ExecutionContext(workflowRun.getId(), userMessage);
 
         try {
@@ -66,10 +81,12 @@ public class WorkflowEngine {
                     throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED,
                             "工作流执行步数超过 " + MAX_STEPS + "，可能存在循环配置");
                 }
+                checkTimeout(workflowRun);
                 WorkflowNodePo current = nodeMap.get(currentKey);
                 if (current == null) {
                     throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "目标节点不存在: " + currentKey);
                 }
+                updateWorkflowRunCurrentNode(workflowRun, currentKey);
                 WorkflowNodeRunPo nodeRun = createNodeRun(workflowRun.getId(), current);
                 long nodeStartedAt = System.currentTimeMillis();
 
@@ -83,6 +100,7 @@ public class WorkflowEngine {
                         NodeConfigDef config = nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
                         nodeExecutorRegistry.get(current.getNodeType()).execute(toEngineNode(current), config, ctx);
                     }
+                    checkTimeout(workflowRun);
                     updateNodeRunSuccess(nodeRun, ctx, nodeStartedAt);
                     currentKey = findNext(current, edgeMap, ctx);
                 } catch (Exception e) {
@@ -174,17 +192,28 @@ public class WorkflowEngine {
         return new WorkflowNode(po.getNodeKey(), po.getNodeType(), po.getName());
     }
 
-    private WorkflowRunPo createWorkflowRun(Long workflowId, String userMessage) {
+    public WorkflowRunPo createWorkflowRun(Long workflowId, String userMessage, String runMode, LocalDateTime timeoutAt) {
         WorkflowRunPo po = new WorkflowRunPo();
         po.setWorkflowId(workflowId);
         po.setStatus(STATUS_RUNNING);
         po.setInput(userMessage);
+        po.setRunMode(StringUtils.hasText(runMode) ? runMode : RUN_MODE_SYNC);
+        po.setTimeoutAt(timeoutAt);
         try {
             workflowRunMapper.insert(po);
         } catch (Exception e) {
             log.warn("failed to create workflow run record workflowId={}: {}", workflowId, e.getMessage());
         }
         return po;
+    }
+
+    private void updateWorkflowRunCurrentNode(WorkflowRunPo po, String currentNodeKey) {
+        po.setCurrentNodeKey(currentNodeKey);
+        try {
+            workflowRunMapper.updateById(po);
+        } catch (Exception e) {
+            log.warn("failed to update workflow run current node id={}: {}", po.getId(), e.getMessage());
+        }
     }
 
     private WorkflowNodeRunPo createNodeRun(Long workflowRunId, WorkflowNodePo node) {
@@ -239,7 +268,7 @@ public class WorkflowEngine {
     }
 
     private void updateWorkflowRunFailed(WorkflowRunPo po, Exception exception, long startedAt) {
-        po.setStatus(STATUS_FAILED);
+        po.setStatus(isTimeout(exception) ? STATUS_TIMEOUT : STATUS_FAILED);
         po.setError(shortError(exception));
         po.setElapsedMs(elapsed(startedAt));
         po.setFinishedAt(LocalDateTime.now());
@@ -248,6 +277,28 @@ public class WorkflowEngine {
         } catch (Exception e) {
             log.warn("failed to update workflow run failed id={}: {}", po.getId(), e.getMessage());
         }
+    }
+
+    private void checkTimeout(WorkflowRunPo po) {
+        if (po.getTimeoutAt() != null && LocalDateTime.now().isAfter(po.getTimeoutAt())) {
+            throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED, "工作流执行超时");
+        }
+    }
+
+    private boolean isTimeout(Exception exception) {
+        Throwable current = exception;
+        while (current != null) {
+            if (current instanceof LlmApiException llmApiException
+                    && llmApiException.getType() == LlmApiException.Type.TIMEOUT) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null && (message.contains("工作流执行超时") || message.contains("LLM 请求超时"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private String toJson(Map<String, Object> value) {

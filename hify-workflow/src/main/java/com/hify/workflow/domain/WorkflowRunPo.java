@@ -22,6 +22,12 @@ public class WorkflowRunPo extends BaseEntity {
 
     private String error;
 
+    private String currentNodeKey;
+
+    private LocalDateTime timeoutAt;
+
+    private String runMode;
+
     private Integer elapsedMs;
 
     private LocalDateTime finishedAt;

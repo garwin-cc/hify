@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
+import com.hify.common.log.TraceContext;
 import com.hify.common.util.PageHelper;
 import com.hify.common.web.PageResult;
 import com.hify.workflow.api.CreateWorkflowReq;
@@ -26,18 +27,21 @@ import com.hify.workflow.infra.WorkflowMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
 import com.hify.workflow.infra.WorkflowNodeRunMapper;
 import com.hify.workflow.infra.WorkflowRunMapper;
+import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ThreadPoolExecutor;
 
 @Slf4j
 @Service
@@ -52,6 +56,8 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final NodeConfigParser nodeConfigParser;
     private final WorkflowEngine workflowEngine;
     private final ObjectMapper objectMapper;
+    @Resource(name = "llmExecutor")
+    private ThreadPoolExecutor llmExecutor;
 
     @Override
     @Transactional
@@ -134,6 +140,42 @@ public class WorkflowServiceImpl implements WorkflowService {
     }
 
     @Override
+    public WorkflowRunResp startAsyncRun(Long id, WorkflowRunReq req) {
+        findWorkflowOrThrow(id);
+        WorkflowRunPo run = workflowEngine.createWorkflowRun(
+                id,
+                req.getUserMessage(),
+                "ASYNC",
+                LocalDateTime.now().plusSeconds(300));
+        try {
+            llmExecutor.execute(TraceContext.wrap(() -> {
+                try {
+                    workflowEngine.executeExistingRun(run.getId(), id, req.getUserMessage());
+                } catch (Exception e) {
+                    log.warn("async workflow run failed runId={} workflowId={}: {}",
+                            run.getId(), id, e.getMessage());
+                }
+            }));
+        } catch (Exception e) {
+            markRunFailed(run, e);
+        }
+        return getRunDetail(run.getId());
+    }
+
+    @Override
+    public WorkflowRunResp getRunDetail(Long runId) {
+        WorkflowRunPo run = workflowRunMapper.selectById(runId);
+        if (run == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
+        }
+        List<WorkflowNodeRunPo> nodeRuns = workflowNodeRunMapper.selectList(
+                Wrappers.lambdaQuery(WorkflowNodeRunPo.class)
+                        .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
+                        .orderByAsc(WorkflowNodeRunPo::getId));
+        return toRunResp(run, nodeRuns);
+    }
+
+    @Override
     public WorkflowRunResp getLatestRun(Long id) {
         findWorkflowOrThrow(id);
         WorkflowRunPo run = workflowRunMapper.selectOne(Wrappers.lambdaQuery(WorkflowRunPo.class)
@@ -144,11 +186,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (run == null) {
             return null;
         }
-        List<WorkflowNodeRunPo> nodeRuns = workflowNodeRunMapper.selectList(
-                Wrappers.lambdaQuery(WorkflowNodeRunPo.class)
-                        .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
-                        .orderByAsc(WorkflowNodeRunPo::getId));
-        return toRunResp(run, nodeRuns);
+        return getRunDetail(run.getId());
     }
 
     private WorkflowPo findWorkflowOrThrow(Long id) {
@@ -254,11 +292,21 @@ public class WorkflowServiceImpl implements WorkflowService {
         resp.setInput(po.getInput());
         resp.setOutput(po.getOutput());
         resp.setError(po.getError());
+        resp.setCurrentNodeKey(po.getCurrentNodeKey());
+        resp.setTimeoutAt(po.getTimeoutAt());
+        resp.setRunMode(po.getRunMode());
         resp.setElapsedMs(po.getElapsedMs());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setFinishedAt(po.getFinishedAt());
         resp.setNodeRuns(nodeRuns.stream().map(this::toNodeRunResp).toList());
         return resp;
+    }
+
+    private void markRunFailed(WorkflowRunPo run, Exception e) {
+        run.setStatus("FAILED");
+        run.setError(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        run.setFinishedAt(LocalDateTime.now());
+        workflowRunMapper.updateById(run);
     }
 
     private WorkflowNodeRunResp toNodeRunResp(WorkflowNodeRunPo po) {

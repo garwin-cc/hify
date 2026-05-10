@@ -7,6 +7,7 @@ warn()  { printf "${YELLOW}[Hify]${NC} %s\n" "$*"; }
 error() { printf "${RED}[Hify]${NC} %s\n" "$*" >&2; }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$ROOT_DIR/hify-app"
 PID_FILE="$ROOT_DIR/logs/hify.pid"
 GRACEFUL_TIMEOUT=15   # 等待 SIGTERM 生效的秒数
 
@@ -36,11 +37,51 @@ stop_pid() {
   info "进程 ${pid} 已正常退出"
 }
 
+stop_port() {
+  local port=$1 name=$2
+  local pids
+  pids=$(lsof -ti:"$port" 2>/dev/null || true)
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  warn "发现 ${name} 端口 ${port} 仍被占用：${pids}"
+  # shellcheck disable=SC2086
+  for pid in $pids; do
+    stop_pid "$pid"
+  done
+}
+
+find_backend_jar_pids() {
+  local pids=""
+  if compgen -G "$BACKEND_DIR/target/hify-app-*.jar" >/dev/null; then
+    pids=$(lsof -t "$BACKEND_DIR"/target/hify-app-*.jar 2>/dev/null || true)
+  fi
+  if [[ -n "$pids" ]]; then
+    printf "%s\n" "$pids" | sort -u
+  fi
+}
+
+stop_backend_jars() {
+  local pids
+  pids=$(find_backend_jar_pids)
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  warn "发现脱管后端 jar 进程：${pids}"
+  # shellcheck disable=SC2086
+  for pid in $pids; do
+    stop_pid "$pid"
+  done
+}
+
 main() {
   info "===== Hify 停止 ====="
 
   if [[ ! -f "$PID_FILE" ]]; then
-    warn "未找到 PID 文件（${PID_FILE}），服务可能未运行"
+    warn "未找到 PID 文件（${PID_FILE}），改用端口兜底检查"
+    stop_backend_jars
+    stop_port 8080 "后端"
+    stop_port 5173 "前端"
     exit 0
   fi
 
@@ -87,6 +128,9 @@ main() {
   done
 
   rm -f "$PID_FILE"
+  stop_backend_jars
+  stop_port 8080 "后端"
+  stop_port 5173 "前端"
   info "===== 全部停止完成 ====="
 }
 

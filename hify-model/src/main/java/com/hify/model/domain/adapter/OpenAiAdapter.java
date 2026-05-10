@@ -42,11 +42,18 @@ public class OpenAiAdapter extends AbstractProviderAdapter {
 
     @Override
     public ChatResponse chat(ProviderPo provider, ChatRequest request) {
+        return chat(provider, request, 0);
+    }
+
+    @Override
+    public ChatResponse chat(ProviderPo provider, ChatRequest request, int timeoutSeconds) {
         String url  = chatUrl(provider);
         String body = toJson(buildBody(request, false));
         long start  = System.currentTimeMillis();
 
-        String responseJson = llmHttpClient.post(url, bearerHeaders(provider), body);
+        String responseJson = timeoutSeconds > 0
+                ? llmHttpClient.post(url, bearerHeaders(provider), body, timeoutSeconds)
+                : llmHttpClient.post(url, bearerHeaders(provider), body);
         return parseResponse(parseJson(responseJson), elapsed(start));
     }
 

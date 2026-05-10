@@ -45,11 +45,18 @@ public class OllamaAdapter extends AbstractProviderAdapter {
 
     @Override
     public ChatResponse chat(ProviderPo provider, ChatRequest request) {
+        return chat(provider, request, 0);
+    }
+
+    @Override
+    public ChatResponse chat(ProviderPo provider, ChatRequest request, int timeoutSeconds) {
         String url  = chatUrl(provider);
         String body = toJson(buildBody(request, false));
         long start  = System.currentTimeMillis();
 
-        String responseJson = llmHttpClient.post(url, jsonContentType(), body);
+        String responseJson = timeoutSeconds > 0
+                ? llmHttpClient.post(url, jsonContentType(), body, timeoutSeconds)
+                : llmHttpClient.post(url, jsonContentType(), body);
         return parseResponse(parseJson(responseJson), elapsed(start));
     }
 

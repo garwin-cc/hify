@@ -33,7 +33,9 @@ import com.hify.knowledge.api.KnowledgeBaseResp;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
 import com.hify.knowledge.api.KnowledgeService;
-import com.hify.workflow.engine.WorkflowEngine;
+import com.hify.workflow.api.WorkflowRunReq;
+import com.hify.workflow.api.WorkflowRunResp;
+import com.hify.workflow.api.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -74,7 +76,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final LlmCallService    llmCallService;
     private final KnowledgeService  knowledgeService;
     private final EmbeddingService  embeddingService;
-    private final WorkflowEngine    workflowEngine;
+    private final WorkflowService   workflowService;
     private final McpService        mcpService;
     private final McpClientService  mcpClientService;
     private final ObjectMapper      objectMapper;
@@ -186,7 +188,11 @@ public class ConversationServiceImpl implements ConversationService {
         if (agent.getWorkflowId() != null) {
             try {
                 String userContent = latestUserContent(contextMessages);
-                String workflowResult = workflowEngine.execute(agent.getWorkflowId(), userContent);
+                WorkflowRunReq runReq = new WorkflowRunReq();
+                runReq.setUserMessage(userContent);
+                WorkflowRunResp workflowRun = workflowService.startAsyncRun(agent.getWorkflowId(), runReq);
+                String workflowResult = "工作流已开始执行，任务 ID：" + workflowRun.getId()
+                        + "，可在工作流运行详情中查看进度和结果。";
                 ChatResponse response = ChatResponse.builder()
                         .content(workflowResult)
                         .finishReason("stop")

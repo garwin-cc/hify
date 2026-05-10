@@ -89,7 +89,7 @@ export interface WorkflowNodeRun {
   workflowRunId: number
   nodeKey: string
   nodeType: string
-  status: 'RUNNING' | 'SUCCESS' | 'FAILED'
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'SKIPPED'
   outputs: Record<string, unknown>
   error?: string
   elapsedMs?: number
@@ -100,10 +100,13 @@ export interface WorkflowNodeRun {
 export interface WorkflowRun {
   id: number
   workflowId: number
-  status: 'RUNNING' | 'SUCCESS' | 'FAILED'
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'CANCELED'
   input: string
   output?: string
   error?: string
+  currentNodeKey?: string
+  timeoutAt?: string
+  runMode?: 'SYNC' | 'ASYNC'
   elapsedMs?: number
   createdAt: string
   finishedAt?: string
@@ -147,6 +150,12 @@ export const deleteWorkflow = (id: number) =>
 
 export const runWorkflow = (id: number, userMessage: string): Promise<WorkflowRun> =>
   post(`/v1/workflows/${id}/run`, { userMessage })
+
+export const startAsyncWorkflowRun = (id: number, userMessage: string): Promise<WorkflowRun> =>
+  post(`/v1/workflows/${id}/runs`, { userMessage })
+
+export const getWorkflowRunDetail = (runId: number): Promise<WorkflowRun> =>
+  get(`/v1/workflow-runs/${runId}`)
 
 export const getLatestWorkflowRun = (id: number): Promise<WorkflowRun | null> =>
   get(`/v1/workflows/${id}/runs/latest`)

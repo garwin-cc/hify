@@ -20,6 +20,12 @@ public class WorkflowRunResp {
 
     private String error;
 
+    private String currentNodeKey;
+
+    private LocalDateTime timeoutAt;
+
+    private String runMode;
+
     private Integer elapsedMs;
 
     private LocalDateTime createdAt;

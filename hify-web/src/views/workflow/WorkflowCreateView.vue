@@ -167,12 +167,16 @@
             class="run-panel__button"
             @click="handleRun"
           >
-            运行工作流
+            {{ runningWorkflow ? '运行中' : '运行工作流' }}
           </el-button>
           <div v-if="latestRun" class="run-summary" :class="`run-summary--${latestRun.status.toLowerCase()}`">
             <div class="run-summary__header">
               <strong>{{ latestRun.status }}</strong>
               <span v-if="latestRun.elapsedMs != null">{{ latestRun.elapsedMs }}ms</span>
+            </div>
+            <div v-if="latestRun.currentNodeKey && latestRun.status === 'RUNNING'" class="run-summary__block">
+              <span>当前节点</span>
+              <p>{{ latestRun.currentNodeKey }}</p>
             </div>
             <div v-if="latestRun.output" class="run-summary__block">
               <span>输出</span>
@@ -377,7 +381,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, MagicStick, Rank, VideoPlay, ZoomIn, ZoomOut } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -386,7 +390,8 @@ import {
   createWorkflow,
   getWorkflowDetail,
   getLatestWorkflowRun,
-  runWorkflow,
+  getWorkflowRunDetail,
+  startAsyncWorkflowRun,
   updateWorkflow,
   type WorkflowConfigJson,
   type WorkflowDetail,
@@ -420,6 +425,7 @@ const selectedEdge = ref<WorkflowEdge | null>(null)
 const linkingFrom = ref('')
 const runInput = ref('我要申请退款')
 const latestRun = ref<WorkflowRun | null>(null)
+const runPollingTimer = ref<number | null>(null)
 const canvasScale = ref(1)
 const modelGroups = ref<ModelGroup[]>([])
 const loadingModels = ref(false)
@@ -598,6 +604,7 @@ function nodeRunClass(nodeKey: string) {
 function runTagType(status: string) {
   if (status === 'SUCCESS') return 'success'
   if (status === 'FAILED') return 'danger'
+  if (status === 'TIMEOUT') return 'warning'
   return 'primary'
 }
 
@@ -1153,19 +1160,54 @@ async function handleRun() {
     ElMessage.error('请输入试运行消息')
     return
   }
+  stopRunPolling()
   runningWorkflow.value = true
   latestRun.value = null
   try {
     const id = await saveWorkflowBeforeRun()
-    if (!id) return
-    latestRun.value = await runWorkflow(id, runInput.value.trim())
-    notifySuccess('工作流试运行完成')
+    if (!id) {
+      runningWorkflow.value = false
+      return
+    }
+    latestRun.value = await startAsyncWorkflowRun(id, runInput.value.trim())
+    notifySuccess('工作流已开始执行')
+    if (isTerminalRun(latestRun.value.status)) {
+      runningWorkflow.value = false
+      return
+    }
+    startRunPolling(latestRun.value.id)
   } catch {
     if (isEditMode.value) {
       latestRun.value = await getLatestWorkflowRun(workflowId.value).catch(() => null)
     }
-  } finally {
     runningWorkflow.value = false
+  }
+}
+
+function isTerminalRun(status?: string) {
+  return ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELED'].includes(status ?? '')
+}
+
+function startRunPolling(runId: number) {
+  runPollingTimer.value = window.setInterval(async () => {
+    try {
+      const detail = await getWorkflowRunDetail(runId)
+      latestRun.value = detail
+      if (isTerminalRun(detail.status)) {
+        stopRunPolling()
+        runningWorkflow.value = false
+      }
+    } catch {
+      stopRunPolling()
+      runningWorkflow.value = false
+    }
+  }, 2000)
+}
+
+function stopRunPolling() {
+  if (runPollingTimer.value != null) {
+    window.clearInterval(runPollingTimer.value)
+    runPollingTimer.value = null
   }
 }
 
@@ -1202,6 +1244,8 @@ onMounted(() => {
   loadModelGroups()
   loadWorkflowDetail()
 })
+
+onBeforeUnmount(stopRunPolling)
 </script>
 
 <style scoped>
@@ -1256,6 +1300,11 @@ onMounted(() => {
 .run-summary--failed {
   border-color: #ffd0d0;
   background: #fff7f7;
+}
+
+.run-summary--timeout {
+  border-color: #ffe1a6;
+  background: #fffaf0;
 }
 
 .run-summary__header {

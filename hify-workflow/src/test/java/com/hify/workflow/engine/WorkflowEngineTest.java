@@ -2,6 +2,8 @@ package com.hify.workflow.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
+import com.hify.common.exception.ErrorCode;
+import com.hify.common.http.LlmApiException;
 import com.hify.workflow.domain.WorkflowEdgePo;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
@@ -51,7 +53,7 @@ class WorkflowEngineTest {
             }
             if ("updateById".equals(method)) {
                 return args -> {
-                    updatedRuns.add((WorkflowRunPo) args[0]);
+                    updatedRuns.add(copyRun((WorkflowRunPo) args[0]));
                     return 1;
                 };
             }
@@ -170,6 +172,97 @@ class WorkflowEngineTest {
         });
     }
 
+    @Test
+    void marksWorkflowTimeoutWhenLlmCallTimesOut() {
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"llm.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new TimeoutLlmExecutor())),
+                runMapper,
+                nodeRunMapper,
+                new ObjectMapper());
+
+        assertThatThrownBy(() -> engine.execute(10L, "hello"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("LLM 请求超时");
+        assertThat(updatedNodeRuns).anySatisfy(run -> {
+            assertThat(run.getNodeKey()).isEqualTo("llm");
+            assertThat(run.getStatus()).isEqualTo("FAILED");
+            assertThat(run.getError()).contains("LLM 请求超时");
+        });
+        assertThat(updatedRuns).anySatisfy(run -> {
+            assertThat(run.getStatus()).isEqualTo("TIMEOUT");
+            assertThat(run.getError()).contains("LLM 请求超时");
+        });
+    }
+
+
+    @Test
+    void executesExistingRunWithoutCreatingAnotherRunAndTracksCurrentNode() {
+        WorkflowRunPo existingRun = new WorkflowRunPo();
+        existingRun.setId(99L);
+        existingRun.setWorkflowId(10L);
+        existingRun.setStatus("RUNNING");
+        existingRun.setInput("hello");
+        runMapper = mapper(WorkflowRunMapper.class, method -> {
+            if ("selectById".equals(method)) {
+                return args -> existingRun;
+            }
+            if ("insert".equals(method)) {
+                return args -> {
+                    throw new AssertionError("should not create a new workflow run");
+                };
+            }
+            if ("updateById".equals(method)) {
+                return args -> {
+                    updatedRuns.add(copyRun((WorkflowRunPo) args[0]));
+                    return 1;
+                };
+            }
+            return null;
+        });
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"llm.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                new ObjectMapper());
+
+        String output = engine.executeExistingRun(99L, 10L, "hello");
+
+        assertThat(output).isEqualTo("answer: hello");
+        assertThat(updatedRuns).anySatisfy(run -> {
+            assertThat(run.getId()).isEqualTo(99L);
+            assertThat(run.getCurrentNodeKey()).isEqualTo("llm");
+        });
+        assertThat(updatedRuns).anySatisfy(run -> {
+            assertThat(run.getId()).isEqualTo(99L);
+            assertThat(run.getStatus()).isEqualTo("SUCCESS");
+            assertThat(run.getOutput()).isEqualTo("answer: hello");
+        });
+    }
+
     private static WorkflowNodePo node(String key, String type, String config) {
         WorkflowNodePo po = new WorkflowNodePo();
         po.setWorkflowId(10L);
@@ -188,6 +281,22 @@ class WorkflowEngineTest {
         po.setConditionExpression(condition);
         po.setSortOrder(sortOrder);
         return po;
+    }
+
+    private static WorkflowRunPo copyRun(WorkflowRunPo source) {
+        WorkflowRunPo copy = new WorkflowRunPo();
+        copy.setId(source.getId());
+        copy.setWorkflowId(source.getWorkflowId());
+        copy.setStatus(source.getStatus());
+        copy.setInput(source.getInput());
+        copy.setOutput(source.getOutput());
+        copy.setError(source.getError());
+        copy.setCurrentNodeKey(source.getCurrentNodeKey());
+        copy.setTimeoutAt(source.getTimeoutAt());
+        copy.setRunMode(source.getRunMode());
+        copy.setElapsedMs(source.getElapsedMs());
+        copy.setFinishedAt(source.getFinishedAt());
+        return copy;
     }
 
     private static <T> T selectListMapper(Class<T> type, List<?> rows) {
@@ -246,7 +355,23 @@ class WorkflowEngineTest {
 
         @Override
         public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
-            throw new BizException(com.hify.common.exception.ErrorCode.WORKFLOW_EXECUTE_FAILED, "boom");
+            throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED, "boom");
+        }
+
+        @Override
+        public String nodeType() {
+            return "LLM";
+        }
+    }
+
+    private static class TimeoutLlmExecutor implements NodeExecutor {
+
+        @Override
+        public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
+            throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED,
+                    "工作流节点执行失败: nodeKey=llm type=LLM，原因: LLM 请求超时: https://example.test",
+                    new LlmApiException(LlmApiException.Type.TIMEOUT,
+                            "LLM 请求超时: https://example.test"));
         }
 
         @Override

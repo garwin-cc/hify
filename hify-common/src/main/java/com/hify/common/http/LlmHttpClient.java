@@ -7,20 +7,11 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpStatusCodeException;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestTemplate;
-
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.net.SocketTimeoutException;
-import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -29,7 +20,7 @@ import java.util.function.Consumer;
  * LLM HTTP 调用客户端。
  *
  * <ul>
- *   <li>非流式（{@link #post}）：RestTemplate，连接超时 5s，读超时 60s</li>
+ *   <li>非流式（{@link #post}）：OkHttpClient，连接超时 5s，读超时 120s</li>
  *   <li>流式（{@link #stream}）：OkHttpClient，连接超时 5s，读超时 120s（SSE 不能有读超时截断）</li>
  * </ul>
  *
@@ -41,16 +32,11 @@ public class LlmHttpClient {
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final int ERROR_BODY_LIMIT = 1000;
+    private static final int DEFAULT_POST_TIMEOUT_SECONDS = 120;
 
-    private final RestTemplate restTemplate;
     private final OkHttpClient streamClient;
 
     public LlmHttpClient() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(5));
-        factory.setReadTimeout(Duration.ofSeconds(60));
-        this.restTemplate = new RestTemplate(factory);
-
         this.streamClient = new OkHttpClient.Builder()
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .readTimeout(120, TimeUnit.SECONDS)
@@ -68,24 +54,45 @@ public class LlmHttpClient {
      * @throws LlmApiException TIMEOUT / AUTH_FAILED / RATE_LIMITED / UNKNOWN
      */
     public String post(String url, Map<String, String> headers, String body) {
-        HttpHeaders httpHeaders = toHttpHeaders(headers);
-        HttpEntity<String> entity = new HttpEntity<>(body, httpHeaders);
+        return post(url, headers, body, DEFAULT_POST_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * 同步 POST，自定义超时时间。长任务工作流可以显式传入更长超时。
+     */
+    public String post(String url, Map<String, String> headers, String body, int timeoutSeconds) {
+        OkHttpClient client = streamClient.newBuilder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .callTimeout(timeoutSeconds + 5L, TimeUnit.SECONDS)
+                .build();
+
+        Request.Builder builder = new Request.Builder().url(url);
+        headers.forEach(builder::header);
+        Request request = builder.post(RequestBody.create(body, JSON)).build();
 
         long start = System.currentTimeMillis();
-        try {
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
-            log.info("LLM POST {} status={} elapsed={}ms", url, response.getStatusCode().value(),
-                    elapsed(start));
-            return response.getBody();
-        } catch (HttpStatusCodeException e) {
-            int status = e.getStatusCode().value();
-            String errorBody = abbreviate(e.getResponseBodyAsString());
-            log.warn("LLM POST {} status={} body={} elapsed={}ms", url, status, errorBody, elapsed(start));
-            throw classify(status, errorBody, e);
-        } catch (ResourceAccessException e) {
+        try (Response response = client.newCall(request).execute()) {
+            int status = response.code();
+            log.info("LLM POST {} status={} elapsed={}ms", url, status, elapsed(start));
+            if (!response.isSuccessful()) {
+                String errorBody = readBody(response);
+                log.warn("LLM POST {} status={} body={} elapsed={}ms",
+                        url, status, abbreviate(errorBody), elapsed(start));
+                throw classify(status, errorBody, null);
+            }
+            ResponseBody responseBody = response.body();
+            return responseBody == null ? "" : responseBody.string();
+        } catch (LlmApiException e) {
+            throw e;
+        } catch (SocketTimeoutException e) {
             log.warn("LLM POST {} timeout elapsed={}ms", url, elapsed(start));
             throw new LlmApiException(LlmApiException.Type.TIMEOUT,
                     "LLM 请求超时: " + url, e);
+        } catch (IOException e) {
+            log.warn("LLM POST {} error elapsed={}ms: {}", url, elapsed(start), e.getMessage());
+            throw new LlmApiException(LlmApiException.Type.UNKNOWN,
+                    "LLM 请求异常: " + url, e);
         }
     }
 
@@ -191,13 +198,6 @@ public class LlmHttpClient {
     }
 
     // ------------------------------------------------------------------ 私有方法
-
-    private static HttpHeaders toHttpHeaders(Map<String, String> headers) {
-        HttpHeaders httpHeaders = new HttpHeaders();
-        httpHeaders.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
-        headers.forEach(httpHeaders::set);
-        return httpHeaders;
-    }
 
     private static LlmApiException classify(int statusCode, Exception cause) {
         return classify(statusCode, null, cause);

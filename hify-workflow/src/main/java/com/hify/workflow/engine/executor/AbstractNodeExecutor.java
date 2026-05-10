@@ -19,8 +19,13 @@ abstract class AbstractNodeExecutor {
         if (e instanceof BizException bizException) {
             return bizException;
         }
+        String reason = e.getMessage();
+        String message = "工作流节点执行失败: nodeKey=" + node.nodeKey() + " type=" + node.nodeType();
+        if (reason != null && !reason.isBlank()) {
+            message += "，原因: " + reason;
+        }
         return new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED,
-                "工作流节点执行失败: nodeKey=" + node.nodeKey() + " type=" + node.nodeType(), e);
+                message, e);
     }
 
     protected String outputVariable(String value) {

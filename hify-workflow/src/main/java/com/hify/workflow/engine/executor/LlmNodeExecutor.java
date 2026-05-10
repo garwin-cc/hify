@@ -23,6 +23,8 @@ import java.util.List;
 @RequiredArgsConstructor
 public class LlmNodeExecutor extends AbstractNodeExecutor implements NodeExecutor {
 
+    private static final int WORKFLOW_LLM_TIMEOUT_SECONDS = 300;
+
     private final ModelConfigMapper modelConfigMapper;
     private final ProviderMapper providerMapper;
     private final ProviderAdapterFactory providerAdapterFactory;
@@ -46,7 +48,7 @@ public class LlmNodeExecutor extends AbstractNodeExecutor implements NodeExecuto
                     .maxTokens(llmConfig.maxTokens())
                     .build();
 
-            ChatResponse response = adapter.chat(provider, request);
+            ChatResponse response = adapter.chat(provider, request, WORKFLOW_LLM_TIMEOUT_SECONDS);
             ctx.set(node.nodeKey(), outputVariable(llmConfig.outputVariable()),
                     response == null ? null : response.getContent());
         } catch (Exception e) {

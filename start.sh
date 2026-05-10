@@ -14,6 +14,7 @@ LOG_DIR="$ROOT_DIR/logs"
 BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 PID_FILE="$LOG_DIR/hify.pid"
+STOP_TIMEOUT=15
 
 mkdir -p "$LOG_DIR"
 
@@ -43,28 +44,99 @@ setup_java() {
 }
 
 # ── 停止已有进程 ───────────────────────────────────────────────────────────────
+wait_pid_exit() {
+  local pid=$1 name=${2:-进程}
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    i=$((i + 1))
+    if [[ $i -ge $STOP_TIMEOUT ]]; then
+      warn "${name} ${pid} 未在 ${STOP_TIMEOUT}s 内退出，发送 SIGKILL"
+      kill -KILL "$pid" 2>/dev/null || true
+      break
+    fi
+  done
+}
+
+stop_pids() {
+  local name=$1
+  shift
+  local pids=("$@")
+  if [[ ${#pids[@]} -eq 0 ]]; then
+    return 0
+  fi
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+      warn "已发送 SIGTERM 给 ${name} 进程 ${pid}"
+    fi
+  done
+  for pid in "${pids[@]}"; do
+    wait_pid_exit "$pid" "$name"
+  done
+}
+
+wait_port_free() {
+  local port=$1 name=$2
+  local i=0
+  while lsof -ti:"$port" &>/dev/null; do
+    sleep 1
+    i=$((i + 1))
+    if [[ $i -ge $STOP_TIMEOUT ]]; then
+      local pids
+      pids=$(lsof -ti:"$port" 2>/dev/null || true)
+      if [[ -n "$pids" ]]; then
+        warn "${name} 端口 ${port} 仍被占用，发送 SIGKILL：${pids}"
+        # shellcheck disable=SC2086
+        kill -KILL $pids 2>/dev/null || true
+      fi
+      break
+    fi
+  done
+}
+
+find_backend_jar_pids() {
+  local pids=""
+  if compgen -G "$BACKEND_DIR/target/hify-app-*.jar" >/dev/null; then
+    pids=$(lsof -t "$BACKEND_DIR"/target/hify-app-*.jar 2>/dev/null || true)
+  fi
+  if [[ -n "$pids" ]]; then
+    printf "%s\n" "$pids" | sort -u
+  fi
+}
+
 stop_all() {
   if [[ -f "$PID_FILE" ]]; then
+    local pid_file_pids=()
     while IFS= read -r pid; do
-      if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null && info "已停止进程 ${pid}"
-      fi
+      [[ -n "$pid" ]] && pid_file_pids+=("$pid")
     done < "$PID_FILE"
+    stop_pids "PID 文件记录" "${pid_file_pids[@]}"
     rm -f "$PID_FILE"
   fi
 
-  # 兜底：按端口杀进程（用 if 代替 && 链，避免 [[ ]] 返回 1 被 set -e 捕获）
+  # 兜底：清理被 nohup/IDE/旧脚本脱管的 packaged jar 后端进程。
+  local jar_pids
+  jar_pids=$(find_backend_jar_pids)
+  if [[ -n "$jar_pids" ]]; then
+    # shellcheck disable=SC2206
+    stop_pids "脱管后端 jar" ${jar_pids}
+  fi
+
+  # 兜底：按端口杀进程，并等待端口真正释放。
   local be_pid fe_pid
   be_pid=$(lsof -ti:8080 2>/dev/null || true)
   fe_pid=$(lsof -ti:5173 2>/dev/null || true)
 
   if [[ -n "$be_pid" ]]; then
-    kill "$be_pid" 2>/dev/null || true
-    warn "已终止占用 8080 的进程 ${be_pid}"
+    # shellcheck disable=SC2206
+    stop_pids "占用 8080" ${be_pid}
+    wait_port_free 8080 "后端"
   fi
   if [[ -n "$fe_pid" ]]; then
-    kill "$fe_pid" 2>/dev/null || true
-    warn "已终止占用 5173 的进程 ${fe_pid}"
+    # shellcheck disable=SC2206
+    stop_pids "占用 5173" ${fe_pid}
+    wait_port_free 5173 "前端"
   fi
 }
 
@@ -86,6 +158,8 @@ wait_for_port() {
 
 # ── 启动后端 ───────────────────────────────────────────────────────────────────
 start_backend() {
+  wait_port_free 8080 "后端"
+
   info "构建后端..."
   cd "$ROOT_DIR"
   if ! mvn clean install -DskipTests -q 2>>"$BACKEND_LOG"; then

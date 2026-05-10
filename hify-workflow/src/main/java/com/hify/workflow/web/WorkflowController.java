@@ -61,8 +61,15 @@ public class WorkflowController {
         return Result.ok(workflowService.run(id, req));
     }
 
+    @PostMapping("/{id}/runs")
+    public Result<WorkflowRunResp> startAsyncRun(@PathVariable Long id,
+                                                 @Valid @RequestBody WorkflowRunReq req) {
+        return Result.ok(workflowService.startAsyncRun(id, req));
+    }
+
     @GetMapping("/{id}/runs/latest")
     public Result<WorkflowRunResp> getLatestRun(@PathVariable Long id) {
         return Result.ok(workflowService.getLatestRun(id));
     }
+
 }

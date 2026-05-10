@@ -17,5 +17,9 @@ public interface WorkflowService {
 
     WorkflowRunResp run(Long id, WorkflowRunReq req);
 
+    WorkflowRunResp startAsyncRun(Long id, WorkflowRunReq req);
+
+    WorkflowRunResp getRunDetail(Long runId);
+
     WorkflowRunResp getLatestRun(Long id);
 }

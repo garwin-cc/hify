@@ -24,6 +24,14 @@ public interface ProviderAdapter {
     ChatResponse chat(ProviderPo provider, ChatRequest request);
 
     /**
+     * 同步调用 LLM，允许调用方覆盖本次 HTTP 超时。
+     * 未特殊实现的 Provider 使用默认 {@link #chat(ProviderPo, ChatRequest)} 行为。
+     */
+    default ChatResponse chat(ProviderPo provider, ChatRequest request, int timeoutSeconds) {
+        return chat(provider, request);
+    }
+
+    /**
      * 流式调用 LLM，逐 token 回调，结束前阻塞当前线程。
      *
      * @param provider 供应商配置

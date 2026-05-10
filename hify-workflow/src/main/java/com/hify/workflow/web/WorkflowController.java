@@ -6,10 +6,13 @@ import com.hify.workflow.api.CreateWorkflowReq;
 import com.hify.workflow.api.UpdateWorkflowReq;
 import com.hify.workflow.api.WorkflowDetailResp;
 import com.hify.workflow.api.WorkflowListItemResp;
+import com.hify.workflow.api.WorkflowNodeDebugReq;
+import com.hify.workflow.api.WorkflowNodeDebugResp;
 import com.hify.workflow.api.WorkflowQuery;
 import com.hify.workflow.api.WorkflowRunReq;
 import com.hify.workflow.api.WorkflowRunResp;
 import com.hify.workflow.api.WorkflowService;
+import com.hify.workflow.api.WorkflowVersionResp;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,6 +23,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/workflows")
@@ -70,6 +75,30 @@ public class WorkflowController {
     @GetMapping("/{id}/runs/latest")
     public Result<WorkflowRunResp> getLatestRun(@PathVariable Long id) {
         return Result.ok(workflowService.getLatestRun(id));
+    }
+
+    @PostMapping("/{id}/nodes/{nodeKey}/debug")
+    public Result<WorkflowNodeDebugResp> debugNode(@PathVariable Long id,
+                                                   @PathVariable String nodeKey,
+                                                   @RequestBody WorkflowNodeDebugReq req) {
+        return Result.ok(workflowService.debugNode(id, nodeKey, req));
+    }
+
+    @GetMapping("/{id}/versions")
+    public Result<List<WorkflowVersionResp>> listVersions(@PathVariable Long id) {
+        return Result.ok(workflowService.listVersions(id));
+    }
+
+    @GetMapping("/{id}/versions/{versionNo}")
+    public Result<WorkflowVersionResp> getVersion(@PathVariable Long id,
+                                                  @PathVariable Integer versionNo) {
+        return Result.ok(workflowService.getVersion(id, versionNo));
+    }
+
+    @PostMapping("/{id}/versions/{versionNo}/restore")
+    public Result<WorkflowDetailResp> restoreVersion(@PathVariable Long id,
+                                                     @PathVariable Integer versionNo) {
+        return Result.ok(workflowService.restoreVersion(id, versionNo));
     }
 
 }

@@ -12,6 +12,7 @@ import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
 import com.hify.workflow.domain.WorkflowRunPo;
+import com.hify.workflow.domain.WorkflowVersionPo;
 import com.hify.workflow.domain.WorkflowReviewHandler;
 import com.hify.workflow.domain.config.NodeConfigParser;
 import com.hify.workflow.engine.executor.ConditionNodeConfig;
@@ -22,6 +23,7 @@ import com.hify.workflow.infra.WorkflowEdgeMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
 import com.hify.workflow.infra.WorkflowNodeRunMapper;
 import com.hify.workflow.infra.WorkflowRunMapper;
+import com.hify.workflow.infra.WorkflowVersionMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -53,6 +55,7 @@ public class WorkflowEngine {
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final WorkflowRunMapper workflowRunMapper;
     private final WorkflowNodeRunMapper workflowNodeRunMapper;
+    private final WorkflowVersionMapper workflowVersionMapper;
     private final ObjectMapper objectMapper;
     private final WorkflowEventPublisher workflowEventPublisher;
     private final WorkflowReviewHandler workflowReviewHandler;
@@ -76,6 +79,25 @@ public class WorkflowEngine {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + workflowRunId);
         }
         return executeRun(workflowRun, workflowRun.getWorkflowId(), workflowRun.getInput(), true);
+    }
+
+    public Map<String, Object> debugNode(Long workflowId, String nodeKey, String userMessage, Map<String, Object> variables) {
+        WorkflowNodePo node = loadNodes(workflowId).stream()
+                .filter(item -> item.getNodeKey().equals(nodeKey))
+                .findFirst()
+                .orElseThrow(() -> new BizException(ErrorCode.NOT_FOUND, "工作流节点不存在: " + nodeKey));
+        if ("START".equalsIgnoreCase(node.getNodeType()) || "END".equalsIgnoreCase(node.getNodeType())) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "START/END 节点不支持单节点调试");
+        }
+        ExecutionContext ctx = variables == null || variables.isEmpty()
+                ? new ExecutionContext(0L, userMessage == null ? "" : userMessage)
+                : new ExecutionContext(0L, variables);
+        if (ctx.get("start", "userMessage") == null) {
+            ctx.set("start", "userMessage", userMessage == null ? "" : userMessage);
+        }
+        NodeConfigDef config = nodeConfigParser.parseExecutionConfig(node.getNodeType(), node.getConfig());
+        nodeExecutorRegistry.get(node.getNodeType()).execute(toEngineNode(node), config, ctx);
+        return ctx.snapshot();
     }
 
     private String executeRun(WorkflowRunPo workflowRun, Long workflowId, String userMessage) {
@@ -289,6 +311,10 @@ public class WorkflowEngine {
     public WorkflowRunPo createWorkflowRun(Long workflowId, String userMessage, String runMode, LocalDateTime timeoutAt) {
         WorkflowRunPo po = new WorkflowRunPo();
         po.setWorkflowId(workflowId);
+        WorkflowVersionPo version = latestVersion(workflowId);
+        if (version != null) {
+            po.setWorkflowVersionId(version.getId());
+        }
         po.setStatus(STATUS_RUNNING);
         po.setInput(userMessage);
         po.setRunMode(StringUtils.hasText(runMode) ? runMode : RUN_MODE_SYNC);
@@ -299,6 +325,19 @@ public class WorkflowEngine {
             log.warn("failed to create workflow run record workflowId={}: {}", workflowId, e.getMessage());
         }
         return po;
+    }
+
+    private WorkflowVersionPo latestVersion(Long workflowId) {
+        try {
+            return workflowVersionMapper.selectOne(Wrappers.lambdaQuery(WorkflowVersionPo.class)
+                    .eq(WorkflowVersionPo::getWorkflowId, workflowId)
+                    .orderByDesc(WorkflowVersionPo::getVersionNo)
+                    .orderByDesc(WorkflowVersionPo::getId)
+                    .last("LIMIT 1"));
+        } catch (Exception e) {
+            log.warn("failed to query workflow latest version workflowId={}: {}", workflowId, e.getMessage());
+            return null;
+        }
     }
 
     private void updateWorkflowRunCurrentNode(WorkflowRunPo po, String currentNodeKey) {

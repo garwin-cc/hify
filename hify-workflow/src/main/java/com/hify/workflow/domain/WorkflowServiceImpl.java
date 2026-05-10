@@ -3,6 +3,7 @@ package com.hify.workflow.domain;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
@@ -15,6 +16,8 @@ import com.hify.workflow.api.UpdateWorkflowReq;
 import com.hify.workflow.api.WorkflowDetailResp;
 import com.hify.workflow.api.WorkflowEdgeDto;
 import com.hify.workflow.api.WorkflowListItemResp;
+import com.hify.workflow.api.WorkflowNodeDebugReq;
+import com.hify.workflow.api.WorkflowNodeDebugResp;
 import com.hify.workflow.api.WorkflowNodeRunResp;
 import com.hify.workflow.api.WorkflowNodeDto;
 import com.hify.workflow.api.WorkflowQuery;
@@ -22,6 +25,7 @@ import com.hify.workflow.api.WorkflowRunReq;
 import com.hify.workflow.api.WorkflowRunResp;
 import com.hify.workflow.api.WorkflowService;
 import com.hify.workflow.api.WorkflowReviewTaskResp;
+import com.hify.workflow.api.WorkflowVersionResp;
 import com.hify.workflow.domain.config.NodeConfigParser;
 import com.hify.workflow.engine.WorkflowEngine;
 import com.hify.workflow.infra.WorkflowEdgeMapper;
@@ -29,6 +33,7 @@ import com.hify.workflow.infra.WorkflowMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
 import com.hify.workflow.infra.WorkflowNodeRunMapper;
 import com.hify.workflow.infra.WorkflowRunMapper;
+import com.hify.workflow.infra.WorkflowVersionMapper;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +63,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final WorkflowEdgeMapper edgeMapper;
     private final WorkflowRunMapper workflowRunMapper;
     private final WorkflowNodeRunMapper workflowNodeRunMapper;
+    private final WorkflowVersionMapper workflowVersionMapper;
     private final NodeConfigParser nodeConfigParser;
     private final WorkflowEngine workflowEngine;
     private final WorkflowRunEventService workflowRunEventService;
@@ -78,6 +84,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         workflowMapper.insert(workflow);
 
         insertNodesAndEdges(workflow.getId(), req.getNodes(), req.getEdges());
+        saveVersionSnapshot(workflow.getId(), "创建工作流");
         log.info("created workflow id={} name={}", workflow.getId(), workflow.getName());
         return getDetail(workflow.getId());
     }
@@ -123,6 +130,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         edgeMapper.delete(Wrappers.lambdaQuery(WorkflowEdgePo.class)
                 .eq(WorkflowEdgePo::getWorkflowId, id));
         insertNodesAndEdges(id, req.getNodes(), req.getEdges());
+        saveVersionSnapshot(id, "更新工作流");
         log.info("updated workflow id={}", id);
         return getDetail(id);
     }
@@ -170,6 +178,61 @@ public class WorkflowServiceImpl implements WorkflowService {
     }
 
     @Override
+    public WorkflowNodeDebugResp debugNode(Long workflowId, String nodeKey, WorkflowNodeDebugReq req) {
+        findWorkflowOrThrow(workflowId);
+        long startedAt = System.currentTimeMillis();
+        WorkflowNodeDebugResp resp = new WorkflowNodeDebugResp();
+        try {
+            Map<String, Object> outputs = workflowEngine.debugNode(
+                    workflowId,
+                    nodeKey,
+                    req == null ? "" : req.getUserMessage(),
+                    req == null ? Collections.emptyMap() : req.getVariables());
+            resp.setStatus("SUCCESS");
+            resp.setOutputs(outputs);
+        } catch (Exception e) {
+            resp.setStatus("FAILED");
+            resp.setError(shortError(e));
+        }
+        resp.setElapsedMs(elapsed(startedAt));
+        return resp;
+    }
+
+    @Override
+    public List<WorkflowVersionResp> listVersions(Long workflowId) {
+        findWorkflowOrThrow(workflowId);
+        return workflowVersionMapper.selectList(Wrappers.lambdaQuery(WorkflowVersionPo.class)
+                        .eq(WorkflowVersionPo::getWorkflowId, workflowId)
+                        .orderByDesc(WorkflowVersionPo::getVersionNo))
+                .stream()
+                .map(this::toVersionResp)
+                .toList();
+    }
+
+    @Override
+    public WorkflowVersionResp getVersion(Long workflowId, Integer versionNo) {
+        findWorkflowOrThrow(workflowId);
+        WorkflowVersionPo version = findVersionOrThrow(workflowId, versionNo);
+        return toVersionResp(version);
+    }
+
+    @Override
+    @Transactional
+    public WorkflowDetailResp restoreVersion(Long workflowId, Integer versionNo) {
+        findWorkflowOrThrow(workflowId);
+        WorkflowVersionPo version = findVersionOrThrow(workflowId, versionNo);
+        WorkflowDetailResp snapshot = parseSnapshot(version.getSnapshotJson());
+        UpdateWorkflowReq req = new UpdateWorkflowReq();
+        req.setName(snapshot.getName());
+        req.setDescription(snapshot.getDescription());
+        req.setEnabled(snapshot.getEnabled());
+        req.setStartNodeKey(snapshot.getStartNodeKey());
+        req.setNodes(snapshot.getNodes());
+        req.setEdges(snapshot.getEdges());
+        return update(workflowId, req);
+    }
+
+    @Override
     public WorkflowRunResp getRunDetail(Long runId) {
         WorkflowRunPo run = workflowRunMapper.selectById(runId);
         if (run == null) {
@@ -212,11 +275,11 @@ public class WorkflowServiceImpl implements WorkflowService {
         }
         WorkflowReviewTaskPo task = workflowReviewService.submitReview(runId, req);
         mergeReviewResult(run, task);
-        markReviewNodeSuccess(run, task);
         workflowRunEventService.publishNodeEvent(run.getId(), "REVIEW_SUBMITTED", task.getNodeKey(), task.getReviewAction(),
                 Map.of("action", task.getReviewAction(), "comment", task.getReviewComment() == null ? "" : task.getReviewComment()));
 
         if ("REJECT".equalsIgnoreCase(task.getReviewAction())) {
+            markReviewNodeCanceled(run, task);
             run.setStatus("CANCELED");
             run.setError(StringUtils.hasText(task.getReviewComment()) ? task.getReviewComment() : "人工评审拒绝");
             run.setFinishedAt(LocalDateTime.now());
@@ -226,6 +289,7 @@ public class WorkflowServiceImpl implements WorkflowService {
             return getRunDetail(run.getId());
         }
 
+        markReviewNodeSuccess(run, task);
         run.setStatus("RUNNING");
         run.setFinishedAt(null);
         workflowRunMapper.updateById(run);
@@ -255,6 +319,62 @@ public class WorkflowServiceImpl implements WorkflowService {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流不存在: " + id);
         }
         return workflow;
+    }
+
+    private WorkflowVersionPo findVersionOrThrow(Long workflowId, Integer versionNo) {
+        if (versionNo == null || versionNo <= 0) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "版本号不合法");
+        }
+        WorkflowVersionPo version = workflowVersionMapper.selectOne(Wrappers.lambdaQuery(WorkflowVersionPo.class)
+                .eq(WorkflowVersionPo::getWorkflowId, workflowId)
+                .eq(WorkflowVersionPo::getVersionNo, versionNo)
+                .last("LIMIT 1"));
+        if (version == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流版本不存在: v" + versionNo);
+        }
+        return version;
+    }
+
+    private void saveVersionSnapshot(Long workflowId, String changeSummary) {
+        WorkflowDetailResp detail = getDetail(workflowId);
+        WorkflowVersionPo latest = workflowVersionMapper.selectOne(Wrappers.lambdaQuery(WorkflowVersionPo.class)
+                .eq(WorkflowVersionPo::getWorkflowId, workflowId)
+                .orderByDesc(WorkflowVersionPo::getVersionNo)
+                .orderByDesc(WorkflowVersionPo::getId)
+                .last("LIMIT 1"));
+        WorkflowVersionPo version = new WorkflowVersionPo();
+        version.setWorkflowId(workflowId);
+        version.setVersionNo(latest == null ? 1 : latest.getVersionNo() + 1);
+        version.setChangeSummary(changeSummary == null ? "" : changeSummary);
+        version.setSnapshotJson(toJson(detail));
+        workflowVersionMapper.insert(version);
+    }
+
+    private WorkflowVersionResp toVersionResp(WorkflowVersionPo po) {
+        WorkflowVersionResp resp = new WorkflowVersionResp();
+        resp.setId(po.getId());
+        resp.setWorkflowId(po.getWorkflowId());
+        resp.setVersionNo(po.getVersionNo());
+        resp.setChangeSummary(po.getChangeSummary());
+        resp.setSnapshotJson(parseJsonNode(po.getSnapshotJson()));
+        resp.setCreatedAt(po.getCreatedAt());
+        return resp;
+    }
+
+    private WorkflowDetailResp parseSnapshot(String snapshotJson) {
+        try {
+            return objectMapper.readValue(snapshotJson, WorkflowDetailResp.class);
+        } catch (Exception e) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "工作流版本快照解析失败", e);
+        }
+    }
+
+    private JsonNode parseJsonNode(String json) {
+        try {
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            return objectMapper.createObjectNode();
+        }
     }
 
     private void insertNodesAndEdges(Long workflowId, List<WorkflowNodeDto> nodes, List<WorkflowEdgeDto> edges) {
@@ -348,6 +468,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         WorkflowRunResp resp = new WorkflowRunResp();
         resp.setId(po.getId());
         resp.setWorkflowId(po.getWorkflowId());
+        resp.setWorkflowVersionId(po.getWorkflowVersionId());
         resp.setStatus(po.getStatus());
         resp.setInput(po.getInput());
         resp.setOutput(po.getOutput());
@@ -410,6 +531,14 @@ public class WorkflowServiceImpl implements WorkflowService {
     }
 
     private void markReviewNodeSuccess(WorkflowRunPo run, WorkflowReviewTaskPo task) {
+        updateReviewNodeRun(run, task, "SUCCESS");
+    }
+
+    private void markReviewNodeCanceled(WorkflowRunPo run, WorkflowReviewTaskPo task) {
+        updateReviewNodeRun(run, task, "CANCELED");
+    }
+
+    private void updateReviewNodeRun(WorkflowRunPo run, WorkflowReviewTaskPo task, String status) {
         WorkflowNodeRunPo nodeRun = workflowNodeRunMapper.selectOne(Wrappers.lambdaQuery(WorkflowNodeRunPo.class)
                 .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
                 .eq(WorkflowNodeRunPo::getNodeKey, task.getNodeKey())
@@ -419,7 +548,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (nodeRun == null) {
             return;
         }
-        nodeRun.setStatus("SUCCESS");
+        nodeRun.setStatus(status);
         nodeRun.setOutputs(run.getContextSnapshot());
         nodeRun.setFinishedAt(LocalDateTime.now());
         workflowNodeRunMapper.updateById(nodeRun);
@@ -445,6 +574,26 @@ public class WorkflowServiceImpl implements WorkflowService {
             log.warn("failed to serialize workflow context snapshot: {}", e.getMessage());
             return "{}";
         }
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "工作流版本快照序列化失败", e);
+        }
+    }
+
+    private static int elapsed(long startedAt) {
+        return (int) Math.min(Integer.MAX_VALUE, System.currentTimeMillis() - startedAt);
+    }
+
+    private static String shortError(Exception exception) {
+        String message = exception.getMessage();
+        if (message == null || message.isBlank()) {
+            message = exception.getClass().getSimpleName();
+        }
+        return message.length() <= 500 ? message : message.substring(0, 500);
     }
 
     private static boolean isTerminalRun(String status) {

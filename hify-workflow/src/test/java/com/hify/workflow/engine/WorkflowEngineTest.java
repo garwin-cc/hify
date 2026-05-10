@@ -19,6 +19,7 @@ import com.hify.workflow.infra.WorkflowEdgeMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
 import com.hify.workflow.infra.WorkflowNodeRunMapper;
 import com.hify.workflow.infra.WorkflowRunMapper;
+import com.hify.workflow.infra.WorkflowVersionMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +39,7 @@ class WorkflowEngineTest {
     private WorkflowEdgeMapper edgeMapper;
     private WorkflowRunMapper runMapper;
     private WorkflowNodeRunMapper nodeRunMapper;
+    private WorkflowVersionMapper versionMapper;
     private WorkflowEngine engine;
     private List<WorkflowRunPo> updatedRuns;
     private List<WorkflowNodeRunPo> updatedNodeRuns;
@@ -79,6 +81,7 @@ class WorkflowEngineTest {
             }
             return null;
         });
+        versionMapper = mapper(WorkflowVersionMapper.class, method -> null);
         engine = new WorkflowEngine(
                 nodeMapper,
                 edgeMapper,
@@ -86,6 +89,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);
@@ -109,6 +113,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);
@@ -140,6 +145,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);
@@ -167,6 +173,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new FailingLlmExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);
@@ -203,6 +210,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new TimeoutLlmExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);
@@ -241,6 +249,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);
@@ -302,6 +311,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);
@@ -356,6 +366,7 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
+                versionMapper,
                 new ObjectMapper(),
                 new NoopWorkflowEventPublisher(),
                 reviewHandler);

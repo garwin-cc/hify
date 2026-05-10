@@ -14,6 +14,8 @@ public class WorkflowRunPo extends BaseEntity {
 
     private Long workflowId;
 
+    private Long workflowVersionId;
+
     private String status;
 
     private String input;

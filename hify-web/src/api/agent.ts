@@ -25,6 +25,7 @@ export interface AgentListItem {
   modelConfigId: number
   modelName: string | null
   modelId: string | null
+  workflowId?: number | null
   knowledgeBaseIds: number[]
   temperature: number | null
   toolCount: number
@@ -40,6 +41,7 @@ export interface AgentDetail {
   systemPrompt: string
   modelConfigId: number
   modelConfig: ModelOption | null
+  workflowId?: number | null
   knowledgeBaseIds: number[]
   temperature: number | null
   maxTokens: number | null
@@ -55,6 +57,7 @@ export interface CreateAgentReq {
   description?: string
   systemPrompt: string
   modelConfigId: number
+  workflowId?: number | null
   knowledgeBaseIds?: number[]
   temperature?: number
   maxTokens?: number
@@ -67,6 +70,8 @@ export interface UpdateAgentReq {
   description?: string
   systemPrompt?: string
   modelConfigId?: number
+  workflowId?: number | null
+  bindWorkflow?: boolean
   knowledgeBaseIds?: number[]
   temperature?: number | null
   maxTokens?: number | null

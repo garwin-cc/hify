@@ -12,6 +12,8 @@ public class WorkflowRunResp {
 
     private Long workflowId;
 
+    private Long workflowVersionId;
+
     private String status;
 
     private String input;

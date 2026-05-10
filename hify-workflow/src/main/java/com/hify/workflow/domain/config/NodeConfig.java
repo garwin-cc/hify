@@ -9,5 +9,6 @@ public sealed interface NodeConfig permits
         ReplyNodeConfig,
         ApiCallNodeConfig,
         KnowledgeNodeConfig,
-        HumanReviewNodeConfig {
+        HumanReviewNodeConfig,
+        CodeTaskNodeConfig {
 }

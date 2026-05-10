@@ -177,6 +177,32 @@
               <span class="form-hint-block">绑定后，对话会先检索知识库分块并注入上下文。</span>
             </el-form-item>
 
+            <el-form-item label="绑定工作流">
+              <el-select
+                v-model="form.workflowId"
+                placeholder="请选择工作流（可选）"
+                style="width: 100%"
+                clearable
+                :loading="loadingWorkflows"
+              >
+                <el-option
+                  v-for="workflow in workflows"
+                  :key="workflow.id"
+                  :label="workflow.name"
+                  :value="workflow.id"
+                  :disabled="workflow.enabled !== 1"
+                >
+                  <div class="workflow-option">
+                    <span>{{ workflow.name }}</span>
+                    <el-tag size="small" :type="workflow.enabled === 1 ? 'success' : 'info'">
+                      {{ workflow.enabled === 1 ? 'PUBLISHED' : 'DRAFT' }}
+                    </el-tag>
+                  </div>
+                </el-option>
+              </el-select>
+              <span class="form-hint-block">绑定后，对话会触发工作流执行；留空则直接按 Agent Prompt 调用模型。</span>
+            </el-form-item>
+
             <el-form-item label="系统提示词" prop="systemPrompt">
               <el-input
                 v-model="form.systemPrompt"
@@ -282,6 +308,7 @@ import {
 } from '@/api/agent'
 import { getMcpToolOptions, type McpToolOption } from '@/api/mcp'
 import { getKnowledgeBaseList, type KnowledgeBaseItem } from '@/api/knowledge'
+import { getWorkflowList, type WorkflowListItem } from '@/api/workflow'
 
 // ── 列配置 ────────────────────────────────────────────────────────────
 
@@ -368,10 +395,26 @@ async function loadKnowledgeBases() {
   }
 }
 
+// ── 工作流下拉 ────────────────────────────────────────────────────────
+
+const workflows = ref<WorkflowListItem[]>([])
+const loadingWorkflows = ref(false)
+
+async function loadWorkflows() {
+  loadingWorkflows.value = true
+  try {
+    const result = await getWorkflowList(1, 100)
+    workflows.value = result.records
+  } finally {
+    loadingWorkflows.value = false
+  }
+}
+
 onMounted(() => {
   loadModelGroups()
   loadMcpServers()
   loadKnowledgeBases()
+  loadWorkflows()
 })
 
 // ── 表单 & 弹窗 ───────────────────────────────────────────────────────
@@ -387,6 +430,7 @@ const form = reactive({
   description:     '',
   systemPrompt:    '',
   modelConfigId:   null as number | null,
+  workflowId:      null as number | null,
   knowledgeBaseIds: [] as number[],
   temperature:     0.7,
   maxTokens:       undefined as number | undefined,
@@ -405,6 +449,7 @@ function resetForm() {
   form.description     = ''
   form.systemPrompt    = ''
   form.modelConfigId   = null
+  form.workflowId      = null
   form.knowledgeBaseIds = []
   form.temperature     = 0.7
   form.maxTokens       = undefined
@@ -425,6 +470,7 @@ async function handleEdit(row: AgentListItem) {
   form.name          = row.name
   form.description   = row.description ?? ''
   form.modelConfigId = row.modelConfigId
+  form.workflowId    = row.workflowId ?? null
   form.temperature   = row.temperature != null ? Number(row.temperature) : 0.7
   dialogVisible.value = true
   try {
@@ -432,6 +478,7 @@ async function handleEdit(row: AgentListItem) {
     form.systemPrompt    = detail.systemPrompt
     form.maxTokens       = detail.maxTokens    ?? undefined
     form.maxContextTurns = detail.maxContextTurns ?? undefined
+    form.workflowId      = detail.workflowId ?? null
     form.knowledgeBaseIds = detail.knowledgeBaseIds ?? []
     form.toolIds         = detail.toolIds       ?? []
     if (detail.temperature != null) form.temperature = Number(detail.temperature)
@@ -461,6 +508,8 @@ async function handleSubmit() {
         description:     form.description  ?? undefined,
         systemPrompt:    form.systemPrompt || undefined,
         modelConfigId:   form.modelConfigId ?? undefined,
+        workflowId:      form.workflowId ?? null,
+        bindWorkflow:    true,
         knowledgeBaseIds: form.knowledgeBaseIds,
         temperature:     form.temperature,
         maxTokens:       form.maxTokens    ?? null,
@@ -474,6 +523,7 @@ async function handleSubmit() {
         description:     form.description   || undefined,
         systemPrompt:    form.systemPrompt,
         modelConfigId:   form.modelConfigId!,
+        workflowId:      form.workflowId ?? undefined,
         knowledgeBaseIds: form.knowledgeBaseIds.length > 0 ? form.knowledgeBaseIds : undefined,
         temperature:     form.temperature,
         maxTokens:       form.maxTokens,
@@ -567,6 +617,13 @@ async function handleDelete(row: AgentListItem) {
 .knowledge-option__meta {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+}
+
+.workflow-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 /* Tabs */

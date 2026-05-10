@@ -60,6 +60,28 @@ class NodeConfigParserTest {
     }
 
     @Test
+    void parsesCodeTaskConfigIntoTypedRecord() throws Exception {
+        NodeConfig config = parser.parse("CODE_TASK", new ObjectMapper().readTree("""
+                {
+                  "task": "实现 {{start.userMessage}}",
+                  "executor": "MCP",
+                  "mcpServerId": 7,
+                  "toolName": "code_worker",
+                  "timeoutSeconds": 600,
+                  "outputVariable": "result"
+                }
+                """));
+
+        assertThat(config).isInstanceOf(CodeTaskNodeConfig.class);
+        CodeTaskNodeConfig codeTask = (CodeTaskNodeConfig) config;
+        assertThat(codeTask.task()).isEqualTo("实现 {{start.userMessage}}");
+        assertThat(codeTask.executor()).isEqualTo("MCP");
+        assertThat(codeTask.mcpServerId()).isEqualTo(7L);
+        assertThat(codeTask.toolName()).isEqualTo("code_worker");
+        assertThat(codeTask.outputVariable()).isEqualTo("result");
+    }
+
+    @Test
     void rejectsUnsupportedNodeType() {
         assertThatThrownBy(() -> parser.parse("UNKNOWN", new ObjectMapper().createObjectNode()))
                 .isInstanceOf(BizException.class)

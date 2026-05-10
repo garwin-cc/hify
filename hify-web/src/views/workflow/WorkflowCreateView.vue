@@ -174,13 +174,23 @@
               <strong>{{ latestRun.status }}</strong>
               <span v-if="latestRun.elapsedMs != null">{{ latestRun.elapsedMs }}ms</span>
             </div>
+            <div v-if="latestRun.workflowVersionId" class="run-summary__block">
+              <span>版本快照</span>
+              <p>#{{ latestRun.workflowVersionId }}</p>
+            </div>
             <div v-if="latestRun.currentNodeKey && latestRun.status === 'RUNNING'" class="run-summary__block">
               <span>当前节点</span>
               <p>{{ latestRun.currentNodeKey }}</p>
             </div>
             <div v-if="latestRun.status === 'WAITING' && reviewTask" class="review-card">
-              <div class="review-card__title">{{ reviewTask.title }}</div>
-              <p>{{ reviewTask.content }}</p>
+              <div class="review-card__head">
+                <div>
+                  <span>待审批</span>
+                  <strong>{{ reviewTask.title }}</strong>
+                </div>
+                <el-tag type="warning" size="small">{{ reviewTask.nodeKey }}</el-tag>
+              </div>
+              <div class="review-card__content">{{ reviewTask.content }}</div>
               <el-input
                 v-if="reviewTask.allowEdit"
                 v-model="reviewEditedContent"
@@ -236,6 +246,14 @@
             >
               生成分支
             </el-button>
+            <el-button
+              v-if="canDebugSelectedNode"
+              size="small"
+              :loading="debuggingNode"
+              @click="debugSelectedNode"
+            >
+              调试节点
+            </el-button>
           </div>
           <div v-if="availableVariables.length" class="variable-panel">
             <div class="panel-title">变量引用</div>
@@ -265,6 +283,24 @@
             />
             <div v-if="selectedNodeRun.error" class="node-run-detail__error">
               {{ selectedNodeRun.error }}
+            </div>
+          </div>
+          <div v-if="nodeDebugResult" class="node-run-detail">
+            <div class="node-run-detail__meta">
+              <el-tag size="small" :type="runTagType(nodeDebugResult.status)">
+                调试 {{ nodeDebugResult.status }}
+              </el-tag>
+              <span v-if="nodeDebugResult.elapsedMs != null">{{ nodeDebugResult.elapsedMs }}ms</span>
+            </div>
+            <el-input
+              :model-value="JSON.stringify(nodeDebugResult.outputs ?? {}, null, 2)"
+              type="textarea"
+              :rows="6"
+              readonly
+              class="json-preview"
+            />
+            <div v-if="nodeDebugResult.error" class="node-run-detail__error">
+              {{ nodeDebugResult.error }}
             </div>
           </div>
           <el-form label-position="top" class="node-config-form">
@@ -381,6 +417,29 @@
               </el-form-item>
             </template>
 
+            <template v-else-if="selectedNode.nodeType === 'CODE_TASK'">
+              <el-form-item label="任务描述">
+                <el-input v-model="selectedConfig.task" type="textarea" :rows="6" />
+              </el-form-item>
+              <el-form-item label="执行器">
+                <el-select v-model="selectedConfig.executor">
+                  <el-option label="MCP Code Worker" value="MCP" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="MCP Server ID">
+                <el-input-number v-model="selectedConfig.mcpServerId" :min="1" controls-position="right" />
+              </el-form-item>
+              <el-form-item label="工具名称">
+                <el-input v-model="selectedConfig.toolName" placeholder="code_worker" />
+              </el-form-item>
+              <el-form-item label="超时时间（秒）">
+                <el-input-number v-model="selectedConfig.timeoutSeconds" :min="30" :max="1800" controls-position="right" />
+              </el-form-item>
+              <el-form-item label="输出变量">
+                <el-input v-model="selectedConfig.outputVariable" placeholder="result" />
+              </el-form-item>
+            </template>
+
             <template v-else-if="selectedNode.nodeType === 'END'">
               <el-form-item label="输出变量">
                 <el-input v-model="selectedConfig.outputVariable" placeholder="node.answer" />
@@ -421,6 +480,27 @@
         </template>
 
         <template v-else>
+          <section v-if="workflowVersions.length" class="version-panel">
+            <div class="panel-title">版本快照</div>
+            <div
+              v-for="version in workflowVersions"
+              :key="version.id"
+              class="version-item"
+            >
+              <div>
+                <strong>v{{ version.versionNo }}</strong>
+                <span>{{ version.changeSummary || '保存工作流' }}</span>
+              </div>
+              <el-button
+                size="small"
+                text
+                type="primary"
+                @click="restoreVersion(version.versionNo)"
+              >
+                恢复
+              </el-button>
+            </div>
+          </section>
           <div class="panel-title">JSON 预览</div>
           <el-input
             :model-value="previewJson"
@@ -443,10 +523,13 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import {
   createWorkflow,
+  debugWorkflowNode,
   getWorkflowDetail,
   getLatestWorkflowRun,
   getWorkflowReviewTask,
   getWorkflowRunDetail,
+  getWorkflowVersions,
+  restoreWorkflowVersion,
   startAsyncWorkflowRun,
   submitWorkflowReview,
   updateWorkflow,
@@ -456,14 +539,16 @@ import {
   type WorkflowEdge,
   type WorkflowNode,
   type WorkflowNodeRun,
+  type WorkflowNodeDebugResult,
   type WorkflowRunEvent,
   type WorkflowRun,
   type WorkflowReviewTask,
+  type WorkflowVersion,
 } from '@/api/workflow'
 import { getModelGroups, type ModelGroup } from '@/api/agent'
 import { notifySuccess } from '@/utils/notify'
 
-type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'END'
+type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'END'
 type NodeConfig = Record<string, any>
 type ValidationIssue = {
   key: string
@@ -494,6 +579,9 @@ const lastRunEventSeq = ref(0)
 const canvasScale = ref(1)
 const modelGroups = ref<ModelGroup[]>([])
 const loadingModels = ref(false)
+const debuggingNode = ref(false)
+const nodeDebugResult = ref<WorkflowNodeDebugResult | null>(null)
+const workflowVersions = ref<WorkflowVersion[]>([])
 
 const nodeTypes = [
   { type: 'START' as NodeType, label: '开始', short: 'S', description: '用户输入入口' },
@@ -502,6 +590,7 @@ const nodeTypes = [
   { type: 'KNOWLEDGE' as NodeType, label: '知识库', short: 'K', description: '检索 RAG 内容' },
   { type: 'API_CALL' as NodeType, label: 'API 调用', short: 'A', description: '请求外部接口' },
   { type: 'HUMAN_REVIEW' as NodeType, label: '人工审核', short: 'H', description: '暂停等待人工确认' },
+  { type: 'CODE_TASK' as NodeType, label: '代码任务', short: 'C', description: '调用 Code Worker 实现' },
   { type: 'END' as NodeType, label: '结束', short: 'E', description: '输出最终结果' },
 ]
 
@@ -622,6 +711,9 @@ const canvasSize = computed(() => {
 })
 const availableVariables = computed(() => buildVariableOptions(selectedNode.value?.nodeKey))
 const validationIssues = computed<ValidationIssue[]>(() => buildValidationIssues())
+const canDebugSelectedNode = computed(() =>
+  !!selectedNode.value && !['START', 'END'].includes(selectedNode.value.nodeType),
+)
 
 function copyConfig<T>(config: T): T {
   return JSON.parse(JSON.stringify(config))
@@ -672,6 +764,7 @@ function runTagType(status: string) {
   if (status === 'FAILED') return 'danger'
   if (status === 'TIMEOUT') return 'warning'
   if (status === 'WAITING') return 'warning'
+  if (status === 'CANCELED') return 'info'
   return 'primary'
 }
 
@@ -805,6 +898,17 @@ function buildValidationIssues(): ValidationIssue[] {
         issues.push({ key: `api-headers-${node.nodeKey}`, level: 'error', message: `API 节点「${node.name}」的 Headers JSON 不合法`, nodeKey: node.nodeKey })
       }
     }
+    if (node.nodeType === 'CODE_TASK') {
+      if (!String(config.task ?? '').trim()) {
+        issues.push({ key: `code-task-${node.nodeKey}`, level: 'error', message: `代码任务节点「${node.name}」缺少任务描述`, nodeKey: node.nodeKey })
+      }
+      if (!config.mcpServerId) {
+        issues.push({ key: `code-mcp-server-${node.nodeKey}`, level: 'error', message: `代码任务节点「${node.name}」缺少 MCP Server ID`, nodeKey: node.nodeKey })
+      }
+      if (!String(config.toolName ?? '').trim()) {
+        issues.push({ key: `code-tool-${node.nodeKey}`, level: 'error', message: `代码任务节点「${node.name}」缺少工具名称`, nodeKey: node.nodeKey })
+      }
+    }
     if (node.nodeType === 'END' && !String(config.outputVariable ?? '').trim()) {
       issues.push({ key: `end-output-${node.nodeKey}`, level: 'warning', message: `结束节点「${node.name}」未指定输出变量`, nodeKey: node.nodeKey })
     }
@@ -850,6 +954,7 @@ function defaultConfig(type: NodeType): NodeConfig {
   if (type === 'API_CALL') return { url: '', method: 'GET', headersText: '{}', outputVariable: 'response' }
   if (type === 'KNOWLEDGE') return { knowledgeBaseId: undefined, query: '{{start.userMessage}}', topK: 3, outputVariable: 'context' }
   if (type === 'HUMAN_REVIEW') return { title: '人工审核', content: '{{start.userMessage}}', actions: ['APPROVE', 'REJECT'], allowEdit: false, outputVariable: 'result' }
+  if (type === 'CODE_TASK') return { task: '{{start.userMessage}}', executor: 'MCP', mcpServerId: undefined, toolName: 'code_worker', timeoutSeconds: 600, outputVariable: 'result' }
   if (type === 'END') return { outputVariable: '' }
   return {}
 }
@@ -965,18 +1070,21 @@ function selectNode(nodeKey: string) {
   }
   selectedNodeKey.value = nodeKey
   selectedEdge.value = null
+  nodeDebugResult.value = null
 }
 
 function selectEdge(edge: WorkflowEdge) {
   selectedNodeKey.value = ''
   selectedEdge.value = edge
   linkingFrom.value = ''
+  nodeDebugResult.value = null
 }
 
 function clearSelection() {
   selectedNodeKey.value = ''
   selectedEdge.value = null
   linkingFrom.value = ''
+  nodeDebugResult.value = null
 }
 
 function startLink(nodeKey: string) {
@@ -1010,6 +1118,8 @@ function insertVariable(value: string) {
     config.url = `${config.url ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'HUMAN_REVIEW') {
     config.content = `${config.content ?? ''}${value}`
+  } else if (selectedNode.value.nodeType === 'CODE_TASK') {
+    config.task = `${config.task ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'END') {
     config.outputVariable = value.replace(/^\{\{|\}\}$/g, '')
   }
@@ -1206,10 +1316,49 @@ async function loadWorkflowDetail() {
     form.description = detail.description ?? ''
     applyConfig(toConfigJson(detail))
     latestRun.value = await getLatestWorkflowRun(workflowId.value).catch(() => null)
+    await loadWorkflowVersions()
   } catch {
     router.push('/workflows')
   } finally {
     loadingDetail.value = false
+  }
+}
+
+async function loadWorkflowVersions() {
+  if (!isEditMode.value) {
+    workflowVersions.value = []
+    return
+  }
+  workflowVersions.value = await getWorkflowVersions(workflowId.value).catch(() => [])
+}
+
+async function debugSelectedNode() {
+  if (!selectedNode.value || !canDebugSelectedNode.value) return
+  const id = await saveWorkflowBeforeRun()
+  if (!id) return
+  debuggingNode.value = true
+  nodeDebugResult.value = null
+  try {
+    nodeDebugResult.value = await debugWorkflowNode(id, selectedNode.value.nodeKey, {
+      userMessage: runInput.value.trim(),
+      variables: latestRun.value?.nodeRuns?.find((run) => run.nodeKey === selectedNode.value?.nodeKey)?.outputs,
+    })
+  } finally {
+    debuggingNode.value = false
+  }
+}
+
+async function restoreVersion(versionNo: number) {
+  if (!isEditMode.value) return
+  try {
+    const detail = await restoreWorkflowVersion(workflowId.value, versionNo)
+    form.name = detail.name ?? ''
+    form.description = detail.description ?? ''
+    applyConfig(toConfigJson(detail))
+    await loadWorkflowVersions()
+    notifySuccess(`已恢复到 v${versionNo}`)
+  } catch {
+    // request interceptor has shown the error message
   }
 }
 
@@ -1226,6 +1375,7 @@ async function saveWorkflowBeforeRun(): Promise<number | null> {
   }
   if (isEditMode.value) {
     await updateWorkflow(workflowId.value, payload)
+    await loadWorkflowVersions()
     return workflowId.value
   }
   const created = await createWorkflow(payload) as WorkflowDetail
@@ -1449,6 +1599,7 @@ async function handleSubmit() {
     }
     if (isEditMode.value) {
       await updateWorkflow(workflowId.value, payload)
+      await loadWorkflowVersions()
       notifySuccess('工作流已更新')
     } else {
       await createWorkflow(payload)
@@ -1577,6 +1728,42 @@ onBeforeUnmount(() => {
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: var(--font-semibold);
+}
+
+.review-card__head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.review-card__head span,
+.review-card__head strong {
+  display: block;
+}
+
+.review-card__head span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.review-card__head strong {
+  margin-top: 2px;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.review-card__content {
+  max-height: 150px;
+  overflow: auto;
+  padding: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: #fff;
+  border: 1px solid #f0dca8;
+  border-radius: 6px;
 }
 
 .review-card p {
@@ -1844,6 +2031,11 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgb(255 77 79 / 14%);
 }
 
+.workflow-node--run-canceled {
+  border-color: #a8b1c4;
+  box-shadow: 0 0 0 3px rgb(148 163 184 / 14%);
+}
+
 .workflow-node--run-running {
   border-color: var(--primary-color);
   box-shadow: 0 0 0 3px rgb(67 97 238 / 14%);
@@ -1905,6 +2097,10 @@ onBeforeUnmount(() => {
 
 .workflow-node--human_review {
   background: #fffaf0;
+}
+
+.workflow-node--code_task {
+  background: #f7f7ff;
 }
 
 .workflow-node--reply {
@@ -1986,6 +2182,43 @@ onBeforeUnmount(() => {
   color: #e5484d;
   font-size: var(--text-sm);
   line-height: 1.45;
+}
+
+.version-panel {
+  padding: 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.version-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-top: 1px solid #eef2f7;
+}
+
+.version-item:first-of-type {
+  border-top: 0;
+}
+
+.version-item strong,
+.version-item span {
+  display: block;
+}
+
+.version-item strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.version-item span {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 
 .json-preview :deep(.el-textarea__inner) {

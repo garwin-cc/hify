@@ -12,6 +12,7 @@ public enum WorkflowNodeType {
     API_CALL,
     KNOWLEDGE,
     HUMAN_REVIEW,
+    CODE_TASK,
     TOOL,
     REPLY,
     END;

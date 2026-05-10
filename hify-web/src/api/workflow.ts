@@ -89,7 +89,7 @@ export interface WorkflowNodeRun {
   workflowRunId: number
   nodeKey: string
   nodeType: string
-  status: 'RUNNING' | 'WAITING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'SKIPPED'
+  status: 'RUNNING' | 'WAITING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'CANCELED' | 'SKIPPED'
   outputs: Record<string, unknown>
   error?: string
   elapsedMs?: number
@@ -100,6 +100,7 @@ export interface WorkflowNodeRun {
 export interface WorkflowRun {
   id: number
   workflowId: number
+  workflowVersionId?: number
   status: 'RUNNING' | 'WAITING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'CANCELED'
   input: string
   output?: string
@@ -133,6 +134,22 @@ export interface WorkflowRunEvent {
   nodeKey?: string
   status?: string
   payload: Record<string, unknown>
+  createdAt: string
+}
+
+export interface WorkflowNodeDebugResult {
+  status: 'SUCCESS' | 'FAILED'
+  outputs: Record<string, unknown>
+  error?: string
+  elapsedMs?: number
+}
+
+export interface WorkflowVersion {
+  id: number
+  workflowId: number
+  versionNo: number
+  changeSummary: string
+  snapshotJson: WorkflowDetail
   createdAt: string
 }
 
@@ -194,6 +211,19 @@ export const workflowRunEventsUrl = (runId: number, afterEventSeq = 0): string =
 
 export const getLatestWorkflowRun = (id: number): Promise<WorkflowRun | null> =>
   get(`/v1/workflows/${id}/runs/latest`)
+
+export const debugWorkflowNode = (
+  id: number,
+  nodeKey: string,
+  data: { userMessage?: string; variables?: Record<string, unknown> },
+): Promise<WorkflowNodeDebugResult> =>
+  post(`/v1/workflows/${id}/nodes/${nodeKey}/debug`, data)
+
+export const getWorkflowVersions = (id: number): Promise<WorkflowVersion[]> =>
+  get(`/v1/workflows/${id}/versions`)
+
+export const restoreWorkflowVersion = (id: number, versionNo: number): Promise<WorkflowDetail> =>
+  post(`/v1/workflows/${id}/versions/${versionNo}/restore`, {})
 
 export function workflowStatusOf(row: WorkflowListItem): WorkflowStatus {
   return row.enabled === 1 ? 'PUBLISHED' : 'DRAFT'

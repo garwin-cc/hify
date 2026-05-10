@@ -21,19 +21,23 @@ public class WorkflowRunCleanupJob {
 
     @EventListener(ApplicationReadyEvent.class)
     public void markStaleRunningRunsFailed() {
-        List<WorkflowRunPo> staleRuns = workflowRunMapper.selectList(
-                Wrappers.lambdaQuery(WorkflowRunPo.class)
-                        .eq(WorkflowRunPo::getStatus, "RUNNING"));
-        for (WorkflowRunPo run : staleRuns) {
-            run.setStatus("FAILED");
-            run.setError("服务重启导致异步工作流中断，请重新执行");
-            run.setFinishedAt(LocalDateTime.now());
-            workflowRunMapper.updateById(run);
-            workflowRunEventService.publishRunEvent(run.getId(), "RUN_FAILED", "FAILED",
-                    java.util.Map.of("error", run.getError()));
-        }
-        if (!staleRuns.isEmpty()) {
-            log.warn("marked stale workflow runs failed count={}", staleRuns.size());
+        try {
+            List<WorkflowRunPo> staleRuns = workflowRunMapper.selectList(
+                    Wrappers.lambdaQuery(WorkflowRunPo.class)
+                            .eq(WorkflowRunPo::getStatus, "RUNNING"));
+            for (WorkflowRunPo run : staleRuns) {
+                run.setStatus("FAILED");
+                run.setError("服务重启导致异步工作流中断，请重新执行");
+                run.setFinishedAt(LocalDateTime.now());
+                workflowRunMapper.updateById(run);
+                workflowRunEventService.publishRunEvent(run.getId(), "RUN_FAILED", "FAILED",
+                        java.util.Map.of("error", run.getError()));
+            }
+            if (!staleRuns.isEmpty()) {
+                log.warn("marked stale workflow runs failed count={}", staleRuns.size());
+            }
+        } catch (Exception e) {
+            log.warn("skip stale workflow run cleanup: {}", e.getMessage());
         }
     }
 }

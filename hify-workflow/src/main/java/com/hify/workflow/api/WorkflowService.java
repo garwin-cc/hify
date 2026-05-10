@@ -24,5 +24,9 @@ public interface WorkflowService {
 
     SseEmitter streamRunEvents(Long runId, Integer afterEventSeq);
 
+    WorkflowReviewTaskResp getReviewTask(Long runId);
+
+    WorkflowRunResp submitReview(Long runId, SubmitWorkflowReviewReq req);
+
     WorkflowRunResp getLatestRun(Long id);
 }

@@ -9,6 +9,7 @@ import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
 import com.hify.workflow.domain.WorkflowRunPo;
+import com.hify.workflow.domain.WorkflowReviewHandler;
 import com.hify.workflow.domain.config.NodeConfigParser;
 import com.hify.workflow.engine.executor.ConditionNodeConfig;
 import com.hify.workflow.engine.executor.LlmNodeConfig;
@@ -40,12 +41,14 @@ class WorkflowEngineTest {
     private WorkflowEngine engine;
     private List<WorkflowRunPo> updatedRuns;
     private List<WorkflowNodeRunPo> updatedNodeRuns;
+    private RecordingWorkflowReviewHandler reviewHandler;
 
     @BeforeEach
     void setUp() {
         AtomicLong ids = new AtomicLong(1);
         updatedRuns = new ArrayList<>();
         updatedNodeRuns = new ArrayList<>();
+        reviewHandler = new RecordingWorkflowReviewHandler();
         runMapper = mapper(WorkflowRunMapper.class, method -> {
             if ("insert".equals(method)) {
                 return args -> {
@@ -84,7 +87,8 @@ class WorkflowEngineTest {
                 runMapper,
                 nodeRunMapper,
                 new ObjectMapper(),
-                new NoopWorkflowEventPublisher());
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
     }
 
     @Test
@@ -106,7 +110,8 @@ class WorkflowEngineTest {
                 runMapper,
                 nodeRunMapper,
                 new ObjectMapper(),
-                new NoopWorkflowEventPublisher());
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
 
         String output = engine.execute(10L, "hello");
 
@@ -136,7 +141,8 @@ class WorkflowEngineTest {
                 runMapper,
                 nodeRunMapper,
                 new ObjectMapper(),
-                new NoopWorkflowEventPublisher());
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
 
         String output = engine.execute(10L, "match");
 
@@ -162,7 +168,8 @@ class WorkflowEngineTest {
                 runMapper,
                 nodeRunMapper,
                 new ObjectMapper(),
-                new NoopWorkflowEventPublisher());
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
 
         assertThatThrownBy(() -> engine.execute(10L, "hello"))
                 .isInstanceOf(BizException.class)
@@ -197,7 +204,8 @@ class WorkflowEngineTest {
                 runMapper,
                 nodeRunMapper,
                 new ObjectMapper(),
-                new NoopWorkflowEventPublisher());
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
 
         assertThatThrownBy(() -> engine.execute(10L, "hello"))
                 .isInstanceOf(BizException.class)
@@ -210,6 +218,100 @@ class WorkflowEngineTest {
         assertThat(updatedRuns).anySatisfy(run -> {
             assertThat(run.getStatus()).isEqualTo("TIMEOUT");
             assertThat(run.getError()).contains("LLM 请求超时");
+        });
+    }
+
+    @Test
+    void waitsAtHumanReviewAndPersistsContextSnapshot() {
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("review", "HUMAN_REVIEW", "{\"title\":\"确认\",\"content\":\"确认 {{llm.answer}}\",\"outputVariable\":\"result\"}"),
+                node("end", "END", "{\"outputVariable\":\"llm.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "review", null, 0),
+                edge("review", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
+
+        String output = engine.execute(10L, "hello");
+
+        assertThat(output).isNull();
+        assertThat(reviewHandler.created).isTrue();
+        assertThat(reviewHandler.content).isEqualTo("确认 answer: hello");
+        assertThat(updatedRuns).anySatisfy(run -> {
+            assertThat(run.getStatus()).isEqualTo("WAITING");
+            assertThat(run.getCurrentNodeKey()).isEqualTo("review");
+            assertThat(run.getContextSnapshot()).contains("llm.answer");
+        });
+        assertThat(updatedNodeRuns).anySatisfy(run -> {
+            assertThat(run.getNodeKey()).isEqualTo("review");
+            assertThat(run.getStatus()).isEqualTo("WAITING");
+        });
+    }
+
+    @Test
+    void resumesAfterApprovedHumanReviewFromNextNode() {
+        WorkflowRunPo existingRun = new WorkflowRunPo();
+        existingRun.setId(99L);
+        existingRun.setWorkflowId(10L);
+        existingRun.setStatus("RUNNING");
+        existingRun.setInput("hello");
+        existingRun.setCurrentNodeKey("review");
+        existingRun.setContextSnapshot("{\"start.userMessage\":\"hello\",\"llm.answer\":\"draft\",\"review.result\":{\"action\":\"APPROVE\"}}");
+        runMapper = mapper(WorkflowRunMapper.class, method -> {
+            if ("selectById".equals(method)) {
+                return args -> existingRun;
+            }
+            if ("updateById".equals(method)) {
+                return args -> {
+                    updatedRuns.add(copyRun((WorkflowRunPo) args[0]));
+                    return 1;
+                };
+            }
+            return null;
+        });
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("review", "HUMAN_REVIEW", "{\"title\":\"确认\",\"content\":\"{{llm.answer}}\",\"outputVariable\":\"result\"}"),
+                node("final", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"final.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "review", null, 0),
+                edge("review", "final", "APPROVE", 0),
+                edge("final", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
+
+        String output = engine.resumeAfterReview(99L);
+
+        assertThat(output).isEqualTo("answer: hello");
+        assertThat(updatedRuns).anySatisfy(run -> {
+            assertThat(run.getStatus()).isEqualTo("SUCCESS");
+            assertThat(run.getOutput()).isEqualTo("answer: hello");
         });
     }
 
@@ -255,7 +357,8 @@ class WorkflowEngineTest {
                 runMapper,
                 nodeRunMapper,
                 new ObjectMapper(),
-                new NoopWorkflowEventPublisher());
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
 
         String output = engine.executeExistingRun(99L, 10L, "hello");
 
@@ -302,6 +405,7 @@ class WorkflowEngineTest {
         copy.setCurrentNodeKey(source.getCurrentNodeKey());
         copy.setTimeoutAt(source.getTimeoutAt());
         copy.setRunMode(source.getRunMode());
+        copy.setContextSnapshot(source.getContextSnapshot());
         copy.setElapsedMs(source.getElapsedMs());
         copy.setFinishedAt(source.getFinishedAt());
         return copy;
@@ -396,6 +500,18 @@ class WorkflowEngineTest {
 
         @Override
         public void publishNodeEvent(Long workflowRunId, String eventType, String nodeKey, String status, Map<String, Object> payload) {
+        }
+    }
+
+    private static class RecordingWorkflowReviewHandler implements WorkflowReviewHandler {
+        boolean created;
+        String content;
+
+        @Override
+        public void createWaitingReview(Long workflowRunId, String nodeKey, String title, String content,
+                                        List<String> actions, boolean allowEdit, String outputVariable) {
+            this.created = true;
+            this.content = content;
         }
     }
 }

@@ -178,6 +178,34 @@
               <span>当前节点</span>
               <p>{{ latestRun.currentNodeKey }}</p>
             </div>
+            <div v-if="latestRun.status === 'WAITING' && reviewTask" class="review-card">
+              <div class="review-card__title">{{ reviewTask.title }}</div>
+              <p>{{ reviewTask.content }}</p>
+              <el-input
+                v-if="reviewTask.allowEdit"
+                v-model="reviewEditedContent"
+                type="textarea"
+                :rows="4"
+                placeholder="可编辑评审内容"
+              />
+              <el-input
+                v-model="reviewComment"
+                type="textarea"
+                :rows="2"
+                placeholder="评审备注（可选）"
+              />
+              <div class="review-card__actions">
+                <el-button
+                  v-for="action in reviewTask.actions"
+                  :key="action"
+                  :type="action === 'APPROVE' ? 'primary' : 'danger'"
+                  plain
+                  @click="handleReviewAction(action)"
+                >
+                  {{ action === 'APPROVE' ? '通过' : action === 'REJECT' ? '拒绝' : action }}
+                </el-button>
+              </div>
+            </div>
             <div v-if="latestRun.output" class="run-summary__block">
               <span>输出</span>
               <p>{{ latestRun.output }}</p>
@@ -326,6 +354,33 @@
               </el-form-item>
             </template>
 
+            <template v-else-if="selectedNode.nodeType === 'HUMAN_REVIEW'">
+              <el-form-item label="评审标题">
+                <el-input v-model="selectedConfig.title" placeholder="人工审核" />
+              </el-form-item>
+              <el-form-item label="评审内容">
+                <el-input v-model="selectedConfig.content" type="textarea" :rows="6" />
+              </el-form-item>
+              <el-form-item label="评审动作">
+                <el-select
+                  v-model="selectedConfig.actions"
+                  multiple
+                  allow-create
+                  default-first-option
+                  placeholder="APPROVE / REJECT"
+                >
+                  <el-option label="APPROVE" value="APPROVE" />
+                  <el-option label="REJECT" value="REJECT" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="允许编辑内容">
+                <el-switch v-model="selectedConfig.allowEdit" />
+              </el-form-item>
+              <el-form-item label="输出变量">
+                <el-input v-model="selectedConfig.outputVariable" placeholder="result" />
+              </el-form-item>
+            </template>
+
             <template v-else-if="selectedNode.nodeType === 'END'">
               <el-form-item label="输出变量">
                 <el-input v-model="selectedConfig.outputVariable" placeholder="node.answer" />
@@ -390,8 +445,10 @@ import {
   createWorkflow,
   getWorkflowDetail,
   getLatestWorkflowRun,
+  getWorkflowReviewTask,
   getWorkflowRunDetail,
   startAsyncWorkflowRun,
+  submitWorkflowReview,
   updateWorkflow,
   workflowRunEventsUrl,
   type WorkflowConfigJson,
@@ -401,11 +458,12 @@ import {
   type WorkflowNodeRun,
   type WorkflowRunEvent,
   type WorkflowRun,
+  type WorkflowReviewTask,
 } from '@/api/workflow'
 import { getModelGroups, type ModelGroup } from '@/api/agent'
 import { notifySuccess } from '@/utils/notify'
 
-type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'END'
+type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'END'
 type NodeConfig = Record<string, any>
 type ValidationIssue = {
   key: string
@@ -427,6 +485,9 @@ const selectedEdge = ref<WorkflowEdge | null>(null)
 const linkingFrom = ref('')
 const runInput = ref('我要申请退款')
 const latestRun = ref<WorkflowRun | null>(null)
+const reviewTask = ref<WorkflowReviewTask | null>(null)
+const reviewComment = ref('')
+const reviewEditedContent = ref('')
 const runPollingTimer = ref<number | null>(null)
 const runEventSource = ref<EventSource | null>(null)
 const lastRunEventSeq = ref(0)
@@ -440,6 +501,7 @@ const nodeTypes = [
   { type: 'CONDITION' as NodeType, label: '条件', short: 'C', description: '根据表达式分支' },
   { type: 'KNOWLEDGE' as NodeType, label: '知识库', short: 'K', description: '检索 RAG 内容' },
   { type: 'API_CALL' as NodeType, label: 'API 调用', short: 'A', description: '请求外部接口' },
+  { type: 'HUMAN_REVIEW' as NodeType, label: '人工审核', short: 'H', description: '暂停等待人工确认' },
   { type: 'END' as NodeType, label: '结束', short: 'E', description: '输出最终结果' },
 ]
 
@@ -609,6 +671,7 @@ function runTagType(status: string) {
   if (status === 'SUCCESS') return 'success'
   if (status === 'FAILED') return 'danger'
   if (status === 'TIMEOUT') return 'warning'
+  if (status === 'WAITING') return 'warning'
   return 'primary'
 }
 
@@ -724,6 +787,14 @@ function buildValidationIssues(): ValidationIssue[] {
     if (node.nodeType === 'KNOWLEDGE' && !config.knowledgeBaseId) {
       issues.push({ key: `knowledge-id-${node.nodeKey}`, level: 'error', message: `知识库节点「${node.name}」缺少知识库 ID`, nodeKey: node.nodeKey })
     }
+    if (node.nodeType === 'HUMAN_REVIEW') {
+      if (!String(config.content ?? '').trim()) {
+        issues.push({ key: `review-content-${node.nodeKey}`, level: 'error', message: `人工审核节点「${node.name}」缺少评审内容`, nodeKey: node.nodeKey })
+      }
+      if (!String(config.outputVariable ?? '').trim()) {
+        issues.push({ key: `review-output-${node.nodeKey}`, level: 'error', message: `人工审核节点「${node.name}」缺少输出变量`, nodeKey: node.nodeKey })
+      }
+    }
     if (node.nodeType === 'API_CALL') {
       if (!String(config.url ?? '').trim()) {
         issues.push({ key: `api-url-${node.nodeKey}`, level: 'error', message: `API 节点「${node.name}」缺少 URL`, nodeKey: node.nodeKey })
@@ -778,6 +849,7 @@ function defaultConfig(type: NodeType): NodeConfig {
   if (type === 'CONDITION') return { expression: 'true', outputVariable: 'matched' }
   if (type === 'API_CALL') return { url: '', method: 'GET', headersText: '{}', outputVariable: 'response' }
   if (type === 'KNOWLEDGE') return { knowledgeBaseId: undefined, query: '{{start.userMessage}}', topK: 3, outputVariable: 'context' }
+  if (type === 'HUMAN_REVIEW') return { title: '人工审核', content: '{{start.userMessage}}', actions: ['APPROVE', 'REJECT'], allowEdit: false, outputVariable: 'result' }
   if (type === 'END') return { outputVariable: '' }
   return {}
 }
@@ -936,6 +1008,8 @@ function insertVariable(value: string) {
     config.query = `${config.query ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'API_CALL') {
     config.url = `${config.url ?? ''}${value}`
+  } else if (selectedNode.value.nodeType === 'HUMAN_REVIEW') {
+    config.content = `${config.content ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'END') {
     config.outputVariable = value.replace(/^\{\{|\}\}$/g, '')
   }
@@ -1168,6 +1242,7 @@ async function handleRun() {
   stopRunEventStream()
   runningWorkflow.value = true
   latestRun.value = null
+  clearReviewTask()
   lastRunEventSeq.value = 0
   try {
     const id = await saveWorkflowBeforeRun()
@@ -1176,8 +1251,13 @@ async function handleRun() {
       return
     }
     latestRun.value = await startAsyncWorkflowRun(id, runInput.value.trim())
+    await syncReviewTaskIfWaiting(latestRun.value)
     persistRunResumeState()
     notifySuccess('工作流已开始执行')
+    if (latestRun.value.status === 'WAITING') {
+      runningWorkflow.value = false
+      return
+    }
     if (isTerminalRun(latestRun.value.status)) {
       runningWorkflow.value = false
       clearRunResumeState()
@@ -1196,6 +1276,48 @@ function isTerminalRun(status?: string) {
   return ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELED'].includes(status ?? '')
 }
 
+async function syncReviewTaskIfWaiting(run: WorkflowRun | null) {
+  if (!run || run.status !== 'WAITING') {
+    clearReviewTask()
+    return
+  }
+  try {
+    reviewTask.value = await getWorkflowReviewTask(run.id)
+    reviewEditedContent.value = reviewTask.value.content ?? ''
+  } catch {
+    clearReviewTask()
+  }
+}
+
+function clearReviewTask() {
+  reviewTask.value = null
+  reviewComment.value = ''
+  reviewEditedContent.value = ''
+}
+
+async function handleReviewAction(action: string) {
+  if (!latestRun.value) return
+  runningWorkflow.value = true
+  try {
+    latestRun.value = await submitWorkflowReview(latestRun.value.id, {
+      action,
+      comment: reviewComment.value.trim(),
+      editedContent: reviewEditedContent.value,
+    })
+    clearReviewTask()
+    if (isTerminalRun(latestRun.value.status)) {
+      runningWorkflow.value = false
+      clearRunResumeState()
+      return
+    }
+    lastRunEventSeq.value = 0
+    persistRunResumeState()
+    startRunEventStream(latestRun.value.id, lastRunEventSeq.value)
+  } catch {
+    runningWorkflow.value = false
+  }
+}
+
 function startRunEventStream(runId: number, afterEventSeq = 0) {
   stopRunEventStream()
   runEventSource.value = new EventSource(workflowRunEventsUrl(runId, afterEventSeq))
@@ -1206,6 +1328,12 @@ function startRunEventStream(runId: number, afterEventSeq = 0) {
       persistRunResumeState()
       const detail = await getWorkflowRunDetail(runId)
       latestRun.value = detail
+      await syncReviewTaskIfWaiting(detail)
+      if (detail.status === 'WAITING') {
+        runningWorkflow.value = false
+        stopRunEventStream()
+        return
+      }
       if (isTerminalRun(detail.status)) {
         runningWorkflow.value = false
         stopRunEventStream()
@@ -1233,6 +1361,12 @@ function startRunPolling(runId: number) {
     try {
       const detail = await getWorkflowRunDetail(runId)
       latestRun.value = detail
+      await syncReviewTaskIfWaiting(detail)
+      if (detail.status === 'WAITING') {
+        stopRunPolling()
+        runningWorkflow.value = false
+        return
+      }
       if (isTerminalRun(detail.status)) {
         stopRunPolling()
         runningWorkflow.value = false
@@ -1281,7 +1415,12 @@ async function restoreRunningWorkflow() {
     if (!state.runId) return
     const detail = await getWorkflowRunDetail(state.runId)
     latestRun.value = detail
+    await syncReviewTaskIfWaiting(detail)
     lastRunEventSeq.value = state.lastEventSeq ?? 0
+    if (detail.status === 'WAITING') {
+      runningWorkflow.value = false
+      return
+    }
     if (isTerminalRun(detail.status)) {
       runningWorkflow.value = false
       clearRunResumeState()
@@ -1394,6 +1533,11 @@ onBeforeUnmount(() => {
   background: #fffaf0;
 }
 
+.run-summary--waiting {
+  border-color: #ffe1a6;
+  background: #fffaf0;
+}
+
 .run-summary__header {
   display: flex;
   align-items: center;
@@ -1421,6 +1565,32 @@ onBeforeUnmount(() => {
 
 .run-summary__block--error p {
   color: #e5484d;
+}
+
+.review-card {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.review-card__title {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+}
+
+.review-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.review-card__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .panel-title {
@@ -1679,6 +1849,11 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgb(67 97 238 / 14%);
 }
 
+.workflow-node--run-waiting {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 3px rgb(245 158 11 / 14%);
+}
+
 .workflow-node__head {
   display: flex;
   align-items: center;
@@ -1726,6 +1901,10 @@ onBeforeUnmount(() => {
 
 .workflow-node--knowledge {
   background: #f4fbff;
+}
+
+.workflow-node--human_review {
+  background: #fffaf0;
 }
 
 .workflow-node--reply {

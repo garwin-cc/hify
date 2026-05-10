@@ -89,7 +89,7 @@ export interface WorkflowNodeRun {
   workflowRunId: number
   nodeKey: string
   nodeType: string
-  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'SKIPPED'
+  status: 'RUNNING' | 'WAITING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'SKIPPED'
   outputs: Record<string, unknown>
   error?: string
   elapsedMs?: number
@@ -100,7 +100,7 @@ export interface WorkflowNodeRun {
 export interface WorkflowRun {
   id: number
   workflowId: number
-  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'CANCELED'
+  status: 'RUNNING' | 'WAITING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'CANCELED'
   input: string
   output?: string
   error?: string
@@ -111,6 +111,18 @@ export interface WorkflowRun {
   createdAt: string
   finishedAt?: string
   nodeRuns: WorkflowNodeRun[]
+}
+
+export interface WorkflowReviewTask {
+  id: number
+  workflowRunId: number
+  nodeKey: string
+  status: string
+  title: string
+  content: string
+  actions: string[]
+  allowEdit: boolean
+  outputVariable: string
 }
 
 export interface WorkflowRunEvent {
@@ -167,6 +179,15 @@ export const startAsyncWorkflowRun = (id: number, userMessage: string): Promise<
 
 export const getWorkflowRunDetail = (runId: number): Promise<WorkflowRun> =>
   get(`/v1/workflow-runs/${runId}`)
+
+export const getWorkflowReviewTask = (runId: number): Promise<WorkflowReviewTask> =>
+  get(`/v1/workflow-runs/${runId}/review`)
+
+export const submitWorkflowReview = (
+  runId: number,
+  data: { action: string; comment?: string; editedContent?: string },
+): Promise<WorkflowRun> =>
+  post(`/v1/workflow-runs/${runId}/review`, data)
 
 export const workflowRunEventsUrl = (runId: number, afterEventSeq = 0): string =>
   `/api/v1/workflow-runs/${runId}/events?after=${Math.max(0, afterEventSeq)}`

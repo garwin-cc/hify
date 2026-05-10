@@ -19,6 +19,13 @@ public class ExecutionContext {
         set("start", "userMessage", userMessage);
     }
 
+    public ExecutionContext(Long workflowRunId, Map<String, Object> snapshot) {
+        this.workflowRunId = workflowRunId;
+        if (snapshot != null) {
+            this.variables.putAll(snapshot);
+        }
+    }
+
     public Long getWorkflowRunId() {
         return workflowRunId;
     }

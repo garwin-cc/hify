@@ -1,11 +1,16 @@
 package com.hify.workflow.web;
 
 import com.hify.common.web.Result;
+import com.hify.workflow.api.SubmitWorkflowReviewReq;
 import com.hify.workflow.api.WorkflowRunResp;
 import com.hify.workflow.api.WorkflowService;
+import com.hify.workflow.api.WorkflowReviewTaskResp;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,6 +34,17 @@ public class WorkflowRunController {
                                    @RequestParam(required = false) Integer after,
                                    @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
         return workflowService.streamRunEvents(runId, resolveAfter(after, lastEventId));
+    }
+
+    @GetMapping("/{runId}/review")
+    public Result<WorkflowReviewTaskResp> getReviewTask(@PathVariable Long runId) {
+        return Result.ok(workflowService.getReviewTask(runId));
+    }
+
+    @PostMapping("/{runId}/review")
+    public Result<WorkflowRunResp> submitReview(@PathVariable Long runId,
+                                                @Valid @RequestBody SubmitWorkflowReviewReq req) {
+        return Result.ok(workflowService.submitReview(runId, req));
     }
 
     private Integer resolveAfter(Integer after, String lastEventId) {

@@ -28,6 +28,8 @@ public class WorkflowRunPo extends BaseEntity {
 
     private String runMode;
 
+    private String contextSnapshot;
+
     private Integer elapsedMs;
 
     private LocalDateTime finishedAt;

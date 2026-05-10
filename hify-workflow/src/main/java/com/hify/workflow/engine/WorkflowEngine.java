@@ -2,6 +2,7 @@ package com.hify.workflow.engine;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
@@ -11,9 +12,11 @@ import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
 import com.hify.workflow.domain.WorkflowRunPo;
+import com.hify.workflow.domain.WorkflowReviewHandler;
 import com.hify.workflow.domain.config.NodeConfigParser;
 import com.hify.workflow.engine.executor.ConditionNodeConfig;
 import com.hify.workflow.engine.executor.EndNodeConfig;
+import com.hify.workflow.engine.executor.HumanReviewConfig;
 import com.hify.workflow.engine.executor.NodeExecutorRegistry;
 import com.hify.workflow.infra.WorkflowEdgeMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
@@ -40,6 +43,7 @@ public class WorkflowEngine {
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_TIMEOUT = "TIMEOUT";
+    private static final String STATUS_WAITING = "WAITING";
     private static final String RUN_MODE_SYNC = "SYNC";
     private static final int MAX_STEPS = 50;
 
@@ -51,6 +55,7 @@ public class WorkflowEngine {
     private final WorkflowNodeRunMapper workflowNodeRunMapper;
     private final ObjectMapper objectMapper;
     private final WorkflowEventPublisher workflowEventPublisher;
+    private final WorkflowReviewHandler workflowReviewHandler;
 
     public String execute(Long workflowId, String userMessage) {
         WorkflowRunPo workflowRun = createWorkflowRun(workflowId, userMessage, RUN_MODE_SYNC, null);
@@ -65,20 +70,36 @@ public class WorkflowEngine {
         return executeRun(workflowRun, workflowId, userMessage);
     }
 
+    public String resumeAfterReview(Long workflowRunId) {
+        WorkflowRunPo workflowRun = workflowRunMapper.selectById(workflowRunId);
+        if (workflowRun == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + workflowRunId);
+        }
+        return executeRun(workflowRun, workflowRun.getWorkflowId(), workflowRun.getInput(), true);
+    }
+
     private String executeRun(WorkflowRunPo workflowRun, Long workflowId, String userMessage) {
+        return executeRun(workflowRun, workflowId, userMessage, false);
+    }
+
+    private String executeRun(WorkflowRunPo workflowRun, Long workflowId, String userMessage, boolean resume) {
         long startedAt = System.currentTimeMillis();
         List<WorkflowNodePo> nodes = loadNodes(workflowId);
         List<WorkflowEdgePo> edges = loadEdges(workflowId);
         Map<String, WorkflowNodePo> nodeMap = toNodeMap(nodes);
         Map<String, List<WorkflowEdgePo>> edgeMap = toEdgeMap(edges);
         WorkflowNodePo startNode = requireStartNode(nodes);
-        ExecutionContext ctx = new ExecutionContext(workflowRun.getId(), userMessage);
+        ExecutionContext ctx = resume
+                ? new ExecutionContext(workflowRun.getId(), parseContextSnapshot(workflowRun.getContextSnapshot()))
+                : new ExecutionContext(workflowRun.getId(), userMessage);
 
         try {
             workflowEventPublisher.publishRunEvent(workflowRun.getId(), "RUN_STARTED", STATUS_RUNNING,
                     Map.of("workflowId", workflowId,
                             "runMode", StringUtils.hasText(workflowRun.getRunMode()) ? workflowRun.getRunMode() : RUN_MODE_SYNC));
-            String currentKey = startNode.getNodeKey();
+            String currentKey = resume && StringUtils.hasText(workflowRun.getCurrentNodeKey())
+                    ? findNext(nodeMap.get(workflowRun.getCurrentNodeKey()), edgeMap, ctx)
+                    : startNode.getNodeKey();
             String output = null;
             int steps = 0;
             while (StringUtils.hasText(currentKey)) {
@@ -104,6 +125,10 @@ public class WorkflowEngine {
                         workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_SUCCEEDED", currentKey, STATUS_SUCCESS,
                                 Map.of("nodeType", current.getNodeType(), "elapsedMs", elapsed(nodeStartedAt)));
                         break;
+                    }
+                    if ("HUMAN_REVIEW".equalsIgnoreCase(current.getNodeType())) {
+                        handleHumanReview(workflowRun, current, ctx, nodeRun, nodeStartedAt);
+                        return null;
                     }
                     if (!"START".equalsIgnoreCase(current.getNodeType())) {
                         NodeConfigDef config = nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
@@ -175,7 +200,20 @@ public class WorkflowEngine {
     }
 
     private String findNext(WorkflowNodePo current, Map<String, List<WorkflowEdgePo>> edgeMap, ExecutionContext ctx) {
+        if (current == null) {
+            return null;
+        }
         List<WorkflowEdgePo> edges = edgeMap.getOrDefault(current.getNodeKey(), List.of());
+        if ("HUMAN_REVIEW".equalsIgnoreCase(current.getNodeType())) {
+            String action = extractReviewAction(ctx.get(current.getNodeKey(), humanReviewOutputVariable(current)));
+            if (StringUtils.hasText(action)) {
+                return edges.stream()
+                        .filter(edge -> action.equalsIgnoreCase(edge.getConditionExpression()))
+                        .findFirst()
+                        .map(WorkflowEdgePo::getTargetNodeKey)
+                        .orElseGet(() -> defaultNext(edges));
+            }
+        }
         if ("CONDITION".equalsIgnoreCase(current.getNodeType())) {
             Object result = ctx.get(current.getNodeKey(), conditionOutputVariable(current));
             String expected = String.valueOf(Boolean.TRUE.equals(result));
@@ -185,6 +223,10 @@ public class WorkflowEngine {
                     .map(WorkflowEdgePo::getTargetNodeKey)
                     .orElse(null);
         }
+        return defaultNext(edges);
+    }
+
+    private String defaultNext(List<WorkflowEdgePo> edges) {
         return edges.stream()
                 .filter(edge -> !StringUtils.hasText(edge.getConditionExpression()))
                 .findFirst()
@@ -196,6 +238,20 @@ public class WorkflowEngine {
         NodeConfigDef config = nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
         ConditionNodeConfig conditionConfig = (ConditionNodeConfig) config;
         return StringUtils.hasText(conditionConfig.outputVariable()) ? conditionConfig.outputVariable() : "output";
+    }
+
+    private String humanReviewOutputVariable(WorkflowNodePo current) {
+        NodeConfigDef config = nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
+        HumanReviewConfig reviewConfig = (HumanReviewConfig) config;
+        return StringUtils.hasText(reviewConfig.outputVariable()) ? reviewConfig.outputVariable() : "result";
+    }
+
+    private String extractReviewAction(Object result) {
+        if (result instanceof Map<?, ?> map) {
+            Object action = map.get("action");
+            return action == null ? null : String.valueOf(action);
+        }
+        return result == null ? null : String.valueOf(result);
     }
 
     private String resolveEndOutput(WorkflowNodePo endNode, ExecutionContext ctx) {
@@ -210,6 +266,24 @@ public class WorkflowEngine {
 
     private WorkflowNode toEngineNode(WorkflowNodePo po) {
         return new WorkflowNode(po.getNodeKey(), po.getNodeType(), po.getName());
+    }
+
+    private void handleHumanReview(WorkflowRunPo workflowRun, WorkflowNodePo current, ExecutionContext ctx,
+                                   WorkflowNodeRunPo nodeRun, long nodeStartedAt) {
+        HumanReviewConfig config = (HumanReviewConfig) nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
+        String outputVariable = StringUtils.hasText(config.outputVariable()) ? config.outputVariable() : "result";
+        String title = ctx.resolve(StringUtils.hasText(config.title()) ? config.title() : current.getName());
+        String content = ctx.resolve(config.content());
+        List<String> actions = config.actions() == null || config.actions().isEmpty()
+                ? List.of("APPROVE", "REJECT")
+                : config.actions();
+        boolean allowEdit = Boolean.TRUE.equals(config.allowEdit());
+        workflowReviewHandler.createWaitingReview(workflowRun.getId(), current.getNodeKey(), title, content,
+                actions, allowEdit, outputVariable);
+        updateNodeRunWaiting(nodeRun, ctx, nodeStartedAt);
+        updateWorkflowRunWaiting(workflowRun, current.getNodeKey(), ctx);
+        workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "REVIEW_WAITING", current.getNodeKey(), STATUS_WAITING,
+                Map.of("title", title, "content", content, "actions", actions, "allowEdit", allowEdit));
     }
 
     public WorkflowRunPo createWorkflowRun(Long workflowId, String userMessage, String runMode, LocalDateTime timeoutAt) {
@@ -263,6 +337,17 @@ public class WorkflowEngine {
         }
     }
 
+    private void updateNodeRunWaiting(WorkflowNodeRunPo po, ExecutionContext ctx, long startedAt) {
+        po.setStatus(STATUS_WAITING);
+        po.setOutputs(toJson(ctx.snapshot()));
+        po.setElapsedMs(elapsed(startedAt));
+        try {
+            workflowNodeRunMapper.updateById(po);
+        } catch (Exception e) {
+            log.warn("failed to update workflow node run waiting id={}: {}", po.getId(), e.getMessage());
+        }
+    }
+
     private void updateNodeRunFailed(WorkflowNodeRunPo po, Exception exception, long startedAt) {
         po.setStatus(STATUS_FAILED);
         po.setError(shortError(exception));
@@ -284,6 +369,17 @@ public class WorkflowEngine {
             workflowRunMapper.updateById(po);
         } catch (Exception e) {
             log.warn("failed to update workflow run success id={}: {}", po.getId(), e.getMessage());
+        }
+    }
+
+    private void updateWorkflowRunWaiting(WorkflowRunPo po, String currentNodeKey, ExecutionContext ctx) {
+        po.setStatus(STATUS_WAITING);
+        po.setCurrentNodeKey(currentNodeKey);
+        po.setContextSnapshot(toJson(ctx.snapshot()));
+        try {
+            workflowRunMapper.updateById(po);
+        } catch (Exception e) {
+            log.warn("failed to update workflow run waiting id={}: {}", po.getId(), e.getMessage());
         }
     }
 
@@ -327,6 +423,19 @@ public class WorkflowEngine {
         } catch (JsonProcessingException e) {
             log.warn("failed to serialize workflow context snapshot: {}", e.getMessage());
             return "{}";
+        }
+    }
+
+    private Map<String, Object> parseContextSnapshot(String snapshot) {
+        if (!StringUtils.hasText(snapshot)) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(snapshot, new TypeReference<>() {
+            });
+        } catch (Exception e) {
+            log.warn("failed to parse workflow context snapshot: {}", e.getMessage());
+            return Map.of();
         }
     }
 

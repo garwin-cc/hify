@@ -10,6 +10,7 @@ import com.hify.common.log.TraceContext;
 import com.hify.common.util.PageHelper;
 import com.hify.common.web.PageResult;
 import com.hify.workflow.api.CreateWorkflowReq;
+import com.hify.workflow.api.SubmitWorkflowReviewReq;
 import com.hify.workflow.api.UpdateWorkflowReq;
 import com.hify.workflow.api.WorkflowDetailResp;
 import com.hify.workflow.api.WorkflowEdgeDto;
@@ -20,6 +21,7 @@ import com.hify.workflow.api.WorkflowQuery;
 import com.hify.workflow.api.WorkflowRunReq;
 import com.hify.workflow.api.WorkflowRunResp;
 import com.hify.workflow.api.WorkflowService;
+import com.hify.workflow.api.WorkflowReviewTaskResp;
 import com.hify.workflow.domain.config.NodeConfigParser;
 import com.hify.workflow.engine.WorkflowEngine;
 import com.hify.workflow.infra.WorkflowEdgeMapper;
@@ -32,6 +34,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -57,6 +61,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final NodeConfigParser nodeConfigParser;
     private final WorkflowEngine workflowEngine;
     private final WorkflowRunEventService workflowRunEventService;
+    private final WorkflowReviewService workflowReviewService;
     private final ObjectMapper objectMapper;
     @Resource(name = "llmExecutor")
     private ThreadPoolExecutor llmExecutor;
@@ -184,6 +189,50 @@ public class WorkflowServiceImpl implements WorkflowService {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
         }
         return workflowRunEventService.subscribe(runId, afterEventSeq, isTerminalRun(run.getStatus()));
+    }
+
+    @Override
+    public WorkflowReviewTaskResp getReviewTask(Long runId) {
+        WorkflowRunPo run = workflowRunMapper.selectById(runId);
+        if (run == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
+        }
+        return workflowReviewService.getWaitingReview(runId);
+    }
+
+    @Override
+    @Transactional
+    public WorkflowRunResp submitReview(Long runId, SubmitWorkflowReviewReq req) {
+        WorkflowRunPo run = workflowRunMapper.selectById(runId);
+        if (run == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
+        }
+        if (!"WAITING".equals(run.getStatus())) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "工作流当前不在待评审状态");
+        }
+        WorkflowReviewTaskPo task = workflowReviewService.submitReview(runId, req);
+        mergeReviewResult(run, task);
+        markReviewNodeSuccess(run, task);
+        workflowRunEventService.publishNodeEvent(run.getId(), "REVIEW_SUBMITTED", task.getNodeKey(), task.getReviewAction(),
+                Map.of("action", task.getReviewAction(), "comment", task.getReviewComment() == null ? "" : task.getReviewComment()));
+
+        if ("REJECT".equalsIgnoreCase(task.getReviewAction())) {
+            run.setStatus("CANCELED");
+            run.setError(StringUtils.hasText(task.getReviewComment()) ? task.getReviewComment() : "人工评审拒绝");
+            run.setFinishedAt(LocalDateTime.now());
+            workflowRunMapper.updateById(run);
+            workflowRunEventService.publishRunEvent(run.getId(), "RUN_CANCELED", run.getStatus(),
+                    Map.of("error", run.getError()));
+            return getRunDetail(run.getId());
+        }
+
+        run.setStatus("RUNNING");
+        run.setFinishedAt(null);
+        workflowRunMapper.updateById(run);
+        workflowRunEventService.publishRunEvent(run.getId(), "RUN_RESUMED", run.getStatus(),
+                Map.of("currentNodeKey", run.getCurrentNodeKey()));
+        resumeWorkflowAfterCommit(run);
+        return getRunDetail(run.getId());
     }
 
     @Override
@@ -320,6 +369,82 @@ public class WorkflowServiceImpl implements WorkflowService {
         workflowRunMapper.updateById(run);
         workflowRunEventService.publishRunEvent(run.getId(), "RUN_FAILED", run.getStatus(),
                 Map.of("error", run.getError()));
+    }
+
+    private void resumeWorkflowAfterCommit(WorkflowRunPo run) {
+        Runnable resumeTask = () -> {
+            try {
+                llmExecutor.execute(TraceContext.wrap(() -> {
+                    try {
+                        workflowEngine.resumeAfterReview(run.getId());
+                    } catch (Exception e) {
+                        log.warn("workflow resume after review failed runId={}: {}", run.getId(), e.getMessage());
+                    }
+                }));
+            } catch (Exception e) {
+                markRunFailed(run, e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    resumeTask.run();
+                }
+            });
+            return;
+        }
+        resumeTask.run();
+    }
+
+    private void mergeReviewResult(WorkflowRunPo run, WorkflowReviewTaskPo task) {
+        Map<String, Object> snapshot = parseContextSnapshot(run.getContextSnapshot());
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("action", task.getReviewAction());
+        result.put("comment", task.getReviewComment() == null ? "" : task.getReviewComment());
+        result.put("editedContent", task.getEditedContent() == null ? "" : task.getEditedContent());
+        result.put("reviewedBy", task.getReviewedBy() == null ? "" : task.getReviewedBy());
+        result.put("reviewedAt", task.getReviewedAt() == null ? "" : task.getReviewedAt().toString());
+        snapshot.put(task.getNodeKey() + "." + task.getOutputVariable(), result);
+        run.setContextSnapshot(toJson(snapshot));
+    }
+
+    private void markReviewNodeSuccess(WorkflowRunPo run, WorkflowReviewTaskPo task) {
+        WorkflowNodeRunPo nodeRun = workflowNodeRunMapper.selectOne(Wrappers.lambdaQuery(WorkflowNodeRunPo.class)
+                .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
+                .eq(WorkflowNodeRunPo::getNodeKey, task.getNodeKey())
+                .eq(WorkflowNodeRunPo::getStatus, "WAITING")
+                .orderByDesc(WorkflowNodeRunPo::getId)
+                .last("LIMIT 1"));
+        if (nodeRun == null) {
+            return;
+        }
+        nodeRun.setStatus("SUCCESS");
+        nodeRun.setOutputs(run.getContextSnapshot());
+        nodeRun.setFinishedAt(LocalDateTime.now());
+        workflowNodeRunMapper.updateById(nodeRun);
+    }
+
+    private Map<String, Object> parseContextSnapshot(String snapshot) {
+        if (!StringUtils.hasText(snapshot)) {
+            return new java.util.LinkedHashMap<>();
+        }
+        try {
+            return objectMapper.readValue(snapshot, new TypeReference<>() {
+            });
+        } catch (Exception e) {
+            log.warn("failed to parse workflow context snapshot: {}", e.getMessage());
+            return new java.util.LinkedHashMap<>();
+        }
+    }
+
+    private String toJson(Map<String, Object> value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            log.warn("failed to serialize workflow context snapshot: {}", e.getMessage());
+            return "{}";
+        }
     }
 
     private static boolean isTerminalRun(String status) {

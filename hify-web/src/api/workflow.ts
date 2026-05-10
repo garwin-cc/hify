@@ -113,6 +113,17 @@ export interface WorkflowRun {
   nodeRuns: WorkflowNodeRun[]
 }
 
+export interface WorkflowRunEvent {
+  id: number
+  workflowRunId: number
+  eventSeq: number
+  eventType: string
+  nodeKey?: string
+  status?: string
+  payload: Record<string, unknown>
+  createdAt: string
+}
+
 export const getWorkflowList = (
   page: number,
   size: number,
@@ -156,6 +167,9 @@ export const startAsyncWorkflowRun = (id: number, userMessage: string): Promise<
 
 export const getWorkflowRunDetail = (runId: number): Promise<WorkflowRun> =>
   get(`/v1/workflow-runs/${runId}`)
+
+export const workflowRunEventsUrl = (runId: number, afterEventSeq = 0): string =>
+  `/api/v1/workflow-runs/${runId}/events?after=${Math.max(0, afterEventSeq)}`
 
 export const getLatestWorkflowRun = (id: number): Promise<WorkflowRun | null> =>
   get(`/v1/workflows/${id}/runs/latest`)

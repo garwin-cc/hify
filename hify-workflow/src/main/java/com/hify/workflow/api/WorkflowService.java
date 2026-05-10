@@ -1,6 +1,7 @@
 package com.hify.workflow.api;
 
 import com.hify.common.web.PageResult;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /** 工作流服务，跨模块调用的统一入口。 */
 public interface WorkflowService {
@@ -20,6 +21,8 @@ public interface WorkflowService {
     WorkflowRunResp startAsyncRun(Long id, WorkflowRunReq req);
 
     WorkflowRunResp getRunDetail(Long runId);
+
+    SseEmitter streamRunEvents(Long runId, Integer afterEventSeq);
 
     WorkflowRunResp getLatestRun(Long id);
 }

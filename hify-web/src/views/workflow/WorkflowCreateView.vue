@@ -393,11 +393,13 @@ import {
   getWorkflowRunDetail,
   startAsyncWorkflowRun,
   updateWorkflow,
+  workflowRunEventsUrl,
   type WorkflowConfigJson,
   type WorkflowDetail,
   type WorkflowEdge,
   type WorkflowNode,
   type WorkflowNodeRun,
+  type WorkflowRunEvent,
   type WorkflowRun,
 } from '@/api/workflow'
 import { getModelGroups, type ModelGroup } from '@/api/agent'
@@ -426,6 +428,8 @@ const linkingFrom = ref('')
 const runInput = ref('我要申请退款')
 const latestRun = ref<WorkflowRun | null>(null)
 const runPollingTimer = ref<number | null>(null)
+const runEventSource = ref<EventSource | null>(null)
+const lastRunEventSeq = ref(0)
 const canvasScale = ref(1)
 const modelGroups = ref<ModelGroup[]>([])
 const loadingModels = ref(false)
@@ -1161,8 +1165,10 @@ async function handleRun() {
     return
   }
   stopRunPolling()
+  stopRunEventStream()
   runningWorkflow.value = true
   latestRun.value = null
+  lastRunEventSeq.value = 0
   try {
     const id = await saveWorkflowBeforeRun()
     if (!id) {
@@ -1170,12 +1176,14 @@ async function handleRun() {
       return
     }
     latestRun.value = await startAsyncWorkflowRun(id, runInput.value.trim())
+    persistRunResumeState()
     notifySuccess('工作流已开始执行')
     if (isTerminalRun(latestRun.value.status)) {
       runningWorkflow.value = false
+      clearRunResumeState()
       return
     }
-    startRunPolling(latestRun.value.id)
+    startRunEventStream(latestRun.value.id, lastRunEventSeq.value)
   } catch {
     if (isEditMode.value) {
       latestRun.value = await getLatestWorkflowRun(workflowId.value).catch(() => null)
@@ -1186,6 +1194,38 @@ async function handleRun() {
 
 function isTerminalRun(status?: string) {
   return ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELED'].includes(status ?? '')
+}
+
+function startRunEventStream(runId: number, afterEventSeq = 0) {
+  stopRunEventStream()
+  runEventSource.value = new EventSource(workflowRunEventsUrl(runId, afterEventSeq))
+  runEventSource.value.addEventListener('workflow-run-event', async (message) => {
+    try {
+      const event = JSON.parse((message as MessageEvent).data) as WorkflowRunEvent
+      lastRunEventSeq.value = Math.max(lastRunEventSeq.value, event.eventSeq ?? 0)
+      persistRunResumeState()
+      const detail = await getWorkflowRunDetail(runId)
+      latestRun.value = detail
+      if (isTerminalRun(detail.status)) {
+        runningWorkflow.value = false
+        stopRunEventStream()
+        clearRunResumeState()
+      }
+    } catch {
+      startRunPolling(runId)
+    }
+  })
+  runEventSource.value.onerror = () => {
+    stopRunEventStream()
+    startRunPolling(runId)
+  }
+}
+
+function stopRunEventStream() {
+  if (runEventSource.value) {
+    runEventSource.value.close()
+    runEventSource.value = null
+  }
 }
 
 function startRunPolling(runId: number) {
@@ -1208,6 +1248,49 @@ function stopRunPolling() {
   if (runPollingTimer.value != null) {
     window.clearInterval(runPollingTimer.value)
     runPollingTimer.value = null
+  }
+}
+
+function runResumeStorageKey() {
+  return isEditMode.value ? `hify.workflow.run.${workflowId.value}` : ''
+}
+
+function persistRunResumeState() {
+  const key = runResumeStorageKey()
+  if (!key || !latestRun.value || isTerminalRun(latestRun.value.status)) {
+    return
+  }
+  sessionStorage.setItem(key, JSON.stringify({
+    runId: latestRun.value.id,
+    lastEventSeq: lastRunEventSeq.value,
+  }))
+}
+
+function clearRunResumeState() {
+  const key = runResumeStorageKey()
+  if (key) sessionStorage.removeItem(key)
+}
+
+async function restoreRunningWorkflow() {
+  const key = runResumeStorageKey()
+  if (!key) return
+  const raw = sessionStorage.getItem(key)
+  if (!raw) return
+  try {
+    const state = JSON.parse(raw) as { runId?: number; lastEventSeq?: number }
+    if (!state.runId) return
+    const detail = await getWorkflowRunDetail(state.runId)
+    latestRun.value = detail
+    lastRunEventSeq.value = state.lastEventSeq ?? 0
+    if (isTerminalRun(detail.status)) {
+      runningWorkflow.value = false
+      clearRunResumeState()
+      return
+    }
+    runningWorkflow.value = true
+    startRunEventStream(detail.id, lastRunEventSeq.value)
+  } catch {
+    clearRunResumeState()
   }
 }
 
@@ -1243,9 +1326,13 @@ async function handleSubmit() {
 onMounted(() => {
   loadModelGroups()
   loadWorkflowDetail()
+  restoreRunningWorkflow()
 })
 
-onBeforeUnmount(stopRunPolling)
+onBeforeUnmount(() => {
+  stopRunPolling()
+  stopRunEventStream()
+})
 </script>
 
 <style scoped>

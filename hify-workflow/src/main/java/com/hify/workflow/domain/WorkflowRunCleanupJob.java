@@ -17,6 +17,7 @@ import java.util.List;
 public class WorkflowRunCleanupJob {
 
     private final WorkflowRunMapper workflowRunMapper;
+    private final WorkflowRunEventService workflowRunEventService;
 
     @EventListener(ApplicationReadyEvent.class)
     public void markStaleRunningRunsFailed() {
@@ -28,6 +29,8 @@ public class WorkflowRunCleanupJob {
             run.setError("服务重启导致异步工作流中断，请重新执行");
             run.setFinishedAt(LocalDateTime.now());
             workflowRunMapper.updateById(run);
+            workflowRunEventService.publishRunEvent(run.getId(), "RUN_FAILED", "FAILED",
+                    java.util.Map.of("error", run.getError()));
         }
         if (!staleRuns.isEmpty()) {
             log.warn("marked stale workflow runs failed count={}", staleRuns.size());

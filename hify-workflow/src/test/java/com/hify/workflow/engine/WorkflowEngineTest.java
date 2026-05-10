@@ -5,6 +5,7 @@ import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.http.LlmApiException;
 import com.hify.workflow.domain.WorkflowEdgePo;
+import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
 import com.hify.workflow.domain.WorkflowRunPo;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
@@ -81,7 +83,8 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
-                new ObjectMapper());
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher());
     }
 
     @Test
@@ -102,7 +105,8 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
-                new ObjectMapper());
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher());
 
         String output = engine.execute(10L, "hello");
 
@@ -131,7 +135,8 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
-                new ObjectMapper());
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher());
 
         String output = engine.execute(10L, "match");
 
@@ -156,7 +161,8 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new FailingLlmExecutor())),
                 runMapper,
                 nodeRunMapper,
-                new ObjectMapper());
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher());
 
         assertThatThrownBy(() -> engine.execute(10L, "hello"))
                 .isInstanceOf(BizException.class)
@@ -190,7 +196,8 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new TimeoutLlmExecutor())),
                 runMapper,
                 nodeRunMapper,
-                new ObjectMapper());
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher());
 
         assertThatThrownBy(() -> engine.execute(10L, "hello"))
                 .isInstanceOf(BizException.class)
@@ -247,7 +254,8 @@ class WorkflowEngineTest {
                 new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
                 runMapper,
                 nodeRunMapper,
-                new ObjectMapper());
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher());
 
         String output = engine.executeExistingRun(99L, 10L, "hello");
 
@@ -377,6 +385,17 @@ class WorkflowEngineTest {
         @Override
         public String nodeType() {
             return "LLM";
+        }
+    }
+
+    private static class NoopWorkflowEventPublisher implements WorkflowEventPublisher {
+
+        @Override
+        public void publishRunEvent(Long workflowRunId, String eventType, String status, Map<String, Object> payload) {
+        }
+
+        @Override
+        public void publishNodeEvent(Long workflowRunId, String eventType, String nodeKey, String status, Map<String, Object> payload) {
         }
     }
 }

@@ -7,6 +7,7 @@ import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.http.LlmApiException;
 import com.hify.workflow.domain.WorkflowEdgePo;
+import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
 import com.hify.workflow.domain.WorkflowRunPo;
@@ -49,6 +50,7 @@ public class WorkflowEngine {
     private final WorkflowRunMapper workflowRunMapper;
     private final WorkflowNodeRunMapper workflowNodeRunMapper;
     private final ObjectMapper objectMapper;
+    private final WorkflowEventPublisher workflowEventPublisher;
 
     public String execute(Long workflowId, String userMessage) {
         WorkflowRunPo workflowRun = createWorkflowRun(workflowId, userMessage, RUN_MODE_SYNC, null);
@@ -73,6 +75,9 @@ public class WorkflowEngine {
         ExecutionContext ctx = new ExecutionContext(workflowRun.getId(), userMessage);
 
         try {
+            workflowEventPublisher.publishRunEvent(workflowRun.getId(), "RUN_STARTED", STATUS_RUNNING,
+                    Map.of("workflowId", workflowId,
+                            "runMode", StringUtils.hasText(workflowRun.getRunMode()) ? workflowRun.getRunMode() : RUN_MODE_SYNC));
             String currentKey = startNode.getNodeKey();
             String output = null;
             int steps = 0;
@@ -89,11 +94,15 @@ public class WorkflowEngine {
                 updateWorkflowRunCurrentNode(workflowRun, currentKey);
                 WorkflowNodeRunPo nodeRun = createNodeRun(workflowRun.getId(), current);
                 long nodeStartedAt = System.currentTimeMillis();
+                workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_STARTED", currentKey, STATUS_RUNNING,
+                        Map.of("nodeType", current.getNodeType(), "nodeName", current.getName()));
 
                 try {
                     if ("END".equalsIgnoreCase(current.getNodeType())) {
                         output = resolveEndOutput(current, ctx);
                         updateNodeRunSuccess(nodeRun, ctx, nodeStartedAt);
+                        workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_SUCCEEDED", currentKey, STATUS_SUCCESS,
+                                Map.of("nodeType", current.getNodeType(), "elapsedMs", elapsed(nodeStartedAt)));
                         break;
                     }
                     if (!"START".equalsIgnoreCase(current.getNodeType())) {
@@ -102,17 +111,28 @@ public class WorkflowEngine {
                     }
                     checkTimeout(workflowRun);
                     updateNodeRunSuccess(nodeRun, ctx, nodeStartedAt);
+                    workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_SUCCEEDED", currentKey, STATUS_SUCCESS,
+                            Map.of("nodeType", current.getNodeType(), "elapsedMs", elapsed(nodeStartedAt)));
                     currentKey = findNext(current, edgeMap, ctx);
                 } catch (Exception e) {
                     updateNodeRunFailed(nodeRun, e, nodeStartedAt);
+                    workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_FAILED", currentKey, STATUS_FAILED,
+                            Map.of("nodeType", current.getNodeType(), "error", shortError(e), "elapsedMs", elapsed(nodeStartedAt)));
                     throw e;
                 }
             }
 
             updateWorkflowRunSuccess(workflowRun, output, startedAt);
+            workflowEventPublisher.publishRunEvent(workflowRun.getId(), "RUN_SUCCEEDED", STATUS_SUCCESS,
+                    Map.of("output", output == null ? "" : output, "elapsedMs", elapsed(startedAt)));
             return output;
         } catch (Exception e) {
             updateWorkflowRunFailed(workflowRun, e, startedAt);
+            String status = isTimeout(e) ? STATUS_TIMEOUT : STATUS_FAILED;
+            workflowEventPublisher.publishRunEvent(workflowRun.getId(),
+                    STATUS_TIMEOUT.equals(status) ? "RUN_TIMEOUT" : "RUN_FAILED",
+                    status,
+                    Map.of("error", shortError(e), "elapsedMs", elapsed(startedAt)));
             if (e instanceof BizException bizException) {
                 throw bizException;
             }

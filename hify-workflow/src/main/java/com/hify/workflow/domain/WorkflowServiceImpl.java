@@ -33,6 +33,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -55,6 +56,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final WorkflowNodeRunMapper workflowNodeRunMapper;
     private final NodeConfigParser nodeConfigParser;
     private final WorkflowEngine workflowEngine;
+    private final WorkflowRunEventService workflowRunEventService;
     private final ObjectMapper objectMapper;
     @Resource(name = "llmExecutor")
     private ThreadPoolExecutor llmExecutor;
@@ -173,6 +175,15 @@ public class WorkflowServiceImpl implements WorkflowService {
                         .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
                         .orderByAsc(WorkflowNodeRunPo::getId));
         return toRunResp(run, nodeRuns);
+    }
+
+    @Override
+    public SseEmitter streamRunEvents(Long runId, Integer afterEventSeq) {
+        WorkflowRunPo run = workflowRunMapper.selectById(runId);
+        if (run == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
+        }
+        return workflowRunEventService.subscribe(runId, afterEventSeq, isTerminalRun(run.getStatus()));
     }
 
     @Override
@@ -307,6 +318,12 @@ public class WorkflowServiceImpl implements WorkflowService {
         run.setError(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         run.setFinishedAt(LocalDateTime.now());
         workflowRunMapper.updateById(run);
+        workflowRunEventService.publishRunEvent(run.getId(), "RUN_FAILED", run.getStatus(),
+                Map.of("error", run.getError()));
+    }
+
+    private static boolean isTerminalRun(String status) {
+        return List.of("SUCCESS", "FAILED", "TIMEOUT", "CANCELED").contains(status);
     }
 
     private WorkflowNodeRunResp toNodeRunResp(WorkflowNodeRunPo po) {

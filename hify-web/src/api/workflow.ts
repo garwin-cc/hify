@@ -35,6 +35,38 @@ export interface WorkflowEdge {
   sortOrder?: number
 }
 
+export interface WorkflowTemplateRequirement {
+  key: string
+  type: 'MODEL' | 'KNOWLEDGE_BASE' | 'TOOL'
+  label: string
+  required: boolean
+}
+
+export interface WorkflowTemplateListItem {
+  id: number
+  name: string
+  description: string
+  category: string
+  icon: string
+  enabled: number
+  builtin: number
+  nodeCount: number
+  createdAt: string
+}
+
+export interface WorkflowTemplateDetail extends WorkflowTemplateListItem {
+  configJson: Record<string, unknown>
+  requirements: WorkflowTemplateRequirement[]
+  updatedAt: string
+}
+
+export interface CreateWorkflowFromTemplateReq {
+  name: string
+  description?: string
+  enabled?: number
+  bindings: Record<string, number>
+}
+
 export interface CreateWorkflowReq {
   name: string
   description?: string
@@ -83,6 +115,23 @@ export const getWorkflowList = (
   size: number,
 ): Promise<PageData<WorkflowListItem>> =>
   get('/v1/workflows', { page, size })
+
+export const getWorkflowTemplateList = (
+  page: number,
+  size: number,
+  category?: string,
+  name?: string,
+): Promise<PageData<WorkflowTemplateListItem>> =>
+  get('/v1/workflow-templates', { page, size, category: category || undefined, name: name || undefined })
+
+export const getWorkflowTemplateDetail = (id: number): Promise<WorkflowTemplateDetail> =>
+  get(`/v1/workflow-templates/${id}`)
+
+export const createWorkflowFromTemplate = (
+  id: number,
+  data: CreateWorkflowFromTemplateReq,
+): Promise<WorkflowDetail> =>
+  post(`/v1/workflow-templates/${id}/create-workflow`, data)
 
 export const createWorkflow = (data: CreateWorkflowReq) =>
   post('/v1/workflows', data)

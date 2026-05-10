@@ -6,17 +6,21 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 @Data
-@TableName("t_workflow")
+@TableName("t_workflow_template")
 @EqualsAndHashCode(callSuper = false)
-public class WorkflowPo extends BaseEntity {
+public class WorkflowTemplatePo extends BaseEntity {
 
     private String name;
 
     private String description;
 
+    private String category;
+
+    private String icon;
+
+    private String configJson;
+
     private Integer enabled;
 
-    private String startNodeKey;
-
-    private Long templateId;
+    private Integer builtin;
 }

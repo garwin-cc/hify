@@ -5,6 +5,9 @@
       description="管理可被 Agent 绑定触发的工作流定义"
     >
       <template #actions>
+        <el-button @click="$router.push('/workflow-templates')">
+          从模板创建
+        </el-button>
         <el-button type="primary" tag="a" href="/workflows/create">
           <el-icon style="margin-right: 4px"><Plus /></el-icon>
           新建工作流

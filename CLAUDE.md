@@ -6,7 +6,7 @@ Hify 是一个简化版内部 AI Agent 平台，基于 Dify 思路设计。
 
 - **团队规模**：1 人开发，20-50 人内部使用，本地部署
 - **技术栈**：Spring Boot + MyBatis-Plus + Vue + MySQL 8.x + Redis + pgvector
-- **架构模式**：模块化单体（Modular Monolith），代码边界清晰，可平滑拆分为微服务
+- **架构模式**：Maven 多模块的模块化单体（Modular Monolith），代码边界清晰，可平滑拆分为微服务
 
 ---
 
@@ -14,43 +14,105 @@ Hify 是一个简化版内部 AI Agent 平台，基于 Dify 思路设计。
 
 | 模块 | 说明 |
 |------|------|
-| 模型管理 (model) | 管理 OpenAI / Claude / Gemini / Ollama 等 LLM 提供商配置，支持连通性测试 |
+| 模型管理 (model) | 管理 OpenAI / Claude / Gemini / Ollama / DeepSeek / 阿里百炼等 OpenAI-compatible Provider，支持模型类型（聊天/向量）和连通性测试 |
 | Agent 配置 (agent) | 配置 Agent 名称、系统提示词、绑定模型、关联知识库和 MCP 工具 |
 | 对话引擎 (conversation) | 多轮对话、历史记录、SSE 流式响应 |
 | 知识库 RAG (knowledge) | 文档上传 → 异步向量化 → pgvector 余弦搜索 → 注入 LLM 上下文 |
-| 简版工作流 (workflow) | 顺序节点执行：开始 → LLM → 条件分支 → 工具调用 → 结束 |
+| 简版工作流 (workflow) | 可视化编排：开始、LLM、条件、知识库、API 调用、人工审核、CODE_TASK、结束，支持异步运行、WAITING/RESUME、节点调试、版本快照 |
 | MCP 工具接入 (mcp) | 接入外部 MCP 工具，供 Agent 和工作流调用 |
 
-**砍掉的功能**：多租户、自定义插件市场、实时协作、企业 SSO、精细化权限控制、数据集版本管理。
+**砍掉或延后的功能**：多租户、自定义插件市场、实时协作、企业 SSO、精细化权限控制、复杂 n8n 式通用自动化、内置本机 shell 执行器。
+
+---
+
+## 当前实现基线
+
+### 已落地能力
+
+- 模型管理：
+  - Provider 新增、编辑、测试、模型同步。
+  - 支持手动新增模型，并用模型类型区分聊天模型和向量模型。
+  - 阿里百炼等兼容 OpenAI API 的供应商通过 Provider Adapter 接入，注意 Base URL 不要重复拼接 `/v1`。
+
+- Agent：
+  - Agent 可绑定模型、知识库、工作流和 MCP 工具。
+  - `workflowId` 不为空时，对话链路优先触发工作流，直接 LLM/RAG/MCP 对话逻辑不再执行。
+  - 工具绑定通过 `agent_tool` 多对多关系，全量替换，最多 10 个工具。
+
+- 对话：
+  - SSE 流式响应。
+  - 普通 Agent 对话支持 RAG 注入和 MCP tool calls。
+  - 事件流恢复用于工作流运行事件，SSE 断开后可按 event sequence 继续订阅。
+
+- 知识库：
+  - 知识库 CRUD。
+  - 文档上传后异步处理，状态流转为 `PENDING -> PROCESSING -> DONE / FAILED`。
+  - 文档解析支持 txt / md / pdf，扫描 PDF 一期不支持。
+  - 分块、向量化、pgvector 存储和相似度搜索已接入。
+  - 知识库可配置 embedding model，默认走知识库配置的向量模型。
+
+- 工作流：
+  - 支持可视化编辑、保存、编辑、删除。
+  - 支持节点：`START`、`LLM`、`CONDITION`、`KNOWLEDGE`、`API_CALL`、`HUMAN_REVIEW`、`CODE_TASK`、`END`。
+  - 支持异步运行、运行事件流、运行恢复、节点运行记录。
+  - `HUMAN_REVIEW` 节点进入 `WAITING` 后暂停，审批通过后 resume，拒绝后 run 进入 `CANCELED`。
+  - `CODE_TASK` 只通过 MCP Code Worker 执行，不允许 Hify 后端直接执行本机 shell。
+  - 支持节点调试接口和前端调试面板。
+  - 支持工作流版本快照和版本恢复，运行记录保存 `workflow_version_id`。
+  - 支持轻量 Workflow Template，用于从模板创建工作流。
+
+- MCP：
+  - MCP Server CRUD、连通性测试、工具列表同步。
+  - Agent 可绑定多个 MCP 工具。
+  - 对话链路支持模型原生 `tool_calls` 和部分兼容供应商的 inline tool call 格式。
+  - MCP SDK 调用失败时可 fallback 到 raw HTTP。
+
+- 交付和可观测性：
+  - 后端/前端 Dockerfile、docker-compose、K8s Deployment/Service、Secret/ConfigMap 模板。
+  - JSON 结构化日志，日志包含 traceId。
+  - Actuator + Micrometer Prometheus 指标，统一 `hify_` 前缀。
+  - `/api/v1/health` 检查 MySQL、Redis、pgvector。
+
+### 当前产品定位
+
+Hify 的定位不是全量复制 Dify、Coze、n8n，而是面向企业内部团队的轻量 AI 应用平台：
+
+1. RAG 可解释。
+2. Workflow 可调试、可暂停、可恢复。
+3. Agent 工具调用可控、可审计。
+4. 交付形态清晰，可在本地、Docker Compose、K8s 环境部署。
 
 ---
 
 ## 代码组织规范
 
-### 包结构
+### Maven 模块结构
 
-com.hify
-├── common/
-│   ├── config/          # MybatisPlusConfig, JacksonConfig, AsyncConfig, ThreadPoolConfig
-│   ├── exception/       # BizException, ErrorCode, GlobalExceptionHandler
-│   ├── web/             # Result<T>, PageResult<T>
-│   └── util/            # JsonUtil, DateUtil
-├── modules/
-│   ├── model/           # LLM 提供商管理
-│   ├── agent/           # Agent 配置
-│   ├── conversation/    # 对话引擎
-│   ├── knowledge/       # 知识库 RAG
-│   ├── workflow/        # 简版工作流
-│   └── mcp/             # MCP 工具接入
-└── HifyApplication.java
+当前仓库按 Maven 多模块组织：
+
+```text
+hify-common/         # 通用配置、异常、Result、日志、指标、HTTP 基础设施
+hify-model/          # LLM Provider、ModelConfig、Embedding、Provider Adapter
+hify-agent/          # Agent 配置、知识库/工作流/MCP 工具绑定
+hify-conversation/   # 对话、消息、SSE、RAG 注入、MCP tool calls、workflow 触发
+hify-knowledge/      # 知识库、文档上传、异步解析、向量化、pgvector 检索
+hify-workflow/       # 工作流定义、执行引擎、节点执行器、人审、模板、版本
+hify-mcp/            # MCP Server、MCP Tool、SDK/raw HTTP 调用
+hify-app/            # Spring Boot 启动模块、Flyway migration、集成装配
+hify-web/            # Vue 3 + Element Plus 前端
+```
+
+后端 Java 包仍统一在 `com.hify` 下，各业务模块分别放在对应 Maven module 中。
 
 每个模块内部四层结构：
 
-modules/{module}/
+```text
+hify-{module}/src/main/java/com/hify/{module}/
 ├── api/       # 对外暴露的接口（interface），供其他模块调用
 ├── domain/    # 业务逻辑：Service 实现、领域对象、Factory、Repository 接口
 ├── infra/     # 基础设施：Mapper、RepositoryImpl、外部 API 客户端、config
 └── web/       # Controller，只处理 HTTP 层
+```
 
 ### 各层职责边界
 
@@ -58,7 +120,7 @@ modules/{module}/
 |----|------|------|
 | web/ | 接收请求、参数校验（@Valid）、调用本模块 api/ 接口、返回 Result<T> | 直接调用其他模块 domain/、直接操作数据库 |
 | api/ | 定义跨模块调用的 interface 和 DTO | 包含业务逻辑实现 |
-| domain/ | 业务逻辑、领域对象、事务边界（@Transactional） | 直接依赖 Mapper、依赖 web 层 |
+| domain/ | 业务逻辑、领域对象、事务边界（@Transactional） | 依赖 web 层、把 HTTP 参数直接向下传递 |
 | infra/ | Mapper、RepositoryImpl（PO ↔ 领域对象转换）、外部调用 | 包含业务逻辑 |
 
 ### 跨模块调用规则
@@ -66,6 +128,7 @@ modules/{module}/
 - **只能**通过目标模块的 `api/` 接口调用，禁止直接 import 其他模块的 `domain/` 或 `infra/` 类
 - 跨模块传递使用 `api/` 包下定义的 DTO，不传递 PO 或领域对象
 - 循环依赖视为架构错误，立即重构
+- 历史代码中如果已有跨模块 `domain/infra` 依赖，新增改动不得扩大依赖范围；重构时优先补 `api` 接口再迁移调用方。
 
 ```java
 // 正确：agent 模块通过 ModelService（api/ 接口）调用 model 模块
@@ -79,6 +142,16 @@ public class AgentServiceImpl implements AgentService {
 ---
 
 ## LLM 调用规范
+
+### Provider 与模型类型
+
+- Provider 的 `baseUrl` 必须存储为供应商 API 根路径，Adapter 负责拼接具体 endpoint，禁止出现 `.../v1/v1/models` 这类重复路径。
+- OpenAI-compatible Provider 优先复用统一 Adapter，通过 provider type 或 adapter capability 做差异处理。
+- `model_config.type` 必须区分：
+  - `CHAT`：用于 Agent、LLM 节点、普通对话。
+  - `EMBEDDING`：用于知识库文档向量化和 RAG 检索。
+- 前端选择模型时必须展示模型名称、modelId 和 Provider 名称，禁止只展示数据库 ID。
+- 向量模型无法通过供应商 models 接口稳定枚举时，允许手动新增模型并标记为 `EMBEDDING`。
 
 ### 线程池配置
 
@@ -161,14 +234,67 @@ permitted-calls-in-half-open-state: 5
 hify.llm.fallback:
   openai: ollama
   claude: openai
+  deepseek: openai
   gemini: ollama
 ```
 
 主 Provider 熔断或异常时自动切换 fallback，fallback 失败则抛出 BizException。
 
+### RAG 注入位置
+
+- RAG 检索必须发生在构造 LLM messages 阶段，位置为 System Prompt 之后、历史消息之前。
+- Agent 未绑定知识库时不做 embedding 和 pgvector 查询。
+- Agent 绑定知识库后：
+  1. 用用户当前消息生成 query embedding。
+  2. 在绑定知识库内检索 topK chunk。
+  3. 按 score 阈值过滤低相关 chunk。
+  4. 将参考资料拼入 system prompt。
+- RAG 注入格式必须稳定，避免破坏原始 system prompt：
+
+```text
+{Agent 原始 Prompt}
+
+请基于以下参考资料回答用户问题。
+如果资料中没有相关信息，直接说"我没有找到相关资料"，不要编造。
+
+【参考资料】
+[1] {chunk1内容}
+[2] {chunk2内容}
+```
+
+- 后续改动不得把 RAG 内容作为 user message 注入；否则会污染用户消息语义，也不利于调试命中。
+
+### MCP 工具调用
+
+- 工具列表为空时，普通对话链路必须保持原行为。
+- 工具列表不为空时，第一次 LLM 调用携带 tools schema。
+- 如果返回 `finish_reason=tool_calls`，先执行工具，再追加 `role=tool` 消息发起第二次 LLM 流式调用。
+- 工具调用失败不能直接中断 SSE，对话链路应把错误作为 tool message 交回 LLM，让模型生成可读说明。
+- Agent 同时绑定知识库和工具时，RAG 与 tools 不冲突：RAG 在 system prompt，tools 在 LLM request 参数。
+- 工具调用必须记录 toolName、arguments keys、耗时、成功/失败，避免排障时只能看到模型最终回答。
+
 ---
 
 ## 部署架构
+
+### 支持的部署形态
+
+- 本地开发：
+  - 后端用 Maven 启动，前端用 Vite dev server。
+  - MySQL、Redis、PostgreSQL + pgvector 可用本机服务或 Docker Compose。
+
+- Docker Compose：
+  - 适合单机交付、演示和小团队内部使用。
+  - 包含 frontend、backend、MySQL、Redis、pgvector。
+  - 敏感配置从 `.env` 读取，不写死在 compose 文件里。
+
+- K8s：
+  - 适合企业内部长期运行。
+  - backend 使用 ClusterIP，frontend 可用 NodePort 或 Ingress 暴露。
+  - 配置走 ConfigMap，密码和 API Key 走 Secret。
+  - Prometheus 抓取 `/actuator/prometheus`，Grafana 导入 Hify Dashboard。
+
+### K8s 目标架构
 
 用户浏览器
     │
@@ -199,6 +325,29 @@ nginx.ingress.kubernetes.io/limit-rps: "20"
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-XX:+UseG1GC",
             "-Djava.security.egd=file:/dev/./urandom", "-jar", "app.jar"]
 ```
+
+### Nginx / 前端代理要求
+
+前端 Nginx 代理 `/api/` 到后端时必须适配 SSE：
+
+```nginx
+location /api/ {
+    proxy_pass http://backend:8080;
+    proxy_read_timeout 120s;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_set_header Connection "";
+}
+```
+
+如果使用 Ingress，也必须关闭 proxy buffering，否则 SSE 事件会被缓冲，前端无法实时收到 token 或工作流事件。
+
+### 健康检查和可观测性
+
+- `/api/v1/health` 必须检查 MySQL、Redis、pgvector，所有依赖 UP 才返回整体 UP。
+- `/actuator/prometheus` 暴露 Micrometer 指标，指标统一使用 `hify_` 前缀。
+- JSON 日志输出到 stdout，由 K8s 日志采集系统收集。
+- 同一请求链路必须共享 traceId；对话、LLM、MCP、工作流异常都必须带 traceId。
 
 ---
 
@@ -264,14 +413,28 @@ LIMIT 20;
 
 ```sql
 -- 余弦相似度索引，lists 值 = sqrt(总行数)，行数 <10 万时 lists=100
-CREATE INDEX idx_embedding_ivfflat ON knowledge_embedding
+CREATE INDEX idx_document_chunk_embedding_ivfflat ON document_chunk
 USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- 查询时设置 probes，精度和速度平衡
 SET ivfflat.probes = 10;
-SELECT * FROM knowledge_embedding
+SELECT * FROM document_chunk
 ORDER BY embedding <=> '[...]'::vector LIMIT 5;
 ```
+
+### RAG 数据一致性规范
+
+- 知识库元数据、文档元数据放 MySQL；chunk embedding 放 PostgreSQL + pgvector。
+- 上传接口只能负责接收文件、写入 `document` 记录、提交异步任务，不能同步等待解析和向量化。
+- 文档状态由后端驱动前端轮询：
+  - `PENDING`
+  - `PROCESSING`
+  - `DONE`
+  - `FAILED`
+- 删除知识库时，关联 document 和 document_chunk 必须一起逻辑删除。
+- 删除文档时，MySQL 文档记录和 pgvector chunk 都必须逻辑删除。
+- 跨 MySQL 和 PostgreSQL 不做分布式事务；失败时必须通过状态字段和错误信息暴露给前端，并支持后续重试或重建索引。
+- embedding model 变更后，历史 chunk 维度可能不一致，检索时必须过滤向量维度或按模型分组，避免维度错误。
 
 ### 索引检测措施
 
@@ -326,6 +489,99 @@ ORDER BY sum_no_index_used DESC LIMIT 20;
 
 ---
 
+## 工作流实现规范
+
+### 工作流数据结构
+
+- 工作流定义拆分为三类数据：
+  - `t_workflow`：基本信息、启用状态、开始节点。
+  - `t_workflow_node`：节点定义，`config` 用 JSON 存储不同节点类型配置。
+  - `t_workflow_edge`：节点连接关系，条件分支通过 `condition_expression` 区分。
+- 工作流运行拆分为：
+  - `t_workflow_run`：整次运行状态、输入、输出、错误、当前节点、上下文快照、版本 ID。
+  - `t_workflow_node_run`：单个节点运行状态、输出快照、错误和耗时。
+  - `t_workflow_run_event`：运行事件流，前端按 event sequence 恢复订阅。
+  - `t_workflow_review_task`：人工审核任务。
+  - `t_workflow_version`：保存 workflow + nodes + edges 的完整版本快照。
+
+### NodeConfig 类型安全
+
+- 工作流节点配置必须通过 `NodeConfigParser` 解析。
+- 定义层配置实现 `domain.config.NodeConfig` sealed interface。
+- 执行层配置实现 `engine.NodeConfigDef`。
+- 新增节点类型必须同时修改：
+  - `WorkflowNodeType`
+  - `NodeConfig`
+  - `NodeConfigParser.parse`
+  - `NodeConfigParser.parseExecutionConfig`
+  - 对应 `NodeExecutor`
+  - 前端 `NodeType`、默认配置、表单、校验和节点展示
+  - 单元测试 `NodeConfigParserTest`
+
+### ExecutionContext
+
+- `ExecutionContext` 内部使用 `LinkedHashMap<String, Object>`，保持变量写入顺序。
+- 构造时必须写入 `start.userMessage`。
+- 所有节点输出统一写入 `nodeKey.outputVariable`。
+- 模板变量格式为 `{{nodeKey.varName}}`；变量不存在时保留原占位符，不抛异常。
+- 节点执行记录中的 outputs 存 `ctx.snapshot()`，用于调试和恢复。
+
+### WorkflowEngine
+
+- `WorkflowEngine` 是同步执行引擎，不创建新线程。
+- 异步运行由 `WorkflowServiceImpl` 提交到已有 `llmExecutor`。
+- 执行循环必须有保护：
+  - 找不到 START 节点时失败。
+  - 找不到目标节点时失败。
+  - 执行步数超过 `MAX_STEPS` 时失败，防止配置错误导致死循环。
+  - 节点执行失败时，当前 node run 标记 `FAILED`，workflow run 标记 `FAILED` 或 `TIMEOUT`。
+- `HUMAN_REVIEW` 节点必须暂停运行：
+  - node run = `WAITING`
+  - workflow run = `WAITING`
+  - 保存 `context_snapshot`
+  - 创建 review task
+  - 发布 `REVIEW_WAITING` 事件
+- 审批通过后从当前审核节点的下一条边继续执行；审批拒绝后 run 进入 `CANCELED`。
+
+### CODE_TASK 节点
+
+- `CODE_TASK` 用于把代码实现类任务交给外部 Code Worker。
+- 一期只允许 `executor = MCP`，通过 `McpClientService.callTool` 调用外部 MCP 工具。
+- 禁止在 Hify 后端直接执行本机 shell、脚本或任意命令。
+- CODE_TASK 配置至少包含：
+  - `task`
+  - `executor`
+  - `mcpServerId`
+  - `toolName`
+  - `timeoutSeconds`
+  - `outputVariable`
+- MCP Code Worker 返回建议包含：
+  - `status`
+  - `summary`
+  - `changedFiles`
+  - `diff`
+  - `logs`
+  - `error`
+- CODE_TASK 后如涉及代码变更合入、发布或外部副作用，工作流中必须接 `HUMAN_REVIEW` 节点。
+
+### 工作流版本快照
+
+- 创建工作流时生成 v1。
+- 每次保存工作流时写入完整版本快照。
+- 执行 workflow run 时记录当前 `workflow_version_id`。
+- 恢复版本时从快照重建 workflow、nodes、edges，并再次生成新版本。
+- 不做 diff 更新，更新工作流时仍采用先删除旧 nodes/edges 再批量插入新定义的策略。
+
+### 前端工作流编辑器
+
+- 节点必须使用框图展示，不使用纯 JSON 编辑作为主入口。
+- 右侧配置面板必须展示当前节点配置、最近一次 node run、调试结果。
+- 运行进入 `WAITING` 时必须显示审批面板，不能只展示 run 状态。
+- 节点调试只调试当前节点，不写正式 workflow run。
+- 版本快照入口应在编辑页可见，支持恢复版本。
+
+---
+
 ## 性能瓶颈优先级（一期处理清单）
 
 | 级别 | 瓶颈 | 一期处理方式 |
@@ -337,6 +593,55 @@ ORDER BY sum_no_index_used DESC LIMIT 20;
 | P2 | 连接池耗尽 | HikariCP 配置：maximumPoolSize=20，connectionTimeout=3000ms |
 | 延后 | 静态资源未压缩 | Nginx gzip，流量大时处理 |
 | 延后 | JVM GC 停顿 | G1GC 已启用，暂不调优 |
+
+---
+
+## 安全边界和护栏
+
+### MCP 和工具调用安全
+
+- MCP Server endpoint 属于高风险配置，后续生产化必须考虑内网白名单或 SSRF 防护。
+- Agent 绑定工具必须校验 toolId 存在且 MCP Server 启用。
+- 一个 Agent 最多绑定 10 个工具，避免 tools 参数过长影响 LLM 效果。
+- 工具调用参数由 LLM 生成，后端必须记录 arguments keys 和调用结果，便于审计。
+- 工具执行失败时返回受控错误信息，不能把敏感异常栈直接暴露给用户。
+
+### 代码执行安全
+
+- Hify 后端不内置本机 Code Node，不直接执行 shell。
+- 所有代码实现类任务必须通过隔离的 MCP Code Worker。
+- Code Worker 应在独立进程、容器或沙箱中运行，限制工作目录、网络、Secret 和执行时间。
+- CODE_TASK 输出 diff、changedFiles、logs 供 HUMAN_REVIEW 审批，不应默认自动合并或发布。
+
+### RAG Prompt Injection 防护
+
+- 知识库内容不可信，RAG 注入时必须明确“参考资料”边界。
+- 不允许知识库 chunk 覆盖系统指令、工具权限或输出安全策略。
+- 对外部文档进入知识库的场景，应在后续增加内容扫描和 chunk 禁用能力。
+
+### Agent 和工作流权限
+
+- 当前不做复杂 RBAC，但新增管理接口时应默认只有 Admin 可操作。
+- 工作流发布、版本恢复、MCP Server 修改、Provider API Key 修改应记录审计日志。
+- Agent 绑定工作流后，对话链路会执行工作流；工作流中如有 MCP 或 CODE_TASK，需要额外审核配置。
+
+---
+
+## 前端实现规范
+
+- 前端使用 Vue 3 + Element Plus。
+- 管理页表格统一使用 `el-table`，弹窗使用 `el-dialog`，表单校验使用 `el-form rules`。
+- 新增/编辑弹窗必须支持回填、校验、提交后刷新列表。
+- 列表空状态必须给提示文案，不留空白页面。
+- SSE 页面必须在组件销毁时关闭 EventSource 或清理 polling timer。
+- 文档处理、工作流运行这类异步状态必须以状态字段驱动 UI，不依赖固定等待时间。
+- 工作流编辑器是产品核心页面，新增节点类型必须同时补：
+  - 节点面板入口。
+  - 画布节点样式。
+  - 右侧配置表单。
+  - 前端校验。
+  - JSON normalization。
+  - 变量引用插入逻辑。
 
 ---
 

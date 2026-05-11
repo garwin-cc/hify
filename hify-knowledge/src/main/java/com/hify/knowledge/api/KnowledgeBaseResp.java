@@ -21,6 +21,26 @@ public class KnowledgeBaseResp {
 
     private Integer chunkCount;
 
+    private String retrievalMode;
+
+    private Integer topK;
+
+    private Integer candidateTopK;
+
+    private Double scoreThreshold;
+
+    private Integer chunkSize;
+
+    private Integer chunkOverlap;
+
+    private Integer maxContextTokens;
+
+    private Integer rerankEnabled;
+
+    private Long rerankModelConfigId;
+
+    private Integer rerankTopN;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

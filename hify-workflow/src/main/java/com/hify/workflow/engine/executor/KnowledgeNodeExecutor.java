@@ -3,7 +3,6 @@ package com.hify.workflow.engine.executor;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
 import com.hify.knowledge.api.KnowledgeService;
-import com.hify.model.api.EmbeddingService;
 import com.hify.workflow.engine.ExecutionContext;
 import com.hify.workflow.engine.NodeConfigDef;
 import com.hify.workflow.engine.WorkflowNode;
@@ -21,19 +20,20 @@ public class KnowledgeNodeExecutor extends AbstractNodeExecutor implements NodeE
     private static final int DEFAULT_TOP_K = 3;
 
     private final KnowledgeService knowledgeService;
-    private final EmbeddingService embeddingService;
 
     @Override
     public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
         try {
             KnowledgeConfig knowledgeConfig = requireConfig(config, KnowledgeConfig.class);
             String query = ctx.resolve(knowledgeConfig.query());
-            List<Double> embedding = embeddingService.embed(null, List.of(query)).get(0);
 
             KnowledgeSearchReq req = new KnowledgeSearchReq();
             req.setKnowledgeBaseIds(List.of(knowledgeConfig.knowledgeBaseId()));
-            req.setQueryEmbedding(embedding);
+            req.setQueryText(query);
             req.setTopK(knowledgeConfig.topK() == null ? DEFAULT_TOP_K : knowledgeConfig.topK());
+            req.setSourceType("WORKFLOW");
+            req.setSourceId(node.nodeKey());
+            req.setIncludeTrace(true);
 
             List<KnowledgeSearchResp> chunks = knowledgeService.searchSimilar(req);
             ctx.set(node.nodeKey(), outputVariable(knowledgeConfig.outputVariable()), formatChunks(chunks));

@@ -13,6 +13,7 @@ import com.hify.common.web.PageResult;
 import com.hify.knowledge.api.*;
 import com.hify.knowledge.infra.KnowledgeBaseMapper;
 import com.hify.knowledge.infra.KnowledgeDocumentMapper;
+import com.hify.knowledge.infra.RagRetrievalTraceMapper;
 import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.ModelConfigResp;
 import com.hify.model.api.ModelConfigService;
@@ -43,6 +44,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -51,6 +54,9 @@ import java.util.stream.Collectors;
 public class KnowledgeServiceImpl implements KnowledgeService {
 
     private static final int DEFAULT_TOP_K = 5;
+    private static final int DEFAULT_CANDIDATE_TOP_K = 20;
+    private static final double DEFAULT_SCORE_THRESHOLD = 0.65D;
+    private static final int DEFAULT_MAX_CONTEXT_TOKENS = 3000;
     private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
     private static final int CHUNK_SIZE = 512;
     private static final int CHUNK_OVERLAP = 64;
@@ -64,6 +70,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final @Qualifier("asyncExecutor") ThreadPoolExecutor asyncExecutor;
     private final EmbeddingService embeddingService;
     private final ModelConfigService modelConfigService;
+    private final RagRetrievalTraceMapper traceMapper;
 
     @Override
     @Transactional
@@ -76,8 +83,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         po.setEnabled(1);
         po.setDocumentCount(0);
         po.setChunkCount(0);
+        setDefaultRetrievalConfig(po);
         knowledgeBaseMapper.insert(po);
         log.info("created knowledge base id={} name={}", po.getId(), po.getName());
+        return toKnowledgeBaseResp(po);
+    }
+
+    @Override
+    @Transactional
+    public KnowledgeBaseResp updateRetrievalConfig(Long id, UpdateKnowledgeRetrievalConfigReq req) {
+        KnowledgeBasePo po = findKnowledgeBaseOrThrow(id);
+        applyRetrievalConfig(po, req);
+        knowledgeBaseMapper.updateById(po);
+        log.info("updated knowledge retrieval config id={}", id);
         return toKnowledgeBaseResp(po);
     }
 
@@ -244,6 +262,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setEnabled(po.getEnabled());
         resp.setDocumentCount(po.getDocumentCount());
         resp.setChunkCount(po.getChunkCount());
+        resp.setRetrievalMode(effectiveRetrievalMode(po));
+        resp.setTopK(effectiveTopK(po));
+        resp.setCandidateTopK(effectiveCandidateTopK(po));
+        resp.setScoreThreshold(effectiveScoreThreshold(po));
+        resp.setChunkSize(po.getChunkSize() == null ? CHUNK_SIZE : po.getChunkSize());
+        resp.setChunkOverlap(po.getChunkOverlap() == null ? CHUNK_OVERLAP : po.getChunkOverlap());
+        resp.setMaxContextTokens(po.getMaxContextTokens() == null ? DEFAULT_MAX_CONTEXT_TOKENS : po.getMaxContextTokens());
+        resp.setRerankEnabled(po.getRerankEnabled() == null ? 0 : po.getRerankEnabled());
+        resp.setRerankModelConfigId(po.getRerankModelConfigId());
+        resp.setRerankTopN(po.getRerankTopN() == null ? DEFAULT_CANDIDATE_TOP_K : po.getRerankTopN());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
@@ -291,11 +319,77 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public List<KnowledgeSearchResp> searchSimilar(KnowledgeSearchReq req) {
-        int topK = req.getTopK() == null ? DEFAULT_TOP_K : req.getTopK();
-        return vectorRepository.search(req.getKnowledgeBaseIds(), req.getQueryEmbedding(), topK)
-                .stream()
+        long startNanos = System.nanoTime();
+        String traceId = UUID.randomUUID().toString();
+        String status = "SUCCESS";
+        String errorMessage = "";
+        List<KnowledgeSearchResp> results = List.of();
+        try {
+            results = doSearchSimilar(req, traceId);
+            return results;
+        } catch (Exception e) {
+            status = "FAILED";
+            errorMessage = truncateErrorMessage(e.getMessage());
+            throw e;
+        } finally {
+            if (Boolean.TRUE.equals(req.getIncludeTrace()) || StringUtils.hasText(req.getSourceType())) {
+                saveRetrievalTrace(req, traceId, results, status, errorMessage, elapsedMillis(startNanos));
+            }
+        }
+    }
+
+    private List<KnowledgeSearchResp> doSearchSimilar(KnowledgeSearchReq req, String traceId) {
+        List<Long> knowledgeBaseIds = req.getKnowledgeBaseIds();
+        if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "知识库 ID 不能为空");
+        }
+        if ((req.getQueryEmbedding() == null || req.getQueryEmbedding().isEmpty())
+                && !StringUtils.hasText(req.getQueryText())) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "查询文本或查询向量不能为空");
+        }
+
+        Map<Long, KnowledgeBasePo> knowledgeBaseMap = req.getQueryEmbedding() == null || req.getQueryEmbedding().isEmpty()
+                ? loadEnabledKnowledgeBases(knowledgeBaseIds)
+                : Map.of();
+        boolean hasQueryEmbedding = req.getQueryEmbedding() != null && !req.getQueryEmbedding().isEmpty();
+        if (knowledgeBaseMap.isEmpty() && !hasQueryEmbedding) {
+            return List.of();
+        }
+
+        RetrievalOptions options = knowledgeBaseMap.isEmpty()
+                ? resolveOptions(req, null)
+                : resolveOptions(req, knowledgeBaseMap.values().iterator().next());
+        req.setTopK(options.topK());
+        req.setCandidateTopK(options.candidateTopK());
+        req.setScoreThreshold(options.scoreThreshold());
+        req.setRetrievalMode(options.retrievalMode());
+        List<KnowledgeSearchHit> hits = new ArrayList<>();
+        if (hasQueryEmbedding) {
+            hits.addAll(vectorRepository.search(knowledgeBaseIds, req.getQueryEmbedding(), options.candidateTopK()));
+        } else {
+            Map<Long, List<Long>> grouped = knowledgeBaseMap.values().stream()
+                    .filter(kb -> kb.getEmbeddingModelConfigId() != null)
+                    .collect(Collectors.groupingBy(KnowledgeBasePo::getEmbeddingModelConfigId,
+                            Collectors.mapping(KnowledgeBasePo::getId, Collectors.toList())));
+            for (Map.Entry<Long, List<Long>> entry : grouped.entrySet()) {
+                List<Double> embedding = embeddingService.embed(entry.getKey(), List.of(req.getQueryText())).get(0);
+                hits.addAll(vectorRepository.search(entry.getValue(), embedding, options.candidateTopK()));
+            }
+        }
+
+        List<KnowledgeSearchResp> responses = hits.stream()
+                .filter(hit -> hit.getScore() != null && hit.getScore() >= options.scoreThreshold())
+                .sorted(Comparator.comparing(KnowledgeSearchHit::getScore,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
+                .limit(options.topK())
                 .map(this::toResp)
-                .collect(Collectors.toList());
+                .toList();
+        for (int i = 0; i < responses.size(); i++) {
+            KnowledgeSearchResp resp = responses.get(i);
+            resp.setTraceId(traceId);
+            resp.setRank(i + 1);
+        }
+        return responses;
     }
 
     private KnowledgeSearchResp toResp(KnowledgeSearchHit hit) {
@@ -306,9 +400,97 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setChunkIndex(hit.getChunkIndex());
         resp.setContent(hit.getContent());
         resp.setScore(hit.getScore());
-        resp.setMetadata(fromJson(hit.getMetadataJson()));
+        resp.setFinalScore(hit.getScore());
+        resp.setVectorScore(hit.getScore());
+        Map<String, Object> metadata = fromJson(hit.getMetadataJson());
+        Object documentName = metadata.get("documentName");
+        resp.setDocumentName(documentName == null ? null : String.valueOf(documentName));
+        resp.setMetadata(metadata);
         resp.setCreatedAt(hit.getCreatedAt());
         return resp;
+    }
+
+    @Override
+    public RagRetrievalTraceResp getRetrievalTrace(String traceId) {
+        RagRetrievalTracePo po = traceMapper.selectOne(Wrappers.lambdaQuery(RagRetrievalTracePo.class)
+                .eq(RagRetrievalTracePo::getTraceId, traceId));
+        if (po == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "RAG trace 不存在: " + traceId);
+        }
+        RagRetrievalTraceResp resp = new RagRetrievalTraceResp();
+        resp.setId(po.getId());
+        resp.setTraceId(po.getTraceId());
+        resp.setSourceType(po.getSourceType());
+        resp.setSourceId(po.getSourceId());
+        resp.setAgentId(po.getAgentId());
+        resp.setQueryText(po.getQueryText());
+        resp.setKnowledgeBaseIds(fromJsonList(po.getKnowledgeBaseIdsJson(), Long.class));
+        resp.setRetrievalMode(po.getRetrievalMode());
+        resp.setTopK(po.getTopK());
+        resp.setScoreThreshold(po.getScoreThreshold());
+        resp.setHitCount(po.getHitCount());
+        resp.setSelectedChunkIds(fromJsonList(po.getSelectedChunkIdsJson(), Long.class));
+        resp.setLatencyMs(po.getLatencyMs());
+        resp.setStatus(po.getStatus());
+        resp.setErrorMessage(po.getErrorMessage());
+        resp.setCreatedAt(po.getCreatedAt());
+        return resp;
+    }
+
+    private Map<Long, KnowledgeBasePo> loadEnabledKnowledgeBases(List<Long> knowledgeBaseIds) {
+        Map<Long, KnowledgeBasePo> result = new HashMap<>();
+        for (Long knowledgeBaseId : knowledgeBaseIds) {
+            KnowledgeBasePo po = findKnowledgeBaseOrThrow(knowledgeBaseId);
+            if (Integer.valueOf(1).equals(po.getEnabled())) {
+                result.put(po.getId(), po);
+            }
+        }
+        return result;
+    }
+
+    private RetrievalOptions resolveOptions(KnowledgeSearchReq req, KnowledgeBasePo fallbackKnowledgeBase) {
+        int topK = req.getTopK() == null ? effectiveTopK(fallbackKnowledgeBase) : req.getTopK();
+        int candidateTopK = req.getCandidateTopK() == null
+                ? Math.max(topK, fallbackKnowledgeBase == null || fallbackKnowledgeBase.getCandidateTopK() == null
+                        ? topK
+                        : effectiveCandidateTopK(fallbackKnowledgeBase))
+                : req.getCandidateTopK();
+        double scoreThreshold = req.getScoreThreshold() == null
+                ? effectiveScoreThreshold(fallbackKnowledgeBase)
+                : req.getScoreThreshold();
+        String retrievalMode = StringUtils.hasText(req.getRetrievalMode())
+                ? req.getRetrievalMode()
+                : effectiveRetrievalMode(fallbackKnowledgeBase);
+        return new RetrievalOptions(topK, candidateTopK, scoreThreshold, retrievalMode);
+    }
+
+    private void saveRetrievalTrace(KnowledgeSearchReq req, String traceId, List<KnowledgeSearchResp> results,
+                                    String status, String errorMessage, long latencyMs) {
+        try {
+            RagRetrievalTracePo trace = new RagRetrievalTracePo();
+            trace.setTraceId(traceId);
+            trace.setSourceType(StringUtils.hasText(req.getSourceType()) ? req.getSourceType() : "UNKNOWN");
+            trace.setSourceId(req.getSourceId());
+            trace.setQueryText(StringUtils.hasText(req.getQueryText()) ? req.getQueryText() : "");
+            trace.setKnowledgeBaseIdsJson(toJsonList(req.getKnowledgeBaseIds()));
+            trace.setRetrievalMode(StringUtils.hasText(req.getRetrievalMode()) ? req.getRetrievalMode() : "VECTOR");
+            trace.setTopK(req.getTopK());
+            trace.setScoreThreshold(req.getScoreThreshold());
+            trace.setRerankEnabled(0);
+            trace.setSelectedChunkIdsJson(toJsonList(results == null ? List.of()
+                    : results.stream().map(KnowledgeSearchResp::getId).toList()));
+            trace.setHitCount(results == null ? 0 : results.size());
+            trace.setLatencyMs(latencyMs);
+            trace.setStatus(status);
+            trace.setErrorMessage(errorMessage == null ? "" : errorMessage);
+            traceMapper.insert(trace);
+        } catch (Exception e) {
+            log.warn("failed to save rag retrieval trace traceId={}: {}", traceId, e.getMessage());
+        }
+    }
+
+    private static long elapsedMillis(long startNanos) {
+        return Math.max(0, (System.nanoTime() - startNanos) / 1_000_000);
     }
 
     private String toJson(Map<String, Object> metadata) {
@@ -332,6 +514,104 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             log.warn("failed to parse chunk metadata: {}", e.getMessage());
             return Collections.emptyMap();
         }
+    }
+
+    private String toJsonList(List<?> items) {
+        if (items == null || items.isEmpty()) {
+            return "[]";
+        }
+        try {
+            return objectMapper.writeValueAsString(items);
+        } catch (JsonProcessingException e) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "列表不是合法 JSON", e);
+        }
+    }
+
+    private <T> List<T> fromJsonList(String json, Class<T> elementType) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, elementType));
+        } catch (JsonProcessingException e) {
+            log.warn("failed to parse trace json list: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static void setDefaultRetrievalConfig(KnowledgeBasePo po) {
+        po.setRetrievalMode("VECTOR");
+        po.setTopK(DEFAULT_TOP_K);
+        po.setCandidateTopK(DEFAULT_CANDIDATE_TOP_K);
+        po.setScoreThreshold(DEFAULT_SCORE_THRESHOLD);
+        po.setChunkSize(CHUNK_SIZE);
+        po.setChunkOverlap(CHUNK_OVERLAP);
+        po.setMaxContextTokens(DEFAULT_MAX_CONTEXT_TOKENS);
+        po.setRerankEnabled(0);
+        po.setRerankTopN(DEFAULT_CANDIDATE_TOP_K);
+    }
+
+    private void applyRetrievalConfig(KnowledgeBasePo po, UpdateKnowledgeRetrievalConfigReq req) {
+        if (StringUtils.hasText(req.getRetrievalMode())) {
+            if (!"VECTOR".equals(req.getRetrievalMode())) {
+                throw new BizException(ErrorCode.PARAM_ERROR, "阶段 2.1 仅支持 VECTOR 检索模式");
+            }
+            po.setRetrievalMode(req.getRetrievalMode());
+        }
+        if (req.getTopK() != null) {
+            po.setTopK(req.getTopK());
+        }
+        if (req.getCandidateTopK() != null) {
+            po.setCandidateTopK(req.getCandidateTopK());
+        }
+        if (req.getScoreThreshold() != null) {
+            po.setScoreThreshold(req.getScoreThreshold());
+        }
+        if (req.getChunkSize() != null) {
+            po.setChunkSize(req.getChunkSize());
+        }
+        if (req.getChunkOverlap() != null) {
+            po.setChunkOverlap(req.getChunkOverlap());
+        }
+        if (req.getMaxContextTokens() != null) {
+            po.setMaxContextTokens(req.getMaxContextTokens());
+        }
+        if (req.getRerankEnabled() != null) {
+            if (req.getRerankEnabled() == 1) {
+                throw new BizException(ErrorCode.PARAM_ERROR, "阶段 2.1 暂不启用 rerank");
+            }
+            po.setRerankEnabled(0);
+        }
+        if (req.getRerankModelConfigId() != null) {
+            po.setRerankModelConfigId(req.getRerankModelConfigId());
+        }
+        if (req.getRerankTopN() != null) {
+            po.setRerankTopN(req.getRerankTopN());
+        }
+        if (effectiveCandidateTopK(po) < effectiveTopK(po)) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "candidateTopK 不能小于 topK");
+        }
+        if (po.getChunkOverlap() != null && po.getChunkSize() != null
+                && po.getChunkOverlap() >= po.getChunkSize()) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "chunkOverlap 必须小于 chunkSize");
+        }
+    }
+
+    private static String effectiveRetrievalMode(KnowledgeBasePo po) {
+        return po != null && StringUtils.hasText(po.getRetrievalMode()) ? po.getRetrievalMode() : "VECTOR";
+    }
+
+    private static int effectiveTopK(KnowledgeBasePo po) {
+        return po == null || po.getTopK() == null ? DEFAULT_TOP_K : po.getTopK();
+    }
+
+    private static int effectiveCandidateTopK(KnowledgeBasePo po) {
+        return po == null || po.getCandidateTopK() == null ? DEFAULT_CANDIDATE_TOP_K : po.getCandidateTopK();
+    }
+
+    private static double effectiveScoreThreshold(KnowledgeBasePo po) {
+        return po == null || po.getScoreThreshold() == null ? DEFAULT_SCORE_THRESHOLD : po.getScoreThreshold();
     }
 
     private void processDocumentAsync(Long documentId) {
@@ -562,5 +842,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private record ChunkDTO(int chunkIndex, String content, int tokenCount, List<Double> embedding) {
+    }
+
+    private record RetrievalOptions(int topK, int candidateTopK, double scoreThreshold, String retrievalMode) {
     }
 }

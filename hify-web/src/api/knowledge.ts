@@ -9,6 +9,16 @@ export interface KnowledgeBaseItem {
   embeddingModelConfigId: number | null
   documentCount: number
   chunkCount: number
+  retrievalMode: string
+  topK: number
+  candidateTopK: number
+  scoreThreshold: number
+  chunkSize: number
+  chunkOverlap: number
+  maxContextTokens: number
+  rerankEnabled: number
+  rerankModelConfigId: number | null
+  rerankTopN: number
   createdAt: string
   updatedAt: string
 }
@@ -24,6 +34,19 @@ export interface UpdateKnowledgeBaseReq {
   description?: string
   enabled?: number
   embeddingModelConfigId?: number
+}
+
+export interface UpdateKnowledgeRetrievalConfigReq {
+  retrievalMode?: string
+  topK?: number
+  candidateTopK?: number
+  scoreThreshold?: number
+  chunkSize?: number
+  chunkOverlap?: number
+  maxContextTokens?: number
+  rerankEnabled?: number
+  rerankModelConfigId?: number | null
+  rerankTopN?: number
 }
 
 export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'FAILED'
@@ -51,6 +74,31 @@ export interface KnowledgeChunkItem {
   createdAt: string
 }
 
+export interface KnowledgeSearchReq {
+  queryText: string
+  topK?: number
+  candidateTopK?: number
+  scoreThreshold?: number
+  retrievalMode?: string
+  includeTrace?: boolean
+}
+
+export interface KnowledgeSearchHit {
+  traceId?: string
+  rank?: number
+  id: number
+  knowledgeBaseId: number
+  documentId: string
+  documentName?: string
+  chunkIndex: number
+  content: string
+  score?: number
+  finalScore?: number
+  vectorScore?: number
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
 export const getKnowledgeBaseList = (
   page: number,
   size: number,
@@ -61,11 +109,17 @@ export const getKnowledgeBaseList = (
 export const getKnowledgeBase = (id: number): Promise<KnowledgeBaseItem> =>
   get(`/v1/knowledge-bases/${id}`)
 
-export const createKnowledgeBase = (data: CreateKnowledgeBaseReq) =>
+export const createKnowledgeBase = (data: CreateKnowledgeBaseReq): Promise<KnowledgeBaseItem> =>
   post('/v1/knowledge-bases', data)
 
-export const updateKnowledgeBase = (id: number, data: UpdateKnowledgeBaseReq) =>
+export const updateKnowledgeBase = (id: number, data: UpdateKnowledgeBaseReq): Promise<KnowledgeBaseItem> =>
   put(`/v1/knowledge-bases/${id}`, data)
+
+export const updateKnowledgeRetrievalConfig = (
+  id: number,
+  data: UpdateKnowledgeRetrievalConfigReq,
+) : Promise<KnowledgeBaseItem> =>
+  put(`/v1/knowledge-bases/${id}/retrieval-config`, data)
 
 export const deleteKnowledgeBase = (id: number) =>
   del(`/v1/knowledge-bases/${id}`)
@@ -93,3 +147,9 @@ export const getDocumentChunks = (id: number): Promise<KnowledgeChunkItem[]> =>
 
 export const deleteDocument = (id: number) =>
   del(`/v1/documents/${id}`)
+
+export const testKnowledgeRetrieval = (
+  knowledgeBaseId: number,
+  data: KnowledgeSearchReq,
+): Promise<KnowledgeSearchHit[]> =>
+  post(`/v1/knowledge-bases/${knowledgeBaseId}/retrieval-test`, data)

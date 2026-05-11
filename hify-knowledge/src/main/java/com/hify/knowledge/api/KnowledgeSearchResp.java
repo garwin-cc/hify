@@ -8,17 +8,27 @@ import java.util.Map;
 @Data
 public class KnowledgeSearchResp {
 
+    private String traceId;
+
+    private Integer rank;
+
     private Long id;
 
     private Long knowledgeBaseId;
 
     private String documentId;
 
+    private String documentName;
+
     private Integer chunkIndex;
 
     private String content;
 
     private Double score;
+
+    private Double finalScore;
+
+    private Double vectorScore;
 
     private Map<String, Object> metadata;
 

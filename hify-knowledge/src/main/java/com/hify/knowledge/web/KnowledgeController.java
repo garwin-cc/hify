@@ -11,7 +11,9 @@ import com.hify.knowledge.api.KnowledgeDocumentResp;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
 import com.hify.knowledge.api.KnowledgeService;
+import com.hify.knowledge.api.RagRetrievalTraceResp;
 import com.hify.knowledge.api.UpdateKnowledgeBaseReq;
+import com.hify.knowledge.api.UpdateKnowledgeRetrievalConfigReq;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -55,6 +57,12 @@ public class KnowledgeController {
         return Result.ok(knowledgeService.updateKnowledgeBase(id, req));
     }
 
+    @PutMapping("/{id}/retrieval-config")
+    public Result<KnowledgeBaseResp> updateRetrievalConfig(@PathVariable Long id,
+                                                           @Valid @RequestBody UpdateKnowledgeRetrievalConfigReq req) {
+        return Result.ok(knowledgeService.updateRetrievalConfig(id, req));
+    }
+
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         knowledgeService.deleteKnowledgeBase(id);
@@ -81,5 +89,20 @@ public class KnowledgeController {
     @PostMapping("/search")
     public Result<List<KnowledgeSearchResp>> search(@Valid @RequestBody KnowledgeSearchReq req) {
         return Result.ok(knowledgeService.searchSimilar(req));
+    }
+
+    @PostMapping("/{id}/retrieval-test")
+    public Result<List<KnowledgeSearchResp>> retrievalTest(@PathVariable Long id,
+                                                           @Valid @RequestBody KnowledgeSearchReq req) {
+        req.setKnowledgeBaseIds(List.of(id));
+        req.setSourceType("TEST");
+        req.setSourceId("knowledge-base:" + id);
+        req.setIncludeTrace(true);
+        return Result.ok(knowledgeService.searchSimilar(req));
+    }
+
+    @GetMapping("/rag-traces/{traceId}")
+    public Result<RagRetrievalTraceResp> getRetrievalTrace(@PathVariable String traceId) {
+        return Result.ok(knowledgeService.getRetrievalTrace(traceId));
     }
 }

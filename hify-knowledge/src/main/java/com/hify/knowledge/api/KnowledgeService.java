@@ -15,6 +15,8 @@ public interface KnowledgeService {
 
     KnowledgeBaseResp updateKnowledgeBase(Long id, UpdateKnowledgeBaseReq req);
 
+    KnowledgeBaseResp updateRetrievalConfig(Long id, UpdateKnowledgeRetrievalConfigReq req);
+
     void deleteKnowledgeBase(Long id);
 
     Long uploadDocument(Long knowledgeBaseId, MultipartFile file);
@@ -30,4 +32,6 @@ public interface KnowledgeService {
     Long upsertChunk(KnowledgeChunkUpsertReq req);
 
     List<KnowledgeSearchResp> searchSimilar(KnowledgeSearchReq req);
+
+    RagRetrievalTraceResp getRetrievalTrace(String traceId);
 }

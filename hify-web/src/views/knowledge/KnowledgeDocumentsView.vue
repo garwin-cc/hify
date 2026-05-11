@@ -16,6 +16,62 @@
       </template>
     </PageHeader>
 
+    <div class="hify-card retrieval-test">
+      <div class="retrieval-test__bar">
+        <el-input
+          v-model="retrievalQuery"
+          placeholder="输入问题测试知识库检索命中"
+          clearable
+          @keyup.enter="handleRetrievalTest"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-input-number
+          v-model="retrievalTopK"
+          :min="1"
+          :max="50"
+          controls-position="right"
+          class="retrieval-test__number"
+        />
+        <el-input-number
+          v-model="retrievalScoreThreshold"
+          :min="0"
+          :max="1"
+          :step="0.05"
+          :precision="2"
+          controls-position="right"
+          class="retrieval-test__number"
+        />
+        <el-button type="primary" :loading="testingRetrieval" @click="handleRetrievalTest">
+          测试检索
+        </el-button>
+      </div>
+
+      <div v-if="retrievalTraceId" class="retrieval-test__trace">
+        Trace: <span class="mono-text">{{ retrievalTraceId }}</span>
+      </div>
+
+      <el-empty
+        v-if="retrievalTested && !testingRetrieval && retrievalHits.length === 0"
+        description="未命中高相关分块"
+      />
+      <div v-else-if="retrievalHits.length > 0" class="retrieval-hit-list">
+        <div v-for="hit in retrievalHits" :key="hit.id" class="retrieval-hit">
+          <div class="retrieval-hit__header">
+            <span>#{{ hit.rank || '-' }} {{ hit.documentName || `文档 ${hit.documentId}` }}</span>
+            <span class="mono-text">score {{ formatScore(hit.finalScore ?? hit.score) }}</span>
+          </div>
+          <div class="retrieval-hit__meta">
+            Chunk #{{ hit.chunkIndex + 1 }}
+            <span v-if="hit.vectorScore !== undefined"> · vector {{ formatScore(hit.vectorScore) }}</span>
+          </div>
+          <div class="retrieval-hit__content">{{ hit.content }}</div>
+        </div>
+      </div>
+    </div>
+
     <div class="hify-card hify-card--flush">
       <HifyTable
         ref="tableRef"
@@ -128,7 +184,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Loading, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, Loading, Search, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps, type UploadRequestOptions } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import HifyTable, { type HifyColumn, type PageData } from '@/components/HifyTable.vue'
@@ -141,11 +197,13 @@ import {
   getDocumentChunks,
   getDocumentList,
   getKnowledgeBase,
+  testKnowledgeRetrieval,
   uploadKnowledgeDocument,
   type DocumentStatus,
   type KnowledgeBaseItem,
   type KnowledgeChunkItem,
   type KnowledgeDocumentItem,
+  type KnowledgeSearchHit,
 } from '@/api/knowledge'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -165,6 +223,13 @@ const knowledgeBaseId = computed(() => Number(route.params.id))
 
 const knowledgeBase = ref<KnowledgeBaseItem | null>(null)
 const tableRef = ref<{ refresh: () => void; load: () => void }>()
+const retrievalQuery = ref('')
+const retrievalTopK = ref(knowledgeBase.value?.topK || 5)
+const retrievalScoreThreshold = ref(knowledgeBase.value?.scoreThreshold ?? 0.65)
+const testingRetrieval = ref(false)
+const retrievalTested = ref(false)
+const retrievalHits = ref<KnowledgeSearchHit[]>([])
+const retrievalTraceId = computed(() => retrievalHits.value[0]?.traceId || '')
 
 const columns = computed<HifyColumn[]>(() => [
   { label: '文件名', slot: 'name', minWidth: '220' },
@@ -186,6 +251,8 @@ function goBack() {
 
 async function loadKnowledgeBase() {
   knowledgeBase.value = await getKnowledgeBase(knowledgeBaseId.value)
+  retrievalTopK.value = knowledgeBase.value.topK || 5
+  retrievalScoreThreshold.value = knowledgeBase.value.scoreThreshold ?? 0.65
 }
 
 async function fetchList(page: number, pageSize: number): Promise<PageData<KnowledgeDocumentItem>> {
@@ -211,6 +278,34 @@ function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatScore(score?: number) {
+  if (score === undefined || score === null) return '-'
+  return score.toFixed(3)
+}
+
+async function handleRetrievalTest() {
+  const query = retrievalQuery.value.trim()
+  if (!query) {
+    ElMessage.warning('请输入检索问题')
+    return
+  }
+  testingRetrieval.value = true
+  retrievalTested.value = true
+  try {
+    retrievalHits.value = await testKnowledgeRetrieval(knowledgeBaseId.value, {
+      queryText: query,
+      topK: retrievalTopK.value,
+      scoreThreshold: retrievalScoreThreshold.value,
+      retrievalMode: 'VECTOR',
+      includeTrace: true,
+    })
+  } catch {
+    retrievalHits.value = []
+  } finally {
+    testingRetrieval.value = false
+  }
 }
 
 const uploadDialogVisible = ref(false)
@@ -352,6 +447,72 @@ onBeforeUnmount(() => {
 .mono-text {
   font-family: var(--font-mono);
   color: var(--text-secondary);
+}
+
+.retrieval-test {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.retrieval-test__bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 120px 120px auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.retrieval-test__number {
+  width: 120px;
+}
+
+.retrieval-test__trace {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.retrieval-hit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.retrieval-hit {
+  padding: 12px 0;
+  border-top: 1px solid var(--border-color-light);
+}
+
+.retrieval-hit__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.retrieval-hit__meta {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.retrieval-hit__content {
+  margin-top: 8px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .retrieval-test__bar {
+    grid-template-columns: 1fr;
+  }
+
+  .retrieval-test__number {
+    width: 100%;
+  }
 }
 
 .date-text {

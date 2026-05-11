@@ -126,6 +126,50 @@
             请先在模型管理中把可用模型标记为“向量”。
           </div>
         </el-form-item>
+
+        <el-divider content-position="left">检索配置</el-divider>
+
+        <el-form-item label="检索模式">
+          <el-segmented
+            v-model="form.retrievalMode"
+            :options="[{ label: '向量检索', value: 'VECTOR' }]"
+          />
+        </el-form-item>
+
+        <el-form-item label="TopK">
+          <el-input-number v-model="form.topK" :min="1" :max="50" controls-position="right" />
+        </el-form-item>
+
+        <el-form-item label="候选数">
+          <el-input-number v-model="form.candidateTopK" :min="1" :max="100" controls-position="right" />
+          <div class="form-hint">阶段 2.1 用于召回候选并按阈值过滤，必须大于等于 TopK。</div>
+        </el-form-item>
+
+        <el-form-item label="分数阈值">
+          <el-input-number
+            v-model="form.scoreThreshold"
+            :min="0"
+            :max="1"
+            :step="0.05"
+            :precision="2"
+            controls-position="right"
+          />
+        </el-form-item>
+
+        <el-form-item label="分块大小">
+          <el-input-number v-model="form.chunkSize" :min="128" :max="4000" controls-position="right" />
+        </el-form-item>
+
+        <el-form-item label="分块重叠">
+          <el-input-number v-model="form.chunkOverlap" :min="0" :max="1000" controls-position="right" />
+          <div v-if="editingId !== null && editingDocumentCount > 0" class="form-hint">
+            修改分块参数只影响后续上传文档；已有文档需后续重建索引后才会重新分块。
+          </div>
+        </el-form-item>
+
+        <el-form-item label="上下文预算">
+          <el-input-number v-model="form.maxContextTokens" :min="512" :max="16000" controls-position="right" />
+        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -153,6 +197,7 @@ import {
   deleteKnowledgeBase,
   getKnowledgeBaseList,
   updateKnowledgeBase,
+  updateKnowledgeRetrievalConfig,
   type KnowledgeBaseItem,
 } from '@/api/knowledge'
 import { getEnabledModelConfigs, type ModelConfig } from '@/api/provider'
@@ -193,6 +238,13 @@ const form = reactive({
   name: '',
   description: '',
   embeddingModelConfigId: null as number | null,
+  retrievalMode: 'VECTOR',
+  topK: 5,
+  candidateTopK: 20,
+  scoreThreshold: 0.65,
+  chunkSize: 512,
+  chunkOverlap: 64,
+  maxContextTokens: 3000,
 })
 const editingDocumentCount = ref(0)
 const loadingEmbeddingModels = ref(false)
@@ -227,6 +279,13 @@ function resetForm() {
   form.name = ''
   form.description = ''
   form.embeddingModelConfigId = embeddingModels.value[0]?.id ?? null
+  form.retrievalMode = 'VECTOR'
+  form.topK = 5
+  form.candidateTopK = 20
+  form.scoreThreshold = 0.65
+  form.chunkSize = 512
+  form.chunkOverlap = 64
+  form.maxContextTokens = 3000
   editingDocumentCount.value = 0
 }
 
@@ -241,6 +300,13 @@ function handleEdit(row: KnowledgeBaseItem) {
   form.name = row.name
   form.description = row.description || ''
   form.embeddingModelConfigId = row.embeddingModelConfigId
+  form.retrievalMode = row.retrievalMode || 'VECTOR'
+  form.topK = row.topK || 5
+  form.candidateTopK = row.candidateTopK || 20
+  form.scoreThreshold = row.scoreThreshold ?? 0.65
+  form.chunkSize = row.chunkSize || 512
+  form.chunkOverlap = row.chunkOverlap ?? 64
+  form.maxContextTokens = row.maxContextTokens || 3000
   editingDocumentCount.value = row.documentCount
   dialogVisible.value = true
 }
@@ -255,6 +321,12 @@ async function handleSubmit() {
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
   if (form.embeddingModelConfigId === null) return
+  if (form.candidateTopK < form.topK) {
+    form.candidateTopK = form.topK
+  }
+  if (form.chunkOverlap >= form.chunkSize) {
+    form.chunkOverlap = Math.max(0, form.chunkSize - 1)
+  }
 
   submitting.value = true
   try {
@@ -263,11 +335,23 @@ async function handleSubmit() {
       description: form.description.trim(),
       embeddingModelConfigId: form.embeddingModelConfigId,
     }
+    const retrievalPayload = {
+      retrievalMode: form.retrievalMode,
+      topK: form.topK,
+      candidateTopK: form.candidateTopK,
+      scoreThreshold: form.scoreThreshold,
+      chunkSize: form.chunkSize,
+      chunkOverlap: form.chunkOverlap,
+      maxContextTokens: form.maxContextTokens,
+      rerankEnabled: 0,
+    }
     if (editingId.value === null) {
-      await createKnowledgeBase(payload)
+      const created = await createKnowledgeBase(payload)
+      await updateKnowledgeRetrievalConfig(created.id, retrievalPayload)
       notifySuccess('知识库已创建')
     } else {
       await updateKnowledgeBase(editingId.value, payload)
+      await updateKnowledgeRetrievalConfig(editingId.value, retrievalPayload)
       notifySuccess('知识库已更新')
     }
     dialogVisible.value = false

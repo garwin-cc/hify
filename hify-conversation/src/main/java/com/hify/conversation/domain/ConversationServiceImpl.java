@@ -31,7 +31,6 @@ import com.hify.mcp.api.McpService;
 import com.hify.mcp.api.McpToolCallAuditRecord;
 import com.hify.mcp.api.McpToolCallAuditService;
 import com.hify.mcp.api.McpToolResp;
-import com.hify.knowledge.api.KnowledgeBaseResp;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
 import com.hify.knowledge.api.KnowledgeService;
@@ -48,7 +47,6 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,7 +88,6 @@ public class ConversationServiceImpl implements ConversationService {
 
     // SSE 超时略大于 OkHttp readTimeout（120s），确保 LLM 超时先于 emitter 超时触发
     private static final long EMITTER_TIMEOUT_MS = 130_000L;
-    private static final double RAG_MIN_SCORE = 0.65D;
 
     @Override
     public List<ConversationSessionResp> listSessions(Long agentId) {
@@ -782,28 +779,13 @@ public class ConversationServiceImpl implements ConversationService {
             return systemPrompt;
         }
 
-        Map<Long, List<Long>> knowledgeBasesByEmbeddingModel = knowledgeBaseIds.stream()
-                .map(knowledgeService::getKnowledgeBase)
-                .filter(kb -> kb.getEnabled() != null && kb.getEnabled() == 1)
-                .filter(kb -> kb.getEmbeddingModelConfigId() != null)
-                .collect(Collectors.groupingBy(KnowledgeBaseResp::getEmbeddingModelConfigId,
-                        Collectors.mapping(KnowledgeBaseResp::getId, Collectors.toList())));
-        if (knowledgeBasesByEmbeddingModel.isEmpty()) {
-            log.info("rag skipped agentId={} reason=no_enabled_knowledge_base", agent.getId());
-            return systemPrompt;
-        }
-
-        List<KnowledgeSearchResp> chunks = new ArrayList<>();
-        for (Map.Entry<Long, List<Long>> entry : knowledgeBasesByEmbeddingModel.entrySet()) {
-            Long embeddingModelConfigId = entry.getKey();
-            List<Long> searchKnowledgeBaseIds = entry.getValue();
-            List<Double> queryEmbedding = embeddingService.embed(embeddingModelConfigId, List.of(userMessage)).get(0);
-            KnowledgeSearchReq req = new KnowledgeSearchReq();
-            req.setKnowledgeBaseIds(searchKnowledgeBaseIds);
-            req.setQueryEmbedding(queryEmbedding);
-            req.setTopK(3);
-            chunks.addAll(knowledgeService.searchSimilar(req));
-        }
+        KnowledgeSearchReq req = new KnowledgeSearchReq();
+        req.setKnowledgeBaseIds(knowledgeBaseIds);
+        req.setQueryText(userMessage);
+        req.setSourceType("CONVERSATION");
+        req.setSourceId("agent:" + agent.getId());
+        req.setIncludeTrace(true);
+        List<KnowledgeSearchResp> chunks = knowledgeService.searchSimilar(req);
         log.info("rag candidates agentId={} knowledgeBaseIds={} candidates={}",
                 agent.getId(), knowledgeBaseIds, chunks.stream()
                         .map(chunk -> "chunkId=" + chunk.getId()
@@ -811,12 +793,6 @@ public class ConversationServiceImpl implements ConversationService {
                                 + ",chunkIndex=" + chunk.getChunkIndex()
                                 + ",score=" + chunk.getScore())
                         .toList());
-        chunks = chunks.stream()
-                .filter(chunk -> chunk.getScore() != null && chunk.getScore() >= RAG_MIN_SCORE)
-                .sorted(Comparator.comparing(KnowledgeSearchResp::getScore,
-                        Comparator.nullsLast(Comparator.reverseOrder())))
-                .limit(3)
-                .toList();
         if (chunks.isEmpty()) {
             log.info("rag no hit agentId={} knowledgeBaseIds={} userMessage={}",
                     agent.getId(), knowledgeBaseIds, abbreviate(userMessage, 80));

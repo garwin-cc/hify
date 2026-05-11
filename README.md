@@ -1,23 +1,27 @@
 # Hify
 
-Hify 是一个面向内部使用的轻量级 AI Agent 平台，参考 Dify 的核心思路实现，适合 20-50 人团队本地部署和二次开发。
+Hify is a lightweight internal AI Agent platform inspired by the core ideas of Dify. It is designed for local deployment, internal adoption, and secondary development by small teams of roughly 20-50 users.
 
-项目采用模块化单体架构，后端使用 Spring Boot + MyBatis-Plus，前端使用 Vue 3 + TypeScript + Vite，存储层包含 MySQL、Redis 和 PostgreSQL + pgvector。
+The project uses a modular monolith architecture. The backend is built with Spring Boot and MyBatis-Plus, the frontend uses Vue 3, TypeScript, and Vite, and the storage layer includes MySQL, Redis, and PostgreSQL with pgvector.
 
-## 功能模块
+Chinese documentation: [README_CN.md](README_CN.md)
 
-| 模块 | 说明 |
+## Features
+
+| Module | Description |
 |---|---|
-| 模型管理 | 管理 OpenAI、Anthropic、DeepSeek、Ollama、OpenAI Compatible 等 Provider 和模型配置 |
-| Agent 配置 | 配置 Agent 名称、系统提示词、绑定模型、知识库和 MCP 工具 |
-| 对话引擎 | 多轮对话、历史消息、SSE 流式响应、Function Calling |
-| 知识库 RAG | 知识库、文档、切片、向量检索和上下文注入 |
-| MCP 工具接入 | 管理 MCP Server 和工具，供 Agent 对话调用 |
-| 简版工作流 | 顺序节点执行，支持 LLM、条件、工具、知识库等节点 |
+| Account System | User login, session tokens, ADMIN / EDITOR / VIEWER roles, and API authorization |
+| Model Management | Manage OpenAI, Anthropic, DeepSeek, Ollama, OpenAI-compatible providers, and model configs |
+| Agent Configuration | Configure agents, system prompts, model bindings, knowledge bases, and MCP tools |
+| Conversation Engine | Multi-turn chat, message history, SSE streaming responses, and function calling |
+| Knowledge Base RAG | Knowledge bases, documents, chunks, vector retrieval, and context injection |
+| MCP Tool Integration | Manage MCP servers and tools for agent conversations and workflows |
+| Lightweight Workflow | Visual orchestration with START, LLM, CONDITION, KNOWLEDGE, API_CALL, HUMAN_REVIEW, CODE_TASK, and END nodes |
+| Template Library | Create workflows from templates, save workflows as templates, version snapshots, and export templates |
 
-## 技术栈
+## Tech Stack
 
-后端：
+Backend:
 
 - Java 17
 - Spring Boot 3.2
@@ -28,82 +32,102 @@ Hify 是一个面向内部使用的轻量级 AI Agent 平台，参考 Dify 的�
 - Flyway
 - OkHttp
 
-前端：
+Frontend:
 
 - Vue 3
 - TypeScript
 - Vite
 - Element Plus
+- Pinia
 
-部署：
+Deployment:
 
 - Docker / Docker Compose
-- Kubernetes YAML 模板
+- Kubernetes YAML templates
 
-## 目录结构
+## Repository Structure
 
 ```text
 hify
-├── hify-app              # Spring Boot 启动模块、配置、数据库迁移、集成测试
-├── hify-common           # 公共配置、异常、Result、日志、线程池、MyBatis 配置
-├── hify-model            # Provider / ModelConfig / LLM 调用适配器
-├── hify-agent            # Agent 配置
-├── hify-conversation     # 对话引擎、SSE、Function Calling
-├── hify-knowledge        # 知识库、文档、pgvector 仓储
-├── hify-mcp              # MCP Server 和工具接入
-├── hify-workflow         # 简版工作流
-├── hify-web              # Vue 前端
-├── docker                # MySQL / PostgreSQL 初始化脚本
-├── k8s                   # Kubernetes 部署模板
-└── .claude               # 项目内 Codex/Claude 工作流技能和命令
+├── hify-app              # Spring Boot bootstrap module, config, migrations, integration tests
+├── hify-common           # Shared config, exceptions, Result, logging, thread pools, MyBatis config
+├── hify-auth             # Accounts, session tokens, and role-based authorization
+├── hify-model            # Provider / ModelConfig / LLM adapters
+├── hify-agent            # Agent configuration
+├── hify-conversation     # Conversation engine, SSE, function calling
+├── hify-knowledge        # Knowledge base, documents, pgvector repositories
+├── hify-mcp              # MCP server and tool integration
+├── hify-workflow         # Lightweight workflows and template library
+├── hify-web              # Vue frontend
+├── docker                # MySQL / PostgreSQL initialization scripts
+├── k8s                   # Kubernetes deployment templates
+└── docs                  # Design docs and implementation plans
 ```
 
-## 环境要求
+## Requirements
 
-本地开发：
+Local development:
 
 - JDK 17+
 - Maven 3.9+
 - Node.js 18+
 - npm
 
-容器部署：
+Container deployment:
 
 - Docker
 - Docker Compose
 
-## 本地开发启动
+## Local Development
 
-后端本地运行需要 MySQL、Redis、PostgreSQL + pgvector。可以先用 Docker Compose 启动依赖，也可以直接使用完整 Docker Compose 部署。
+The backend requires MySQL, Redis, and PostgreSQL with pgvector. You can start dependencies with Docker Compose, or run the full Docker Compose deployment directly.
 
-一键开发启动脚本：
+One-command development script:
 
 ```bash
 ./start.sh
 ```
 
-脚本会：
+The script will:
 
-- 构建后端 Maven 多模块项目
-- 启动后端 `http://localhost:8080`
-- 启动前端开发服务 `http://localhost:5173`
-- 日志写入 `logs/`
+- Build the backend Maven multi-module project
+- Start the backend at `http://localhost:8080`
+- Start the frontend dev server at `http://localhost:5173`
+- Write logs to `logs/`
 
-停止：
+Stop services:
 
 ```bash
 ./stop.sh
 ```
 
-## Docker Compose 部署
+## Initial Admin User
 
-复制并编辑环境变量文件：
+The account system is enabled by default. On first startup, if no `ADMIN` user exists, the backend creates an initial admin from environment variables:
+
+```bash
+export HIFY_INIT_ADMIN_USERNAME=admin
+export HIFY_INIT_ADMIN_PASSWORD='change-me'
+```
+
+If `HIFY_INIT_ADMIN_PASSWORD` is not set, Hify will not create a weak default admin password. Test environments can disable authentication with `hify.auth.enabled=false`.
+
+## Docker Compose Deployment
+
+Copy and edit the environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-当前仓库不提交 `.env`，只提交不含真实密钥的 `.env.example`：
+The repository does not commit `.env`; it only commits `.env.example` without real secrets. Account-system variables:
+
+```env
+HIFY_INIT_ADMIN_USERNAME=admin
+HIFY_INIT_ADMIN_PASSWORD=change-me
+```
+
+Other common variables:
 
 ```env
 MYSQL_ROOT_PASSWORD=change-me
@@ -131,39 +155,39 @@ DASHSCOPE_API_KEY=
 DEEPSEEK_API_KEY=
 ```
 
-启动：
+Start:
 
 ```bash
 docker compose up -d --build
 ```
 
-访问：
+Access:
 
-- 前端：`http://localhost`
-- 后端健康检查：`http://localhost:8080/api/v1/health`
+- Frontend: `http://localhost`
+- Backend health check: `http://localhost:8080/api/v1/health`
 
-查看日志：
+View logs:
 
 ```bash
 docker compose logs -f backend
 docker compose logs -f frontend
 ```
 
-停止：
+Stop:
 
 ```bash
 docker compose down
 ```
 
-清理数据卷：
+Remove data volumes:
 
 ```bash
 docker compose down -v
 ```
 
-## Kubernetes 部署
+## Kubernetes Deployment
 
-`k8s/` 目录提供基础部署模板：
+The `k8s/` directory provides baseline deployment templates:
 
 ```text
 k8s/
@@ -174,14 +198,14 @@ k8s/
 └── prometheus.yaml
 ```
 
-部署前需要：
+Before deployment:
 
-1. 构建并推送 `hify-backend` 和 `hify-frontend` 镜像到你的镜像仓库。
-2. 修改 YAML 中的镜像地址。
-3. 根据环境修改 ConfigMap 和 Secret。
-4. 准备 MySQL、Redis、PostgreSQL + pgvector 服务，或替换为集群内同名服务。
+1. Build and push `hify-backend` and `hify-frontend` images to your registry.
+2. Update image references in the YAML files.
+3. Adjust ConfigMap and Secret values for your environment.
+4. Prepare MySQL, Redis, and PostgreSQL with pgvector, or replace them with same-name services inside the cluster.
 
-示例：
+Example:
 
 ```bash
 kubectl apply -f k8s/hify-secret-template.yaml
@@ -190,68 +214,76 @@ kubectl apply -f k8s/hify-backend.yaml
 kubectl apply -f k8s/hify-frontend.yaml
 ```
 
-生产环境建议：
+Production recommendations:
 
-- Secret 不要直接提交真实密钥。
-- 为上传目录配置持久化卷。
-- 为 SSE 入口关闭代理缓冲，并设置较长 read timeout。
-- MySQL、Redis、PostgreSQL 使用托管服务或独立 StatefulSet。
+- Do not commit real secrets.
+- Configure a persistent volume for uploads.
+- Disable proxy buffering and configure a long read timeout for SSE endpoints.
+- Use managed services or dedicated StatefulSets for MySQL, Redis, and PostgreSQL.
 
-## 数据库
+## Database
 
-主库使用 MySQL，迁移脚本位于：
+The primary database is MySQL. Migration scripts are located at:
 
 ```text
 hify-app/src/main/resources/db/migration
 ```
 
-向量库使用 PostgreSQL + pgvector，迁移脚本位于：
+The vector database is PostgreSQL with pgvector. Migration scripts are located at:
 
 ```text
 hify-knowledge/src/main/resources/db/pgvector
 ```
 
-启动后端时 Flyway 会执行迁移。
+Flyway runs migrations when the backend starts.
 
-## 测试
+## Testing
 
-运行所有后端测试：
+Run all backend tests:
 
 ```bash
 mvn test
 ```
 
-运行 app 集成测试：
+Run app integration tests:
 
 ```bash
 mvn -pl hify-app -am -Dtest=ProviderControllerIntegrationTest,ChatControllerIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
-集成测试使用：
+Integration tests use:
 
-- `mock` profile
-- H2 内存库
+- The `mock` profile
+- H2 in-memory database
 - MockMvc
-- `@Sql` 独立数据
-- mock LLM / MCP / pgvector 等外部依赖
+- Independent `@Sql` data
+- Mocked LLM / MCP / pgvector external dependencies
 
-## 开发约定
+Frontend build:
 
-核心约定见：
+```bash
+cd hify-web
+npm run build
+```
+
+## Development Conventions
+
+Core conventions are documented in:
 
 - `AGENTS.md`
 - `CLAUDE.md`
 
-重点规则：
+Key rules:
 
-- 模块间调用只能通过目标模块 `api/` 接口。
-- `web/` 只处理 HTTP、参数校验和响应转换。
-- `domain/` 承载业务逻辑和事务边界。
-- `infra/` 承载 Mapper、外部 API 客户端和基础设施实现。
-- 外部 LLM/MCP 调用必须有超时、熔断、fallback 或可控 mock。
+- Cross-module calls must go through the target module's `api/` interfaces.
+- `web/` handles HTTP, validation, and response conversion only.
+- `domain/` owns business logic and transaction boundaries.
+- `infra/` owns mappers, external API clients, and infrastructure implementations.
+- External LLM/MCP calls must have timeouts, circuit breakers, fallbacks, or controlled mocks.
 
-## 安全说明
+## Security Notes
 
-- 不要提交 `.env`、真实 API Key、数据库密码或 Kubernetes Secret。
-- `application-local.yml`、日志、上传文件、构建产物已通过 `.gitignore` 排除。
-- Docker Compose 示例变量只用于本地开发，生产环境必须替换强密码。
+- Do not commit `.env`, real API keys, database passwords, or Kubernetes secrets.
+- `application-local.yml`, logs, uploads, and build outputs are excluded by `.gitignore`.
+- Docker Compose example variables are for local development only; use strong production passwords.
+- High-risk operations such as Provider API keys, MCP server endpoints, and user management are restricted to `ADMIN`.

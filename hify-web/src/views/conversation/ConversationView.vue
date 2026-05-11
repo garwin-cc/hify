@@ -105,6 +105,8 @@ import {
   saveSessions,
 } from '@/api/conversation'
 import type { AgentOption, SessionMeta, DoneEvent } from '@/api/conversation'
+import { workflowRunEventsUrl, getWorkflowRunDetail } from '@/api/workflow'
+import type { WorkflowRunEvent } from '@/api/workflow'
 
 // ── 状态 ──────────────────────────────────────────────────────────────────
 
@@ -114,6 +116,7 @@ interface Message {
   streaming?: boolean
   waiting?: boolean
   error?: boolean
+  workflowEvents?: string[]
 }
 
 const agents         = ref<AgentOption[]>([])
@@ -131,6 +134,7 @@ const selectedAgentName = computed(() => {
 })
 
 let cancelStream: (() => void) | null = null
+let workflowEventSource: EventSource | null = null
 
 // ── 打字机队列（30ms/字符）────────────────────────────────────────────────────
 // SSE tokens 批量到达，这里逐字符匀速输出，避免内容整块跳入。
@@ -203,12 +207,14 @@ function onAgentChange(id: number) {
 }
 
 function newSession() {
+  closeWorkflowEvents()
   currentSessionId.value = null
   messages.value = []
 }
 
 async function switchSession(s: SessionMeta) {
   if (isStreaming.value) return
+  closeWorkflowEvents()
   currentSessionId.value = s.id
   messages.value = []
   try {
@@ -269,6 +275,12 @@ function send() {
           const cb = typeDoneCb; typeDoneCb = null; cb()
         }
       },
+      onWorkflowStart(ev) {
+        messages.value[aiIdx].waiting = false
+        messages.value[aiIdx].workflowEvents = [`工作流 #${ev.workflowRunId} 已开始`]
+        subscribeWorkflowEvents(ev.workflowRunId, aiIdx)
+        scrollBottom()
+      },
       onError(errMsg) {
         stopDrip()
         messages.value[aiIdx].streaming = false
@@ -279,6 +291,57 @@ function send() {
       },
     },
   )
+}
+
+function subscribeWorkflowEvents(runId: number, aiIdx: number) {
+  closeWorkflowEvents()
+  workflowEventSource = new EventSource(workflowRunEventsUrl(runId))
+  workflowEventSource.onmessage = event => {
+    try {
+      const data = JSON.parse(event.data) as WorkflowRunEvent
+      appendWorkflowEvent(aiIdx, formatWorkflowEvent(data))
+      if (data.eventType === 'RUN_SUCCEEDED' || data.eventType === 'RUN_FAILED' || data.eventType === 'RUN_TIMEOUT') {
+        closeWorkflowEvents()
+        loadWorkflowFinalResult(runId, aiIdx)
+      }
+    } catch {
+      // ignore malformed SSE payloads
+    }
+  }
+  workflowEventSource.onerror = () => {
+    closeWorkflowEvents()
+  }
+}
+
+function appendWorkflowEvent(aiIdx: number, text: string) {
+  const msg = messages.value[aiIdx]
+  msg.workflowEvents = [...(msg.workflowEvents ?? []), text].slice(-8)
+  scrollBottom()
+}
+
+function formatWorkflowEvent(event: WorkflowRunEvent): string {
+  if (event.nodeKey) {
+    return `${event.nodeKey}: ${event.status ?? event.eventType}`
+  }
+  return event.status ? `${event.eventType}: ${event.status}` : event.eventType
+}
+
+async function loadWorkflowFinalResult(runId: number, aiIdx: number) {
+  try {
+    const run = await getWorkflowRunDetail(runId)
+    const finalText = run.output || run.error
+    if (finalText) {
+      messages.value[aiIdx].content = finalText
+      messages.value[aiIdx].error = !!run.error
+    }
+  } catch {
+    appendWorkflowEvent(aiIdx, '工作流结果加载失败')
+  }
+}
+
+function closeWorkflowEvents() {
+  workflowEventSource?.close()
+  workflowEventSource = null
 }
 
 function onKeydown(e: Event | KeyboardEvent) {
@@ -292,6 +355,7 @@ function onKeydown(e: Event | KeyboardEvent) {
 onUnmounted(() => {
   stopDrip()
   cancelStream?.()
+  closeWorkflowEvents()
 })
 
 // ── 会话持久化 ────────────────────────────────────────────────────────────
@@ -334,8 +398,20 @@ function renderMd(text: string): string {
 }
 
 function renderContent(msg: Message): string {
-  const html = renderMd(msg.content)
+  const workflowHtml = msg.workflowEvents?.length
+    ? `<div class="workflow-events">${msg.workflowEvents.map(item => `<div>${escapeHtml(item)}</div>`).join('')}</div>`
+    : ''
+  const html = renderMd(msg.content) + workflowHtml
   return msg.streaming ? html + '<span class="cursor">▋</span>' : html
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 </script>
 
@@ -478,6 +554,7 @@ function renderContent(msg: Message): string {
 .md-body :deep(table)  { border-collapse: collapse; width: 100%; margin: .5em 0; }
 .md-body :deep(th), .md-body :deep(td) { border: 1px solid #e4e7ed; padding: 6px 10px; }
 .md-body :deep(th)     { background: #f5f7fa; }
+.md-body :deep(.workflow-events) { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ebeef5; color: #606266; font-size: 12px; line-height: 1.5; }
 
 /* 光标动画 */
 :deep(.cursor) {

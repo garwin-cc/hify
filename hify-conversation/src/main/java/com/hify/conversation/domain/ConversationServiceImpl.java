@@ -28,6 +28,8 @@ import com.hify.model.api.LlmCallService;
 import com.hify.model.api.ToolCall;
 import com.hify.mcp.api.McpClientService;
 import com.hify.mcp.api.McpService;
+import com.hify.mcp.api.McpToolCallAuditRecord;
+import com.hify.mcp.api.McpToolCallAuditService;
 import com.hify.mcp.api.McpToolResp;
 import com.hify.knowledge.api.KnowledgeBaseResp;
 import com.hify.knowledge.api.KnowledgeSearchReq;
@@ -79,6 +81,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final WorkflowService   workflowService;
     private final McpService        mcpService;
     private final McpClientService  mcpClientService;
+    private final McpToolCallAuditService mcpToolCallAuditService;
     private final ObjectMapper      objectMapper;
     private final HifyMetrics       hifyMetrics;
 
@@ -191,6 +194,9 @@ public class ConversationServiceImpl implements ConversationService {
                 WorkflowRunReq runReq = new WorkflowRunReq();
                 runReq.setUserMessage(userContent);
                 WorkflowRunResp workflowRun = workflowService.startAsyncRun(agent.getWorkflowId(), runReq);
+                if (!cancelled.get()) {
+                    trySend(emitter, workflowStartEvent(workflowRun.getId(), agent.getWorkflowId()));
+                }
                 String workflowResult = "工作流已开始执行，任务 ID：" + workflowRun.getId()
                         + "，可在工作流运行详情中查看进度和结果。";
                 ChatResponse response = ChatResponse.builder()
@@ -355,7 +361,7 @@ public class ConversationServiceImpl implements ConversationService {
                 .build());
 
         for (ToolCall toolCall : firstResponse.getToolCalls()) {
-            String toolResult = executeToolCall(toolMap, toolCall);
+            String toolResult = executeToolCall(toolMap, toolCall, session.getId(), assistantMsgId);
             contextMessages.add(ChatMessage.builder()
                     .role("tool")
                     .content(toolResult)
@@ -533,7 +539,8 @@ public class ConversationServiceImpl implements ConversationService {
         return value.replaceAll("<[^>]+>", "").trim();
     }
 
-    private String executeToolCall(Map<String, McpToolResp> toolMap, ToolCall toolCall) {
+    private String executeToolCall(Map<String, McpToolResp> toolMap, ToolCall toolCall,
+                                   Long sessionId, Long assistantMsgId) {
         McpToolResp tool = toolMap.get(toolCall.getFunctionName());
         if (tool == null) {
             log.warn("mcp tool call skipped reason=tool_not_found name={}", toolCall.getFunctionName());
@@ -541,20 +548,50 @@ public class ConversationServiceImpl implements ConversationService {
         }
 
         long start = System.currentTimeMillis();
+        Map<String, Object> arguments = Map.of();
         try {
-            Map<String, Object> arguments = parseToolArguments(toolCall.getFunctionArguments());
+            arguments = parseToolArguments(toolCall.getFunctionArguments());
             log.info("mcp tool call start toolId={} serverId={} name={} argumentKeys={}",
                     tool.getId(), tool.getMcpServerId(), tool.getName(), arguments.keySet());
             String result = mcpClientService.callTool(tool.getMcpServerId(), tool.getName(), arguments);
             log.info("mcp tool call end toolId={} serverId={} name={} elapsedMs={} resultLength={}",
                     tool.getId(), tool.getMcpServerId(), tool.getName(),
                     System.currentTimeMillis() - start, result == null ? 0 : result.length());
+            recordToolAudit("CONVERSATION", sessionId, assistantMsgId, null, null,
+                    tool, arguments, System.currentTimeMillis() - start, true, result, null);
             return result;
         } catch (Exception e) {
             log.warn("mcp tool call failed toolId={} serverId={} name={} elapsedMs={} message={}",
                     tool.getId(), tool.getMcpServerId(), tool.getName(),
                     System.currentTimeMillis() - start, e.getMessage());
+            recordToolAudit("CONVERSATION", sessionId, assistantMsgId, null, null,
+                    tool, arguments, System.currentTimeMillis() - start, false, null, e.getMessage());
             return "工具调用失败: " + e.getMessage();
+        }
+    }
+
+    private void recordToolAudit(String sourceType, Long sessionId, Long messageId,
+                                 Long workflowRunId, String workflowNodeKey,
+                                 McpToolResp tool, Map<String, Object> arguments,
+                                 long elapsedMs, boolean success, String result, String error) {
+        try {
+            mcpToolCallAuditService.record(McpToolCallAuditRecord.builder()
+                    .sourceType(sourceType)
+                    .conversationSessionId(sessionId)
+                    .conversationMessageId(messageId)
+                    .workflowRunId(workflowRunId)
+                    .workflowNodeKey(workflowNodeKey)
+                    .mcpServerId(tool.getMcpServerId())
+                    .toolName(tool.getName())
+                    .arguments(arguments)
+                    .elapsedMs(elapsedMs)
+                    .success(success)
+                    .result(result)
+                    .error(error)
+                    .build());
+        } catch (Exception auditError) {
+            log.warn("mcp tool audit failed sourceType={} tool={} message={}",
+                    sourceType, tool.getName(), auditError.getMessage());
         }
     }
 
@@ -879,7 +916,13 @@ public class ConversationServiceImpl implements ConversationService {
     // ─── SSE 事件构造──────────────────────────────────────────────────────────
 
     private String tokenEvent(String token) {
-        return toJson(Map.of("type", "delta", "content", token));
+        return toJson(Map.of("type", "token", "content", token));
+    }
+
+    private String workflowStartEvent(Long workflowRunId, Long workflowId) {
+        return toJson(Map.of("type", "workflow_start",
+                "workflowRunId", workflowRunId,
+                "workflowId", workflowId));
     }
 
     private String doneEvent(Long sessionId, Long messageId, ChatResponse response) {

@@ -9,6 +9,7 @@ import com.hify.conversation.infra.ChatMessagePo;
 import com.hify.conversation.infra.ChatSessionMapper;
 import com.hify.conversation.infra.ChatSessionPo;
 import com.hify.model.api.LlmCallService;
+import com.hify.mcp.api.McpToolCallAuditService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -41,6 +42,9 @@ class ConversationServiceImplTest {
 
     @Mock
     private ThreadPoolExecutor llmExecutor;
+
+    @Mock
+    private McpToolCallAuditService mcpToolCallAuditService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 

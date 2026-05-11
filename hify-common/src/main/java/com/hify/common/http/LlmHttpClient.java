@@ -21,7 +21,7 @@ import java.util.function.Consumer;
  *
  * <ul>
  *   <li>非流式（{@link #post}）：OkHttpClient，连接超时 5s，读超时 120s</li>
- *   <li>流式（{@link #stream}）：OkHttpClient，连接超时 5s，读超时 120s（SSE 不能有读超时截断）</li>
+ *   <li>流式（{@link #stream}）：OkHttpClient，连接超时 5s，读超时 0（SSE 不截断）</li>
  * </ul>
  *
  * <p>所有请求记录 URL、耗时、HTTP 状态码；所有异常统一转为 {@link LlmApiException}。
@@ -39,7 +39,7 @@ public class LlmHttpClient {
     public LlmHttpClient() {
         this.streamClient = new OkHttpClient.Builder()
                 .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(120, TimeUnit.SECONDS)
+                .readTimeout(0, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build();
     }

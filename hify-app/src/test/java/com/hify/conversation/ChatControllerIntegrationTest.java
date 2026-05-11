@@ -91,7 +91,7 @@ class ChatControllerIntegrationTest extends HifyMockIntegrationTest {
 
         List<JsonNode> events = parseSseEvents(completed.getResponse().getContentAsString(StandardCharsets.UTF_8));
         List<JsonNode> deltaEvents = events.stream()
-                .filter(event -> "delta".equals(event.path("type").asText()))
+                .filter(event -> "token".equals(event.path("type").asText()))
                 .toList();
         String deltaContent = deltaEvents.stream()
                 .map(event -> event.path("content").asText())

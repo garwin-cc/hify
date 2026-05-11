@@ -42,17 +42,24 @@ export interface DoneEvent {
   outputTokens: number
 }
 
+export interface WorkflowStartEvent {
+  type: 'workflow_start'
+  workflowRunId: number
+  workflowId: number
+}
+
 export interface ErrorEvent {
   type: 'error'
   code: number
   message: string
 }
 
-export type SseEvent = TokenEvent | DoneEvent | ErrorEvent
+export type SseEvent = TokenEvent | DoneEvent | WorkflowStartEvent | ErrorEvent
 
 export interface StreamCallbacks {
   onToken: (token: string) => void
   onDone: (ev: DoneEvent) => void
+  onWorkflowStart?: (ev: WorkflowStartEvent) => void
   onError: (msg: string) => void
 }
 
@@ -130,6 +137,7 @@ export function streamMessage(
               const ev: SseEvent = JSON.parse(raw)
               if (ev.type === 'token') callbacks.onToken(ev.content)
               else if (ev.type === 'done') callbacks.onDone(ev)
+              else if (ev.type === 'workflow_start') callbacks.onWorkflowStart?.(ev)
               else if (ev.type === 'error') callbacks.onError(ev.message)
             } catch { /* ignore parse errors */ }
           }

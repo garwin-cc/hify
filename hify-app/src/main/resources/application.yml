@@ -94,6 +94,12 @@ resilience4j:
 hify:
   cors:
     allowed-origins: "*"
+  llm:
+    fallback:
+      OPENAI: OLLAMA
+      CLAUDE: OPENAI
+      DEEPSEEK: OPENAI
+      GEMINI: OLLAMA
   postgres:
     url: jdbc:postgresql://localhost:5433/hify_vector
     username: hify

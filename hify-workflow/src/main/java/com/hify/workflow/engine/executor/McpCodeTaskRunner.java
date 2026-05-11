@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.mcp.api.McpClientService;
+import com.hify.mcp.api.McpToolCallAuditRecord;
+import com.hify.mcp.api.McpToolCallAuditService;
 import com.hify.workflow.engine.ExecutionContext;
 import com.hify.workflow.engine.WorkflowNode;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ import java.util.Map;
 public class McpCodeTaskRunner implements CodeTaskRunner {
 
     private final McpClientService mcpClientService;
+    private final McpToolCallAuditService mcpToolCallAuditService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -42,8 +45,36 @@ public class McpCodeTaskRunner implements CodeTaskRunner {
         arguments.put("nodeKey", node.nodeKey());
         arguments.put("timeoutSeconds", config.timeoutSeconds() == null ? 600 : config.timeoutSeconds());
         arguments.put("context", ctx.snapshot());
-        String response = mcpClientService.callTool(config.mcpServerId(), config.toolName(), arguments);
-        return parseResult(response);
+        long start = System.currentTimeMillis();
+        try {
+            String response = mcpClientService.callTool(config.mcpServerId(), config.toolName(), arguments);
+            recordAudit(ctx, node, config, arguments, System.currentTimeMillis() - start, true, response, null);
+            return parseResult(response);
+        } catch (Exception e) {
+            recordAudit(ctx, node, config, arguments, System.currentTimeMillis() - start, false, null, e.getMessage());
+            throw e;
+        }
+    }
+
+    private void recordAudit(ExecutionContext ctx, WorkflowNode node, CodeTaskConfig config,
+                             Map<String, Object> arguments, long elapsedMs, boolean success,
+                             String result, String error) {
+        try {
+            mcpToolCallAuditService.record(McpToolCallAuditRecord.builder()
+                    .sourceType("WORKFLOW")
+                    .workflowRunId(ctx.getWorkflowRunId())
+                    .workflowNodeKey(node.nodeKey())
+                    .mcpServerId(config.mcpServerId())
+                    .toolName(config.toolName())
+                    .arguments(arguments)
+                    .elapsedMs(elapsedMs)
+                    .success(success)
+                    .result(result)
+                    .error(error)
+                    .build());
+        } catch (Exception ignored) {
+            // Audit must never change workflow execution semantics.
+        }
     }
 
     private CodeTaskResult parseResult(String response) {

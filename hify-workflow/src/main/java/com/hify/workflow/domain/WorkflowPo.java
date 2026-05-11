@@ -19,4 +19,6 @@ public class WorkflowPo extends BaseEntity {
     private String startNodeKey;
 
     private Long templateId;
+
+    private Long sourceTemplateVersionId;
 }

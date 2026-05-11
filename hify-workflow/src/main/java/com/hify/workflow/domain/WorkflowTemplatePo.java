@@ -23,4 +23,28 @@ public class WorkflowTemplatePo extends BaseEntity {
     private Integer enabled;
 
     private Integer builtin;
+
+    private String status;
+
+    private Long currentVersionId;
+
+    private Integer latestVersionNo;
+
+    private String tagsJson;
+
+    private Integer nodeCount;
+
+    private String nodeTypesJson;
+
+    private Integer requirementCount;
+
+    private Integer usageCount;
+
+    private java.time.LocalDateTime lastUsedAt;
+
+    private Long createdFromWorkflowId;
+
+    private java.time.LocalDateTime publishedAt;
+
+    private java.time.LocalDateTime archivedAt;
 }

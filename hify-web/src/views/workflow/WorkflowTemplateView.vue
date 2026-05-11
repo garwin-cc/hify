@@ -42,13 +42,26 @@
         </div>
         <h3>{{ template.name }}</h3>
         <p>{{ template.description || '暂无描述' }}</p>
+        <div v-if="template.tags?.length" class="template-card__tags">
+          <el-tag v-for="tag in template.tags" :key="tag" size="small" type="info">
+            {{ tag }}
+          </el-tag>
+        </div>
         <div class="template-card__meta">
           <span>{{ template.nodeCount }} 个节点</span>
+          <span>v{{ template.latestVersionNo || 1 }}</span>
+          <span>{{ template.usageCount || 0 }} 次使用</span>
           <span v-if="template.builtin === 1">内置模板</span>
         </div>
-        <el-button type="primary" @click="useTemplate(template.id)">
-          使用模板
-        </el-button>
+        <div class="template-card__actions">
+          <el-button @click="exportTemplate(template)">
+            <el-icon style="margin-right: 4px"><Download /></el-icon>
+            导出
+          </el-button>
+          <el-button type="primary" @click="useTemplate(template.id)">
+            使用模板
+          </el-button>
+        </div>
       </article>
     </div>
   </div>
@@ -57,9 +70,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Plus } from '@element-plus/icons-vue'
+import { ArrowLeft, Download, Plus } from '@element-plus/icons-vue'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getWorkflowTemplateList, type WorkflowTemplateListItem } from '@/api/workflow'
+import {
+  exportWorkflowTemplate,
+  getWorkflowTemplateList,
+  type WorkflowTemplateListItem,
+} from '@/api/workflow'
 
 const router = useRouter()
 const loading = ref(false)
@@ -94,6 +111,19 @@ async function loadTemplates() {
 
 function useTemplate(id: number) {
   router.push(`/workflow-templates/${id}/create`)
+}
+
+async function exportTemplate(template: WorkflowTemplateListItem) {
+  const versionId = template.currentVersionId
+  if (!versionId) return
+  const resp = await exportWorkflowTemplate(template.id, versionId)
+  const blob = new Blob([JSON.stringify(resp.templateJson, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = resp.filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 onMounted(loadTemplates)
@@ -168,5 +198,19 @@ onMounted(loadTemplates)
   margin: 18px 0 14px;
   color: var(--text-tertiary);
   font-size: var(--text-sm);
+}
+
+.template-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+  margin-top: 14px;
+}
+
+.template-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>

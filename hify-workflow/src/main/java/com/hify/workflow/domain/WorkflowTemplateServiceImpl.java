@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
@@ -17,18 +18,22 @@ import com.hify.mcp.api.McpService;
 import com.hify.model.api.ModelConfigResp;
 import com.hify.model.api.ModelConfigService;
 import com.hify.workflow.api.CreateWorkflowFromTemplateReq;
+import com.hify.workflow.api.CreateTemplateFromWorkflowReq;
 import com.hify.workflow.api.CreateWorkflowReq;
 import com.hify.workflow.api.WorkflowDetailResp;
 import com.hify.workflow.api.WorkflowEdgeDto;
 import com.hify.workflow.api.WorkflowNodeDto;
 import com.hify.workflow.api.WorkflowService;
 import com.hify.workflow.api.WorkflowTemplateDetailResp;
+import com.hify.workflow.api.WorkflowTemplateExportResp;
 import com.hify.workflow.api.WorkflowTemplateListItemResp;
 import com.hify.workflow.api.WorkflowTemplateQuery;
 import com.hify.workflow.api.WorkflowTemplateRequirementResp;
 import com.hify.workflow.api.WorkflowTemplateService;
 import com.hify.workflow.infra.WorkflowMapper;
 import com.hify.workflow.infra.WorkflowTemplateMapper;
+import com.hify.workflow.infra.WorkflowTemplateUsageMapper;
+import com.hify.workflow.infra.WorkflowTemplateVersionMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,8 +41,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -54,6 +65,8 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
 
     private final WorkflowTemplateMapper templateMapper;
     private final WorkflowMapper workflowMapper;
+    private final WorkflowTemplateVersionMapper versionMapper;
+    private final WorkflowTemplateUsageMapper usageMapper;
     private final WorkflowService workflowService;
     private final ModelConfigService modelConfigService;
     private final KnowledgeService knowledgeService;
@@ -70,6 +83,7 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
                         .like(StringUtils.hasText(query.getName()), WorkflowTemplatePo::getName, query.getName())
                         .eq(StringUtils.hasText(query.getCategory()), WorkflowTemplatePo::getCategory, query.getCategory())
                         .eq(WorkflowTemplatePo::getEnabled, 1)
+                        .ne(WorkflowTemplatePo::getStatus, "ARCHIVED")
                         .orderByDesc(WorkflowTemplatePo::getBuiltin)
                         .orderByDesc(WorkflowTemplatePo::getCreatedAt)), this::toListItemResp);
     }
@@ -84,7 +98,8 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
     @Transactional
     public WorkflowDetailResp createWorkflow(Long templateId, CreateWorkflowFromTemplateReq req) {
         WorkflowTemplatePo template = findEnabledTemplateOrThrow(templateId);
-        WorkflowTemplateConfig config = parseTemplateConfig(template.getConfigJson());
+        WorkflowTemplateVersionPo version = loadCurrentVersion(template);
+        WorkflowTemplateConfig config = parseTemplateConfig(snapshotJson(template, version));
         Map<String, Long> bindings = req.getBindings() == null ? Collections.emptyMap() : req.getBindings();
         validateBindings(config.getRequirements(), bindings);
 
@@ -102,14 +117,86 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
         WorkflowPo update = new WorkflowPo();
         update.setId(created.getId());
         update.setTemplateId(templateId);
+        update.setSourceTemplateVersionId(version == null ? null : version.getId());
         workflowMapper.updateById(update);
+        recordUsage(templateId, version == null ? null : version.getId(), created.getId(), "USE");
+        templateMapper.update(null, Wrappers.lambdaUpdate(WorkflowTemplatePo.class)
+                .eq(WorkflowTemplatePo::getId, templateId)
+                .setSql("usage_count = usage_count + 1")
+                .set(WorkflowTemplatePo::getLastUsedAt, LocalDateTime.now()));
         log.info("created workflow id={} from template id={}", created.getId(), templateId);
         return workflowService.getDetail(created.getId());
     }
 
+    @Override
+    @Transactional
+    public WorkflowTemplateDetailResp createFromWorkflow(CreateTemplateFromWorkflowReq req) {
+        WorkflowDetailResp workflow = workflowService.getDetail(req.getWorkflowId());
+        if (workflow == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流不存在: " + req.getWorkflowId());
+        }
+        JsonNode snapshot = buildTemplateSnapshot(req, workflow);
+        WorkflowTemplateConfig config = parseTemplateConfig(snapshot.toString());
+        LocalDateTime now = LocalDateTime.now();
+        boolean publish = Boolean.TRUE.equals(req.getPublish());
+
+        WorkflowTemplatePo template = new WorkflowTemplatePo();
+        template.setName(req.getName().trim());
+        template.setDescription(req.getDescription() == null ? "" : req.getDescription().trim());
+        template.setCategory(StringUtils.hasText(req.getCategory()) ? req.getCategory().trim() : "通用");
+        template.setIcon(StringUtils.hasText(req.getIcon()) ? req.getIcon().trim() : "workflow");
+        template.setConfigJson(snapshot.toString());
+        template.setEnabled(1);
+        template.setBuiltin(0);
+        template.setStatus(publish ? "PUBLISHED" : "DRAFT");
+        template.setLatestVersionNo(1);
+        template.setTagsJson(toJson(req.getTags() == null ? List.of() : req.getTags()));
+        template.setNodeCount(config.getNodes().size());
+        template.setNodeTypesJson(toJson(nodeTypes(config.getNodes())));
+        template.setRequirementCount(config.getRequirements().size());
+        template.setUsageCount(0);
+        template.setCreatedFromWorkflowId(req.getWorkflowId());
+        template.setPublishedAt(publish ? now : null);
+        templateMapper.insert(template);
+
+        WorkflowTemplateVersionPo version = new WorkflowTemplateVersionPo();
+        version.setTemplateId(template.getId());
+        version.setVersionNo(1);
+        version.setSnapshotJson(snapshot.toString());
+        version.setRequirementsJson(toRequirementsJson(snapshot.path("requirements")));
+        version.setNodeCount(config.getNodes().size());
+        version.setNodeTypesJson(toJson(nodeTypes(config.getNodes())));
+        version.setChecksum(sha256(snapshot.toString()));
+        version.setChangelog(req.getChangelog() == null ? "" : req.getChangelog());
+        version.setValidationStatus("PASSED");
+        version.setValidationErrorsJson("[]");
+        version.setPublishedAt(publish ? now : null);
+        versionMapper.insert(version);
+
+        template.setCurrentVersionId(version.getId());
+        templateMapper.updateById(template);
+        log.info("created workflow template id={} from workflow id={}", template.getId(), req.getWorkflowId());
+        return toDetailResp(template);
+    }
+
+    @Override
+    public WorkflowTemplateExportResp exportTemplate(Long templateId, Long versionId) {
+        WorkflowTemplatePo template = findEnabledTemplateOrThrow(templateId);
+        WorkflowTemplateVersionPo version = versionId == null ? loadCurrentVersion(template) : versionMapper.selectById(versionId);
+        if (version == null || !templateId.equals(version.getTemplateId())) {
+            throw new BizException(ErrorCode.NOT_FOUND, "模板版本不存在: " + versionId);
+        }
+        WorkflowTemplateExportResp resp = new WorkflowTemplateExportResp();
+        resp.setFilename(safeFilename(template.getName()) + "-v" + version.getVersionNo() + ".json");
+        resp.setTemplateJson(readConfigJson(version.getSnapshotJson()));
+        recordUsage(templateId, version.getId(), null, "EXPORT");
+        return resp;
+    }
+
     private WorkflowTemplatePo findEnabledTemplateOrThrow(Long id) {
         WorkflowTemplatePo template = templateMapper.selectById(id);
-        if (template == null || template.getEnabled() == null || template.getEnabled() != 1) {
+        if (template == null || template.getEnabled() == null || template.getEnabled() != 1
+                || "ARCHIVED".equals(template.getStatus())) {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流模板不存在或已禁用: " + id);
         }
         return template;
@@ -124,13 +211,25 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
         resp.setIcon(po.getIcon());
         resp.setEnabled(po.getEnabled());
         resp.setBuiltin(po.getBuiltin());
-        resp.setNodeCount(parseNodeCount(po.getConfigJson()));
+        WorkflowTemplateVersionPo version = loadCurrentVersion(po);
+        WorkflowTemplateConfig config = parseTemplateConfig(snapshotJson(po, version));
+        resp.setNodeCount(effectiveNodeCount(po, version, config));
+        resp.setStatus(effectiveStatus(po));
+        resp.setCurrentVersionId(po.getCurrentVersionId());
+        resp.setLatestVersionNo(po.getLatestVersionNo() == null ? 0 : po.getLatestVersionNo());
+        resp.setTags(fromJsonList(po.getTagsJson(), String.class));
+        resp.setNodeTypes(effectiveNodeTypes(po, version, config));
+        resp.setRequirementCount(po.getRequirementCount() == null ? config.getRequirements().size() : po.getRequirementCount());
+        resp.setUsageCount(po.getUsageCount() == null ? 0 : po.getUsageCount());
+        resp.setLastUsedAt(po.getLastUsedAt());
         resp.setCreatedAt(po.getCreatedAt());
         return resp;
     }
 
     private WorkflowTemplateDetailResp toDetailResp(WorkflowTemplatePo po) {
-        WorkflowTemplateConfig config = parseTemplateConfig(po.getConfigJson());
+        WorkflowTemplateVersionPo version = loadCurrentVersion(po);
+        String snapshotJson = snapshotJson(po, version);
+        WorkflowTemplateConfig config = parseTemplateConfig(snapshotJson);
         WorkflowTemplateDetailResp resp = new WorkflowTemplateDetailResp();
         resp.setId(po.getId());
         resp.setName(po.getName());
@@ -139,12 +238,37 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
         resp.setIcon(po.getIcon());
         resp.setEnabled(po.getEnabled());
         resp.setBuiltin(po.getBuiltin());
-        resp.setConfigJson(readConfigJson(po.getConfigJson()));
-        resp.setRequirements(config.getRequirements());
-        resp.setNodeCount(config.getNodes() == null ? 0 : config.getNodes().size());
+        resp.setConfigJson(readConfigJson(snapshotJson));
+        resp.setRequirements(version == null
+                ? config.getRequirements()
+                : parseRequirements(readConfigJson(version.getRequirementsJson())));
+        resp.setNodeCount(effectiveNodeCount(po, version, config));
+        resp.setStatus(effectiveStatus(po));
+        resp.setCurrentVersionId(po.getCurrentVersionId());
+        resp.setLatestVersionNo(po.getLatestVersionNo() == null ? 0 : po.getLatestVersionNo());
+        resp.setTags(fromJsonList(po.getTagsJson(), String.class));
+        resp.setNodeTypes(effectiveNodeTypes(po, version, config));
+        resp.setRequirementCount(po.getRequirementCount() == null ? config.getRequirements().size() : po.getRequirementCount());
+        resp.setUsageCount(po.getUsageCount() == null ? 0 : po.getUsageCount());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
+    }
+
+    private WorkflowTemplateVersionPo loadCurrentVersion(WorkflowTemplatePo template) {
+        if (template.getCurrentVersionId() == null) {
+            return null;
+        }
+        WorkflowTemplateVersionPo version = versionMapper.selectById(template.getCurrentVersionId());
+        if (version == null) {
+            log.warn("workflow template current version missing templateId={} versionId={}",
+                    template.getId(), template.getCurrentVersionId());
+        }
+        return version;
+    }
+
+    private String snapshotJson(WorkflowTemplatePo template, WorkflowTemplateVersionPo version) {
+        return version == null ? template.getConfigJson() : version.getSnapshotJson();
     }
 
     private int parseNodeCount(String configJson) {
@@ -157,12 +281,209 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
         }
     }
 
+    private int effectiveNodeCount(WorkflowTemplatePo template, WorkflowTemplateVersionPo version,
+                                   WorkflowTemplateConfig config) {
+        if (template.getNodeCount() != null) {
+            return template.getNodeCount();
+        }
+        if (version != null && version.getNodeCount() != null) {
+            return version.getNodeCount();
+        }
+        return config.getNodes() == null ? 0 : config.getNodes().size();
+    }
+
+    private String effectiveStatus(WorkflowTemplatePo template) {
+        if (StringUtils.hasText(template.getStatus())) {
+            return template.getStatus();
+        }
+        return template.getEnabled() != null && template.getEnabled() == 1 ? "PUBLISHED" : "DRAFT";
+    }
+
+    private List<String> effectiveNodeTypes(WorkflowTemplatePo template, WorkflowTemplateVersionPo version,
+                                            WorkflowTemplateConfig config) {
+        List<String> fromTemplate = fromJsonList(template.getNodeTypesJson(), String.class);
+        if (!fromTemplate.isEmpty()) {
+            return fromTemplate;
+        }
+        if (version != null) {
+            List<String> fromVersion = fromJsonList(version.getNodeTypesJson(), String.class);
+            if (!fromVersion.isEmpty()) {
+                return fromVersion;
+            }
+        }
+        return nodeTypes(config.getNodes());
+    }
+
+    private List<String> nodeTypes(List<WorkflowNodeDto> nodes) {
+        if (nodes == null || nodes.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> types = new LinkedHashSet<>();
+        for (WorkflowNodeDto node : nodes) {
+            if (StringUtils.hasText(node.getNodeType())) {
+                types.add(node.getNodeType());
+            }
+        }
+        return new ArrayList<>(types);
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "模板 JSON 序列化失败", e);
+        }
+    }
+
+    private <T> List<T> fromJsonList(String json, Class<T> itemType) {
+        if (!StringUtils.hasText(json)) {
+            return List.of();
+        }
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (!node.isArray()) {
+                return List.of();
+            }
+            List<T> result = new ArrayList<>();
+            for (JsonNode item : node) {
+                result.add(objectMapper.convertValue(item, itemType));
+            }
+            return result;
+        } catch (IllegalArgumentException | JsonProcessingException e) {
+            log.warn("workflow template json list invalid: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private String toRequirementsJson(JsonNode requirementsNode) {
+        ObjectNode root = objectMapper.createObjectNode();
+        root.set("models", requirementsNode != null && requirementsNode.path("models").isArray()
+                ? requirementsNode.path("models")
+                : objectMapper.createArrayNode());
+        root.set("knowledgeBases", requirementsNode != null && requirementsNode.path("knowledgeBases").isArray()
+                ? requirementsNode.path("knowledgeBases")
+                : objectMapper.createArrayNode());
+        root.set("tools", requirementsNode != null && requirementsNode.path("tools").isArray()
+                ? requirementsNode.path("tools")
+                : objectMapper.createArrayNode());
+        return root.toString();
+    }
+
     private JsonNode readConfigJson(String configJson) {
         try {
             return objectMapper.readTree(configJson);
         } catch (JsonProcessingException e) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "模板 JSON 不合法", e);
         }
+    }
+
+    private JsonNode buildTemplateSnapshot(CreateTemplateFromWorkflowReq req, WorkflowDetailResp workflow) {
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("schemaVersion", "1.0");
+        ObjectNode templateNode = root.putObject("template");
+        templateNode.put("name", req.getName());
+        templateNode.put("description", req.getDescription() == null ? "" : req.getDescription());
+        templateNode.put("category", StringUtils.hasText(req.getCategory()) ? req.getCategory() : "通用");
+        templateNode.set("tags", objectMapper.valueToTree(req.getTags() == null ? List.of() : req.getTags()));
+        templateNode.put("icon", StringUtils.hasText(req.getIcon()) ? req.getIcon() : "workflow");
+        ObjectNode workflowNode = root.putObject("workflow");
+        workflowNode.put("name", req.getName());
+        workflowNode.put("description", req.getDescription() == null ? "" : req.getDescription());
+        workflowNode.put("enabled", 0);
+        root.put("startNodeKey", workflow.getStartNodeKey());
+        ResourceRequirements requirements = new ResourceRequirements();
+        root.set("nodes", objectMapper.valueToTree(toTemplateNodes(workflow.getNodes(), requirements)));
+        root.set("edges", objectMapper.valueToTree(workflow.getEdges() == null ? List.of() : workflow.getEdges()));
+        root.set("requirements", requirements.toJson(objectMapper));
+        return root;
+    }
+
+    private List<WorkflowNodeDto> toTemplateNodes(List<WorkflowNodeDto> nodes, ResourceRequirements requirements) {
+        if (nodes == null) {
+            return List.of();
+        }
+        return nodes.stream().map(node -> {
+            WorkflowNodeDto copy = new WorkflowNodeDto();
+            copy.setNodeKey(node.getNodeKey());
+            copy.setNodeType(node.getNodeType());
+            copy.setName(node.getName());
+            copy.setPositionX(node.getPositionX());
+            copy.setPositionY(node.getPositionY());
+            copy.setConfig(toTemplateConfig(node, requirements));
+            return copy;
+        }).toList();
+    }
+
+    private JsonNode toTemplateConfig(WorkflowNodeDto node, ResourceRequirements requirements) {
+        ObjectNode target = objectMapper.createObjectNode();
+        JsonNode source = node.getConfig() == null || node.getConfig().isNull()
+                ? objectMapper.createObjectNode()
+                : node.getConfig();
+        source.fields().forEachRemaining(entry -> {
+            String fieldName = entry.getKey();
+            JsonNode value = entry.getValue();
+            if ("modelConfigId".equals(fieldName)) {
+                String key = "model.chat";
+                requirements.addModel(key, "聊天模型");
+                target.put("modelConfigRef", "{{" + key + "}}");
+            } else if ("knowledgeBaseId".equals(fieldName)) {
+                String key = "knowledge.base";
+                requirements.addKnowledgeBase(key, "业务知识库");
+                target.put("knowledgeBaseRef", "{{" + key + "}}");
+            } else if ("toolId".equals(fieldName)) {
+                String key = "tool." + node.getNodeKey();
+                requirements.addTool(key, node.getName() + "工具");
+                target.put("toolRef", "{{" + key + "}}");
+            } else {
+                target.set(fieldName, sanitizeNodeConfigValue(value));
+            }
+        });
+        return target;
+    }
+
+    private void recordUsage(Long templateId, Long versionId, Long workflowId, String actionType) {
+        if (versionId == null) {
+            return;
+        }
+        WorkflowTemplateUsagePo usage = new WorkflowTemplateUsagePo();
+        usage.setTemplateId(templateId);
+        usage.setVersionId(versionId);
+        usage.setWorkflowId(workflowId);
+        usage.setActionType(actionType);
+        usageMapper.insert(usage);
+    }
+
+    private static String sha256(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm unavailable", e);
+        }
+    }
+
+    private static String safeFilename(String name) {
+        String safe = StringUtils.hasText(name) ? name.trim().replaceAll("[\\\\/:*?\"<>|]+", "_") : "workflow-template";
+        return StringUtils.hasText(safe) ? safe : "workflow-template";
+    }
+
+    private JsonNode sanitizeNodeConfigValue(JsonNode value) {
+        if (!value.isObject()) {
+            return value;
+        }
+        ObjectNode source = (ObjectNode) value;
+        ObjectNode target = objectMapper.createObjectNode();
+        source.fields().forEachRemaining(entry -> {
+            String lower = entry.getKey().toLowerCase(Locale.ROOT);
+            if (lower.contains("authorization") || lower.contains("token")
+                    || lower.contains("apikey") || lower.contains("api_key")
+                    || lower.contains("cookie") || lower.contains("secret")) {
+                target.put(entry.getKey(), "");
+            } else {
+                target.set(entry.getKey(), sanitizeNodeConfigValue(entry.getValue()));
+            }
+        });
+        return target;
     }
 
     private WorkflowTemplateConfig parseTemplateConfig(String configJson) {
@@ -318,5 +639,48 @@ public class WorkflowTemplateServiceImpl implements WorkflowTemplateService {
         private String name;
         private String description;
         private Integer enabled = 1;
+    }
+
+    private static class ResourceRequirements {
+        private final LinkedHashSet<ResourceRequirement> models = new LinkedHashSet<>();
+        private final LinkedHashSet<ResourceRequirement> knowledgeBases = new LinkedHashSet<>();
+        private final LinkedHashSet<ResourceRequirement> tools = new LinkedHashSet<>();
+
+        void addModel(String key, String label) {
+            models.add(new ResourceRequirement(key, "CHAT", label, true));
+        }
+
+        void addKnowledgeBase(String key, String label) {
+            knowledgeBases.add(new ResourceRequirement(key, null, label, true));
+        }
+
+        void addTool(String key, String label) {
+            tools.add(new ResourceRequirement(key, null, label, true));
+        }
+
+        JsonNode toJson(ObjectMapper objectMapper) {
+            ObjectNode root = objectMapper.createObjectNode();
+            root.set("models", toArray(objectMapper, models));
+            root.set("knowledgeBases", toArray(objectMapper, knowledgeBases));
+            root.set("tools", toArray(objectMapper, tools));
+            return root;
+        }
+
+        private ArrayNode toArray(ObjectMapper objectMapper, LinkedHashSet<ResourceRequirement> requirements) {
+            ArrayNode array = objectMapper.createArrayNode();
+            for (ResourceRequirement requirement : requirements) {
+                ObjectNode node = array.addObject();
+                node.put("key", requirement.key());
+                if (StringUtils.hasText(requirement.type())) {
+                    node.put("type", requirement.type());
+                }
+                node.put("label", requirement.label());
+                node.put("required", requirement.required());
+            }
+            return array;
+        }
+    }
+
+    private record ResourceRequirement(String key, String type, String label, boolean required) {
     }
 }

@@ -2,9 +2,11 @@ package com.hify.workflow.web;
 
 import com.hify.common.web.PageResult;
 import com.hify.common.web.Result;
+import com.hify.workflow.api.CreateTemplateFromWorkflowReq;
 import com.hify.workflow.api.CreateWorkflowFromTemplateReq;
 import com.hify.workflow.api.WorkflowDetailResp;
 import com.hify.workflow.api.WorkflowTemplateDetailResp;
+import com.hify.workflow.api.WorkflowTemplateExportResp;
 import com.hify.workflow.api.WorkflowTemplateListItemResp;
 import com.hify.workflow.api.WorkflowTemplateQuery;
 import com.hify.workflow.api.WorkflowTemplateService;
@@ -38,5 +40,16 @@ public class WorkflowTemplateController {
     public Result<WorkflowDetailResp> createWorkflow(@PathVariable Long id,
                                                      @Valid @RequestBody CreateWorkflowFromTemplateReq req) {
         return Result.ok(workflowTemplateService.createWorkflow(id, req));
+    }
+
+    @PostMapping("/from-workflow")
+    public Result<WorkflowTemplateDetailResp> createFromWorkflow(@Valid @RequestBody CreateTemplateFromWorkflowReq req) {
+        return Result.ok(workflowTemplateService.createFromWorkflow(req));
+    }
+
+    @GetMapping("/{id}/versions/{versionId}/export")
+    public Result<WorkflowTemplateExportResp> exportTemplate(@PathVariable Long id,
+                                                             @PathVariable Long versionId) {
+        return Result.ok(workflowTemplateService.exportTemplate(id, versionId));
     }
 }

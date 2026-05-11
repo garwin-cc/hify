@@ -9,4 +9,8 @@ public interface WorkflowTemplateService {
     WorkflowTemplateDetailResp getDetail(Long id);
 
     WorkflowDetailResp createWorkflow(Long templateId, CreateWorkflowFromTemplateReq req);
+
+    WorkflowTemplateDetailResp createFromWorkflow(CreateTemplateFromWorkflowReq req);
+
+    WorkflowTemplateExportResp exportTemplate(Long templateId, Long versionId);
 }

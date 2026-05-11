@@ -72,15 +72,22 @@
         </div>
         <div class="preview-meta">
           <span>{{ template?.nodeCount ?? 0 }} 个节点</span>
+          <span>v{{ template?.latestVersionNo || 1 }}</span>
           <span v-if="template?.builtin === 1">内置模板</span>
         </div>
-        <el-input
-          :model-value="JSON.stringify(template?.configJson ?? {}, null, 2)"
-          type="textarea"
-          :rows="22"
-          readonly
-          class="json-preview"
-        />
+        <div class="node-preview">
+          <div
+            v-for="node in previewNodes"
+            :key="node.nodeKey"
+            class="node-preview__item"
+          >
+            <el-tag size="small" effect="plain">{{ node.nodeType }}</el-tag>
+            <div>
+              <strong>{{ node.name }}</strong>
+              <small>{{ node.nodeKey }}</small>
+            </div>
+          </div>
+        </div>
       </aside>
     </div>
   </div>
@@ -123,6 +130,10 @@ const form = reactive({
 })
 
 const requirements = computed(() => template.value?.requirements ?? [])
+const previewNodes = computed(() => {
+  const nodes = template.value?.configJson?.nodes
+  return Array.isArray(nodes) ? nodes as Array<{ nodeKey: string; nodeType: string; name: string }> : []
+})
 
 async function loadPage() {
   loading.value = true
@@ -265,10 +276,34 @@ onMounted(loadPage)
   font-size: var(--text-sm);
 }
 
-.json-preview :deep(textarea) {
-  font-family: var(--font-mono);
+.node-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.node-preview__item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
+
+.node-preview__item div {
+  display: grid;
+  gap: 4px;
+}
+
+.node-preview__item strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.node-preview__item small {
+  color: var(--text-tertiary);
   font-size: 12px;
-  line-height: 1.6;
 }
 
 @media (max-width: 1100px) {

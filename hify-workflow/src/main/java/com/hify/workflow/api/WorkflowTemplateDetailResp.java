@@ -29,6 +29,20 @@ public class WorkflowTemplateDetailResp {
 
     private Integer nodeCount;
 
+    private String status;
+
+    private Long currentVersionId;
+
+    private Integer latestVersionNo;
+
+    private List<String> tags;
+
+    private List<String> nodeTypes;
+
+    private Integer requirementCount;
+
+    private Integer usageCount;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

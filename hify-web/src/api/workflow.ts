@@ -50,7 +50,15 @@ export interface WorkflowTemplateListItem {
   icon: string
   enabled: number
   builtin: number
+  status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  currentVersionId?: number
+  latestVersionNo?: number
+  tags?: string[]
+  nodeTypes?: string[]
   nodeCount: number
+  requirementCount?: number
+  usageCount?: number
+  lastUsedAt?: string
   createdAt: string
 }
 
@@ -65,6 +73,22 @@ export interface CreateWorkflowFromTemplateReq {
   description?: string
   enabled?: number
   bindings: Record<string, number>
+}
+
+export interface CreateTemplateFromWorkflowReq {
+  workflowId: number
+  name: string
+  description?: string
+  category?: string
+  icon?: string
+  tags?: string[]
+  publish?: boolean
+  changelog?: string
+}
+
+export interface WorkflowTemplateExportResp {
+  filename: string
+  templateJson: Record<string, unknown>
 }
 
 export interface CreateWorkflowReq {
@@ -175,6 +199,17 @@ export const createWorkflowFromTemplate = (
   data: CreateWorkflowFromTemplateReq,
 ): Promise<WorkflowDetail> =>
   post(`/v1/workflow-templates/${id}/create-workflow`, data)
+
+export const createTemplateFromWorkflow = (
+  data: CreateTemplateFromWorkflowReq,
+): Promise<WorkflowTemplateDetail> =>
+  post('/v1/workflow-templates/from-workflow', data)
+
+export const exportWorkflowTemplate = (
+  id: number,
+  versionId: number,
+): Promise<WorkflowTemplateExportResp> =>
+  get(`/v1/workflow-templates/${id}/versions/${versionId}/export`)
 
 export const createWorkflow = (data: CreateWorkflowReq) =>
   post('/v1/workflows', data)

@@ -21,6 +21,10 @@
           <el-icon style="margin-right: 4px"><VideoPlay /></el-icon>
           试运行
         </el-button>
+        <el-button :loading="creatingTemplate" @click="openTemplateDialog">
+          <el-icon style="margin-right: 4px"><Collection /></el-icon>
+          另存为模板
+        </el-button>
         <el-button type="primary" :loading="submitting" @click="handleSubmit">
           {{ isEditMode ? '保存' : '提交' }}
         </el-button>
@@ -512,16 +516,44 @@
         </template>
       </aside>
     </div>
+
+    <el-dialog v-model="templateDialogVisible" title="另存为模板" width="520px">
+      <el-form label-position="top">
+        <el-form-item label="模板名称" required>
+          <el-input v-model="templateForm.name" maxlength="100" show-word-limit />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-input v-model="templateForm.category" maxlength="50" placeholder="通用" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="templateForm.tagsText" placeholder="多个标签用逗号分隔" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="templateForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit />
+        </el-form-item>
+        <el-form-item label="版本说明">
+          <el-input v-model="templateForm.changelog" placeholder="初始版本" />
+        </el-form-item>
+        <el-checkbox v-model="templateForm.publish">创建后立即发布</el-checkbox>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creatingTemplate" @click="handleCreateTemplate">
+          创建模板
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, MagicStick, Rank, VideoPlay, ZoomIn, ZoomOut } from '@element-plus/icons-vue'
+import { ArrowLeft, Collection, MagicStick, Rank, VideoPlay, ZoomIn, ZoomOut } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import {
+  createTemplateFromWorkflow,
   createWorkflow,
   debugWorkflowNode,
   getWorkflowDetail,
@@ -582,6 +614,16 @@ const loadingModels = ref(false)
 const debuggingNode = ref(false)
 const nodeDebugResult = ref<WorkflowNodeDebugResult | null>(null)
 const workflowVersions = ref<WorkflowVersion[]>([])
+const templateDialogVisible = ref(false)
+const creatingTemplate = ref(false)
+const templateForm = reactive({
+  name: '',
+  description: '',
+  category: '通用',
+  tagsText: '',
+  changelog: '初始版本',
+  publish: true,
+})
 
 const nodeTypes = [
   { type: 'START' as NodeType, label: '开始', short: 'S', description: '用户输入入口' },
@@ -1610,6 +1652,51 @@ async function handleSubmit() {
     // request interceptor has shown the error message
   } finally {
     submitting.value = false
+  }
+}
+
+function openTemplateDialog() {
+  templateForm.name = form.name ? `${form.name}模板` : '工作流模板'
+  templateForm.description = form.description || ''
+  templateForm.category = '通用'
+  templateForm.tagsText = ''
+  templateForm.changelog = '初始版本'
+  templateForm.publish = true
+  templateDialogVisible.value = true
+}
+
+async function handleCreateTemplate() {
+  if (!templateForm.name.trim()) {
+    ElMessage.error('模板名称不能为空')
+    return
+  }
+  if (!validateWorkflow()) return
+
+  creatingTemplate.value = true
+  try {
+    const id = await saveWorkflowBeforeRun()
+    if (!id) return
+    const tags = templateForm.tagsText
+      .split(/[,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    await createTemplateFromWorkflow({
+      workflowId: id,
+      name: templateForm.name.trim(),
+      description: templateForm.description.trim(),
+      category: templateForm.category.trim() || '通用',
+      icon: 'workflow',
+      tags,
+      publish: templateForm.publish,
+      changelog: templateForm.changelog.trim() || '初始版本',
+    })
+    templateDialogVisible.value = false
+    notifySuccess('模板已创建')
+    router.push('/workflow-templates')
+  } catch {
+    // request interceptor has shown the error message
+  } finally {
+    creatingTemplate.value = false
   }
 }
 

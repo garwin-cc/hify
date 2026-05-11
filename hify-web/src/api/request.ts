@@ -1,5 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import router from '@/router'
+import { useAuthStore } from '@/stores/auth'
 
 export interface Result<T = unknown> {
   code: number
@@ -13,6 +15,14 @@ const request = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+request.interceptors.request.use((config) => {
+  const auth = useAuthStore()
+  if (auth.token) {
+    config.headers.Authorization = `Bearer ${auth.token}`
+  }
+  return config
+})
+
 request.interceptors.response.use(
   (response) => {
     const res: Result = response.data
@@ -24,6 +34,10 @@ request.interceptors.response.use(
   },
   (error) => {
     const msg = error.response?.data?.message ?? error.message ?? '网络错误'
+    if (error.response?.status === 401 || error.response?.data?.code === 401) {
+      useAuthStore().clear()
+      router.push('/login')
+    }
     ElMessage.error(msg)
     return Promise.reject(error)
   },

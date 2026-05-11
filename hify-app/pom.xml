@@ -18,6 +18,10 @@
         <!-- ========== 业务模块 ========== -->
         <dependency>
             <groupId>com.hify</groupId>
+            <artifactId>hify-auth</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.hify</groupId>
             <artifactId>hify-model</artifactId>
         </dependency>
         <dependency>

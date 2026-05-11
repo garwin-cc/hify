@@ -1,5 +1,7 @@
 package com.hify.model.web;
 
+import com.hify.auth.api.RequireRole;
+import com.hify.auth.api.UserRole;
 import com.hify.common.web.PageResult;
 import com.hify.common.web.Result;
 import com.hify.model.api.*;
@@ -9,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/providers")
+@RequireRole(UserRole.ADMIN)
 @RequiredArgsConstructor
 public class ProviderController {
 

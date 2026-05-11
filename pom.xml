@@ -12,6 +12,7 @@
 
     <modules>
         <module>hify-common</module>
+        <module>hify-auth</module>
         <module>hify-model</module>
         <module>hify-mcp</module>
         <module>hify-knowledge</module>
@@ -80,6 +81,11 @@
             <dependency>
                 <groupId>com.hify</groupId>
                 <artifactId>hify-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.hify</groupId>
+                <artifactId>hify-auth</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

@@ -1,5 +1,7 @@
 package com.hify.knowledge.web;
 
+import com.hify.auth.api.RequireRole;
+import com.hify.auth.api.UserRole;
 import com.hify.common.web.PageResult;
 import com.hify.common.web.Result;
 import com.hify.knowledge.api.CreateKnowledgeBaseReq;
@@ -37,6 +39,7 @@ public class KnowledgeController {
     private final KnowledgeService knowledgeService;
 
     @PostMapping
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<KnowledgeBaseResp> create(@Valid @RequestBody CreateKnowledgeBaseReq req) {
         return Result.ok(knowledgeService.createKnowledgeBase(req));
     }
@@ -52,24 +55,28 @@ public class KnowledgeController {
     }
 
     @PutMapping("/{id}")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<KnowledgeBaseResp> update(@PathVariable Long id,
                                             @Valid @RequestBody UpdateKnowledgeBaseReq req) {
         return Result.ok(knowledgeService.updateKnowledgeBase(id, req));
     }
 
     @PutMapping("/{id}/retrieval-config")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<KnowledgeBaseResp> updateRetrievalConfig(@PathVariable Long id,
                                                            @Valid @RequestBody UpdateKnowledgeRetrievalConfigReq req) {
         return Result.ok(knowledgeService.updateRetrievalConfig(id, req));
     }
 
     @DeleteMapping("/{id}")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<Void> delete(@PathVariable Long id) {
         knowledgeService.deleteKnowledgeBase(id);
         return Result.ok();
     }
 
     @PostMapping("/{kbId}/documents")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<Long> uploadDocument(@PathVariable Long kbId,
                                        @RequestParam("file") MultipartFile file) {
         return Result.ok(knowledgeService.uploadDocument(kbId, file));
@@ -82,6 +89,7 @@ public class KnowledgeController {
     }
 
     @PostMapping("/chunks")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<Long> upsertChunk(@Valid @RequestBody KnowledgeChunkUpsertReq req) {
         return Result.ok(knowledgeService.upsertChunk(req));
     }

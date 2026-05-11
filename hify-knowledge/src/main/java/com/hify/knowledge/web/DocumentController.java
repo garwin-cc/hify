@@ -1,5 +1,7 @@
 package com.hify.knowledge.web;
 
+import com.hify.auth.api.RequireRole;
+import com.hify.auth.api.UserRole;
 import com.hify.common.web.Result;
 import com.hify.knowledge.api.KnowledgeChunkResp;
 import com.hify.knowledge.api.KnowledgeDocumentResp;
@@ -31,6 +33,7 @@ public class DocumentController {
     }
 
     @DeleteMapping("/{id}")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<Void> delete(@PathVariable Long id) {
         knowledgeService.deleteDocument(id);
         return Result.ok();

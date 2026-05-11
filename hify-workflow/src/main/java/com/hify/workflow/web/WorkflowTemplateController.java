@@ -1,5 +1,7 @@
 package com.hify.workflow.web;
 
+import com.hify.auth.api.RequireRole;
+import com.hify.auth.api.UserRole;
 import com.hify.common.web.PageResult;
 import com.hify.common.web.Result;
 import com.hify.workflow.api.CreateTemplateFromWorkflowReq;
@@ -37,12 +39,14 @@ public class WorkflowTemplateController {
     }
 
     @PostMapping("/{id}/create-workflow")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowDetailResp> createWorkflow(@PathVariable Long id,
                                                      @Valid @RequestBody CreateWorkflowFromTemplateReq req) {
         return Result.ok(workflowTemplateService.createWorkflow(id, req));
     }
 
     @PostMapping("/from-workflow")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowTemplateDetailResp> createFromWorkflow(@Valid @RequestBody CreateTemplateFromWorkflowReq req) {
         return Result.ok(workflowTemplateService.createFromWorkflow(req));
     }

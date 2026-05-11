@@ -1,5 +1,7 @@
 package com.hify.workflow.web;
 
+import com.hify.auth.api.RequireRole;
+import com.hify.auth.api.UserRole;
 import com.hify.common.web.Result;
 import com.hify.workflow.api.SubmitWorkflowReviewReq;
 import com.hify.workflow.api.WorkflowRunResp;
@@ -42,6 +44,7 @@ public class WorkflowRunController {
     }
 
     @PostMapping("/{runId}/review")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowRunResp> submitReview(@PathVariable Long runId,
                                                 @Valid @RequestBody SubmitWorkflowReviewReq req) {
         return Result.ok(workflowService.submitReview(runId, req));

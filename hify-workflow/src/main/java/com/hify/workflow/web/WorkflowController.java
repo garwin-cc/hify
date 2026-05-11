@@ -1,5 +1,7 @@
 package com.hify.workflow.web;
 
+import com.hify.auth.api.RequireRole;
+import com.hify.auth.api.UserRole;
 import com.hify.common.web.PageResult;
 import com.hify.common.web.Result;
 import com.hify.workflow.api.CreateWorkflowReq;
@@ -34,6 +36,7 @@ public class WorkflowController {
     private final WorkflowService workflowService;
 
     @PostMapping
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowDetailResp> create(@Valid @RequestBody CreateWorkflowReq req) {
         return Result.ok(workflowService.create(req));
     }
@@ -49,12 +52,14 @@ public class WorkflowController {
     }
 
     @PutMapping("/{id}")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowDetailResp> update(@PathVariable Long id,
                                              @Valid @RequestBody UpdateWorkflowReq req) {
         return Result.ok(workflowService.update(id, req));
     }
 
     @DeleteMapping("/{id}")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<Void> delete(@PathVariable Long id) {
         workflowService.delete(id);
         return Result.ok();
@@ -78,6 +83,7 @@ public class WorkflowController {
     }
 
     @PostMapping("/{id}/nodes/{nodeKey}/debug")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowNodeDebugResp> debugNode(@PathVariable Long id,
                                                    @PathVariable String nodeKey,
                                                    @RequestBody WorkflowNodeDebugReq req) {
@@ -96,6 +102,7 @@ public class WorkflowController {
     }
 
     @PostMapping("/{id}/versions/{versionNo}/restore")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowDetailResp> restoreVersion(@PathVariable Long id,
                                                      @PathVariable Integer versionNo) {
         return Result.ok(workflowService.restoreVersion(id, versionNo));

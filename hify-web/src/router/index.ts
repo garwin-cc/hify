@@ -1,9 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', redirect: '/providers' },
+    {
+      path: '/login',
+      name: 'Login',
+      component: () => import('@/views/auth/LoginView.vue'),
+      meta: { public: true },
+    },
     {
       path: '/providers',
       name: 'Providers',
@@ -67,7 +74,31 @@ const router = createRouter({
       name: 'McpTools',
       component: () => import('@/views/mcp/McpView.vue'),
     },
+    {
+      path: '/users',
+      name: 'Users',
+      component: () => import('@/views/auth/UserView.vue'),
+      meta: { roles: ['ADMIN'] },
+    },
   ],
+})
+
+router.beforeEach(async (to) => {
+  const auth = useAuthStore()
+  if (to.meta.public) {
+    return true
+  }
+  if (!auth.token) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  if (!auth.loaded) {
+    await auth.loadMe().catch(() => null)
+  }
+  const roles = to.meta.roles as string[] | undefined
+  if (roles?.length && (!auth.role || !roles.includes(auth.role))) {
+    return '/conversation'
+  }
+  return true
 })
 
 export default router

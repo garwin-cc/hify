@@ -94,6 +94,12 @@ resilience4j:
 hify:
   cors:
     allowed-origins: "*"
+  auth:
+    enabled: true
+    session-days: 7
+    init-admin:
+      username: ${HIFY_INIT_ADMIN_USERNAME:admin}
+      password: ${HIFY_INIT_ADMIN_PASSWORD:}
   llm:
     fallback:
       OPENAI: OLLAMA

@@ -1,5 +1,7 @@
 package com.hify.model.web;
 
+import com.hify.auth.api.RequireRole;
+import com.hify.auth.api.UserRole;
 import com.hify.common.web.Result;
 import com.hify.model.api.CreateModelConfigReq;
 import com.hify.model.api.ModelConfigResp;
@@ -35,11 +37,13 @@ public class ModelConfigController {
     }
 
     @PostMapping
+    @RequireRole(UserRole.ADMIN)
     public Result<ModelConfigResp> create(@Valid @RequestBody CreateModelConfigReq req) {
         return Result.ok(modelConfigService.create(req));
     }
 
     @PutMapping("/{id}/type")
+    @RequireRole(UserRole.ADMIN)
     public Result<ModelConfigResp> updateModelType(@PathVariable Long id,
                                                    @Valid @RequestBody UpdateModelConfigTypeReq req) {
         return Result.ok(modelConfigService.updateModelType(id, req.getModelType()));

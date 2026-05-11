@@ -1,5 +1,6 @@
 <template>
-  <div class="app-layout">
+  <RouterView v-if="route.path === '/login'" />
+  <div v-else class="app-layout">
 
     <!-- ── 深色侧边栏 ─────────────────────────────────────────────────── -->
     <aside class="sidebar" :class="{ 'is-collapsed': isCollapsed }">
@@ -100,9 +101,11 @@ import {
 } from '@element-plus/icons-vue'
 import TopBar from '@/components/layout/TopBar.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const { isNarrow } = useBreakpoint()
+const auth = useAuthStore()
 
 // 用户手动偏好（宽屏下有效）
 const userCollapsed = ref(false)
@@ -113,14 +116,15 @@ const isCollapsed = computed({
   set: (v: boolean) => { userCollapsed.value = v },
 })
 
-const navItems = [
-  { path: '/providers',    label: '模型管理',  icon: Setting     },
-  { path: '/agents',       label: 'Agent 管理', icon: User        },
-  { path: '/conversation', label: '对话',       icon: ChatDotRound},
-  { path: '/knowledge',    label: '知识库',     icon: Cpu         },
-  { path: '/workflows',    label: '工作流',     icon: Share       },
-  { path: '/mcp',          label: 'MCP 工具',   icon: Tools       },
-]
+const navItems = computed(() => [
+  auth.isAdmin ? { path: '/providers', label: '模型管理', icon: Setting } : null,
+  { path: '/agents', label: 'Agent 管理', icon: User },
+  { path: '/conversation', label: '对话', icon: ChatDotRound },
+  { path: '/knowledge', label: '知识库', icon: Cpu },
+  { path: '/workflows', label: '工作流', icon: Share },
+  auth.isAdmin ? { path: '/mcp', label: 'MCP 工具', icon: Tools } : null,
+  auth.isAdmin ? { path: '/users', label: '用户管理', icon: User } : null,
+].filter(Boolean) as Array<{ path: string; label: string; icon: unknown }>)
 </script>
 
 <style scoped>

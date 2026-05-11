@@ -9,18 +9,29 @@
     </el-breadcrumb>
 
     <!-- 右：用户信息 -->
-    <div class="topbar-user">
-      <span class="topbar-user__name">Admin</span>
-      <div class="topbar-user__avatar">A</div>
-    </div>
+    <el-dropdown trigger="click" @command="handleCommand">
+      <div class="topbar-user">
+        <span class="topbar-user__name">{{ auth.user?.displayName || auth.user?.username || '-' }}</span>
+        <div class="topbar-user__avatar">{{ avatarText }}</div>
+      </div>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item disabled>{{ auth.role || '-' }}</el-dropdown-item>
+          <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
   </header>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
 
 const crumbMap: Record<string, string> = {
   '/providers':    '模型管理',
@@ -29,6 +40,7 @@ const crumbMap: Record<string, string> = {
   '/knowledge':    '知识库',
   '/workflows':    '工作流',
   '/mcp':          'MCP 工具',
+  '/users':        '用户管理',
 }
 
 const currentCrumb = computed(() => {
@@ -36,6 +48,15 @@ const currentCrumb = computed(() => {
     .find(prefix => route.path === prefix || route.path.startsWith(prefix + '/'))
   return matched ? crumbMap[matched] : null
 })
+
+const avatarText = computed(() => (auth.user?.displayName || auth.user?.username || 'H').slice(0, 1).toUpperCase())
+
+async function handleCommand(command: string) {
+  if (command === 'logout') {
+    await auth.logout()
+    router.push('/login')
+  }
+}
 </script>
 
 <style scoped>

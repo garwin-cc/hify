@@ -98,21 +98,33 @@
         </template>
 
         <template #status="{ row }">
-          <el-tooltip
-            v-if="row.status === 'FAILED' && row.errorMessage"
-            :content="row.errorMessage"
-            placement="top"
-          >
-            <el-tag size="small" type="danger">
-              {{ statusLabel(row.status) }}
+          <div class="status-cell">
+            <el-tooltip
+              v-if="row.status === 'FAILED' && row.errorMessage"
+              :content="row.errorMessage"
+              placement="top"
+            >
+              <el-tag size="small" type="danger">
+                {{ statusLabel(row.status) }}
+              </el-tag>
+            </el-tooltip>
+            <el-tag v-else size="small" :type="statusTagType(row.status)">
+              <el-icon v-if="row.status === 'PROCESSING'" class="is-loading status-icon">
+                <Loading />
+              </el-icon>
+              {{ processLabel(row) }}
             </el-tag>
-          </el-tooltip>
-          <el-tag v-else size="small" :type="statusTagType(row.status)">
-            <el-icon v-if="row.status === 'PROCESSING'" class="is-loading status-icon">
-              <Loading />
-            </el-icon>
-            {{ statusLabel(row.status) }}
-          </el-tag>
+            <el-progress
+              v-if="row.status === 'PROCESSING'"
+              :percentage="safeProgress(row.processProgress)"
+              :show-text="false"
+              :stroke-width="4"
+              class="status-progress"
+            />
+            <span v-if="row.status === 'PROCESSING' && row.processedChunkCount > 0" class="status-meta">
+              {{ row.processedChunkCount }} chunks
+            </span>
+          </div>
         </template>
 
         <template #createdAt="{ row }">
@@ -151,7 +163,7 @@
           将 txt / md / pdf / csv 文件拖到此处，或<em>点击上传</em>
         </div>
         <template #tip>
-          <div class="el-upload__tip">仅支持 txt、md、pdf、csv，单个文件不超过 10MB。</div>
+          <div class="el-upload__tip">仅支持 txt、md、pdf、csv，单个文件不超过 200MB。</div>
         </template>
       </el-upload>
     </el-dialog>
@@ -206,7 +218,7 @@ import {
   type KnowledgeSearchHit,
 } from '@/api/knowledge'
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024
+const MAX_FILE_SIZE = 200 * 1024 * 1024
 const ALLOWED_EXTENSIONS = new Set(['txt', 'md', 'pdf', 'csv'])
 
 const STATUS_LABEL: Record<DocumentStatus, string> = {
@@ -274,6 +286,22 @@ function statusLabel(status: DocumentStatus) {
   return STATUS_LABEL[status] ?? status
 }
 
+function processLabel(row: KnowledgeDocumentItem) {
+  if (row.status !== 'PROCESSING') return statusLabel(row.status)
+  const stageLabels: Record<string, string> = {
+    EXTRACTING: '解析中',
+    CHUNKING: '分块中',
+    EMBEDDING: '向量化中',
+    SAVING: '写入中',
+  }
+  return stageLabels[row.processStage] ?? statusLabel(row.status)
+}
+
+function safeProgress(progress?: number) {
+  if (progress === undefined || progress === null) return 0
+  return Math.max(0, Math.min(100, progress))
+}
+
 function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
@@ -317,7 +345,7 @@ const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
     return false
   }
   if (rawFile.size > MAX_FILE_SIZE) {
-    ElMessage.error('文件大小不能超过 10MB')
+    ElMessage.error('文件大小不能超过 200MB')
     return false
   }
   return true
@@ -354,7 +382,7 @@ function startPolling(documentId: number) {
     } catch {
       stopPolling(documentId)
     }
-  }, 3000)
+  }, 5000)
   pollingTimers.set(documentId, timer)
 }
 
@@ -526,6 +554,24 @@ onBeforeUnmount(() => {
 
 .status-icon {
   margin-right: 4px;
+}
+
+.status-cell {
+  display: inline-flex;
+  min-width: 92px;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.status-progress {
+  width: 92px;
+}
+
+.status-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1;
 }
 
 .chunk-list {

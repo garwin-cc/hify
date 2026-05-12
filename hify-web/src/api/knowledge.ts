@@ -58,6 +58,9 @@ export interface KnowledgeDocumentItem {
   fileType: string
   fileSize: number
   status: DocumentStatus
+  processStage: string
+  processProgress: number
+  processedChunkCount: number
   chunkCount: number
   errorMessage: string
   createdAt: string

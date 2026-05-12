@@ -19,6 +19,12 @@ public class KnowledgeDocumentResp {
 
     private String status;
 
+    private String processStage;
+
+    private Integer processProgress;
+
+    private Integer processedChunkCount;
+
     private Integer chunkCount;
 
     private String errorMessage;

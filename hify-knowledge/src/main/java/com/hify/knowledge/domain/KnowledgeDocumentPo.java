@@ -22,6 +22,12 @@ public class KnowledgeDocumentPo extends BaseEntity {
 
     private String parseStatus;
 
+    private String processStage;
+
+    private Integer processProgress;
+
+    private Integer processedChunkCount;
+
     private Integer chunkCount;
 
     private String errorMessage;

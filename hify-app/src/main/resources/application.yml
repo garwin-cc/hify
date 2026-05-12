@@ -6,6 +6,10 @@ server:
 spring:
   application:
     name: hify
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
 
   # ── Flyway 数据库迁移 ───────────────────────────────────────────────────────
   flyway:
@@ -110,6 +114,11 @@ hify:
     url: jdbc:postgresql://localhost:5433/hify_vector
     username: hify
     password: hify_pg123
+  knowledge:
+    max-file-size-bytes: 209715200
+    embedding-batch-size: 32
+    max-chunks-per-document: 50000
+    max-split-steps: 100000
 
 # ── 日志级别（格式和滚动策略由 logback-spring.xml 管理）────────────────────
 logging:

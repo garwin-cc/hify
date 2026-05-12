@@ -47,4 +47,22 @@ public class ThreadPoolConfig {
                 new ThreadPoolExecutor.CallerRunsPolicy()
         );
     }
+
+    /**
+     * 知识库文档处理线程池：大文件解析、分块、向量化和 pgvector 写入。
+     * 该任务可能持续较久，必须和通用异步任务隔离，避免拖慢健康检查和事件发布。
+     */
+    @Bean
+    @Qualifier("knowledgeExecutor")
+    public ThreadPoolExecutor knowledgeExecutor() {
+        return new ThreadPoolExecutor(
+                1, 2, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(20),
+                new ThreadFactoryBuilder()
+                        .setNameFormat("knowledge-%d")
+                        .setDaemon(true)
+                        .build(),
+                new ThreadPoolExecutor.AbortPolicy()
+        );
+    }
 }

@@ -11,6 +11,7 @@ import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.ModelConfigService;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +51,70 @@ class KnowledgeServiceImplTest {
 
         assertThat(text).contains("name: Alice | age: 18 | city: Shanghai");
         assertThat(text).contains("name: Bob | age: 20 | city: Beijing");
+    }
+
+    @Test
+    void processTextSegmentsEmbedsAndSavesChunksInBatches() {
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        FakeEmbeddingService embeddingService = new FakeEmbeddingService();
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                mock(KnowledgeBaseMapper.class),
+                mock(KnowledgeDocumentMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(9L);
+        document.setKnowledgeBaseId(1L);
+        document.setName("large.txt");
+        document.setFileType("txt");
+
+        List<String> segments = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            segments.add(("word" + i + " ").repeat(140));
+        }
+
+        int chunkCount = service.processTextSegments(document, 11L, segments);
+
+        assertThat(chunkCount).isGreaterThan(32);
+        assertThat(embeddingService.batchSizes).hasSizeGreaterThan(1);
+        assertThat(embeddingService.batchSizes).allMatch(size -> size <= 32);
+        assertThat(repository.savedBatches).hasSizeGreaterThan(1);
+        assertThat(repository.savedBatches.stream().mapToInt(List::size).sum()).isEqualTo(chunkCount);
+    }
+
+    @Test
+    void processTextSegmentsScalesChunkSizeForLargeDocuments() throws Exception {
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        FakeEmbeddingService embeddingService = new FakeEmbeddingService();
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                mock(KnowledgeBaseMapper.class),
+                mock(KnowledgeDocumentMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        setIntField(service, "maxChunksPerDocument", 10);
+        setIntField(service, "maxSplitSteps", 20);
+
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(9L);
+        document.setKnowledgeBaseId(1L);
+        document.setName("large.txt");
+        document.setFileType("txt");
+        document.setFileSize(20_000L);
+
+        List<String> segments = List.of("alpha beta gamma delta ".repeat(1000));
+
+        int chunkCount = service.processTextSegments(document, 11L, segments);
+
+        assertThat(chunkCount).isLessThanOrEqualTo(10);
+        assertThat(repository.savedBatches.stream().mapToInt(List::size).sum()).isEqualTo(chunkCount);
     }
 
     @Test
@@ -189,6 +254,7 @@ class KnowledgeServiceImplTest {
         private KnowledgeChunk savedChunk;
         private List<Double> savedEmbedding;
         private List<KnowledgeSearchHit> hits = new ArrayList<>();
+        private List<List<KnowledgeChunk>> savedBatches = new ArrayList<>();
         private int lastTopK;
 
         @Override
@@ -200,6 +266,7 @@ class KnowledgeServiceImplTest {
 
         @Override
         public void saveDocumentChunks(List<KnowledgeChunk> chunks) {
+            savedBatches.add(new ArrayList<>(chunks));
         }
 
         @Override
@@ -220,5 +287,21 @@ class KnowledgeServiceImplTest {
         @Override
         public void deleteByDocumentId(Long documentId) {
         }
+    }
+
+    private static class FakeEmbeddingService implements EmbeddingService {
+        private final List<Integer> batchSizes = new ArrayList<>();
+
+        @Override
+        public List<List<Double>> embed(Long modelConfigId, List<String> inputs) {
+            batchSizes.add(inputs.size());
+            return inputs.stream().map(input -> List.of(0.1, 0.2, 0.3)).toList();
+        }
+    }
+
+    private static void setIntField(Object target, String fieldName, int value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.setInt(target, value);
     }
 }

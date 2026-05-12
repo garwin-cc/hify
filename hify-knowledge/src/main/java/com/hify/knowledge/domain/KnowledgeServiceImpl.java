@@ -22,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -29,6 +30,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -43,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -57,11 +60,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final int DEFAULT_CANDIDATE_TOP_K = 20;
     private static final double DEFAULT_SCORE_THRESHOLD = 0.65D;
     private static final int DEFAULT_MAX_CONTEXT_TOKENS = 3000;
-    private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
+    private static final long DEFAULT_MAX_FILE_SIZE = 200L * 1024 * 1024;
     private static final int CHUNK_SIZE = 512;
     private static final int CHUNK_OVERLAP = 64;
-    private static final int MAX_CHUNKS_PER_DOCUMENT = 2000;
-    private static final int MAX_SPLIT_STEPS = 5000;
+    private static final int MAX_DYNAMIC_CHUNK_SIZE = 32_768;
+    private static final int EXTRACTED_TEXT_EXPANSION_SAFETY_FACTOR = 4;
+    private static final int DEFAULT_EMBEDDING_BATCH_SIZE = 32;
+    private static final int DEFAULT_MAX_CHUNKS_PER_DOCUMENT = 50_000;
+    private static final int DEFAULT_MAX_SPLIT_STEPS = 100_000;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
     private static final Set<String> ALLOWED_TYPES = Set.of("txt", "md", "pdf", "csv");
 
@@ -69,10 +75,22 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeVectorRepository vectorRepository;
     private final ObjectMapper objectMapper;
-    private final @Qualifier("asyncExecutor") ThreadPoolExecutor asyncExecutor;
+    private final @Qualifier("knowledgeExecutor") ThreadPoolExecutor asyncExecutor;
     private final EmbeddingService embeddingService;
     private final ModelConfigService modelConfigService;
     private final RagRetrievalTraceMapper traceMapper;
+
+    @Value("${hify.knowledge.max-file-size-bytes:" + DEFAULT_MAX_FILE_SIZE + "}")
+    private long maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE;
+
+    @Value("${hify.knowledge.embedding-batch-size:" + DEFAULT_EMBEDDING_BATCH_SIZE + "}")
+    private int embeddingBatchSize = DEFAULT_EMBEDDING_BATCH_SIZE;
+
+    @Value("${hify.knowledge.max-chunks-per-document:" + DEFAULT_MAX_CHUNKS_PER_DOCUMENT + "}")
+    private int maxChunksPerDocument = DEFAULT_MAX_CHUNKS_PER_DOCUMENT;
+
+    @Value("${hify.knowledge.max-split-steps:" + DEFAULT_MAX_SPLIT_STEPS + "}")
+    private int maxSplitSteps = DEFAULT_MAX_SPLIT_STEPS;
 
     @Override
     @Transactional
@@ -175,6 +193,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         document.setFileType(fileType);
         document.setFileSize(file.getSize());
         document.setParseStatus("PENDING");
+        document.setProcessStage("SAVED");
+        document.setProcessProgress(0);
+        document.setProcessedChunkCount(0);
         document.setChunkCount(0);
         document.setErrorMessage("");
         documentMapper.insert(document);
@@ -300,6 +321,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setFileType(po.getFileType());
         resp.setFileSize(po.getFileSize());
         resp.setStatus(po.getParseStatus());
+        resp.setProcessStage(po.getProcessStage());
+        resp.setProcessProgress(po.getProcessProgress());
+        resp.setProcessedChunkCount(po.getProcessedChunkCount());
         resp.setChunkCount(po.getChunkCount());
         resp.setErrorMessage(po.getErrorMessage());
         resp.setCreatedAt(po.getCreatedAt());
@@ -623,21 +647,25 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         try {
             updateDocumentStatus(documentId, "PROCESSING", "", null);
-            String text = extractText(Path.of(document.getFileKey()), document.getFileType());
-            List<ChunkDTO> chunks = splitChunks(text);
-            chunks = embedChunks(document.getKnowledgeBaseId(), chunks);
-            saveChunks(document.getId(), document.getKnowledgeBaseId(), document, chunks);
+            updateDocumentProgress(documentId, "EXTRACTING", 1, 0);
+            KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(document.getKnowledgeBaseId());
+            int chunkCount = processDocumentContent(document, knowledgeBase);
             knowledgeBaseMapper.update(null, Wrappers.lambdaUpdate(KnowledgeBasePo.class)
                     .eq(KnowledgeBasePo::getId, document.getKnowledgeBaseId())
-                    .setSql("chunk_count = chunk_count + " + chunks.size()));
-            updateDocumentStatus(documentId, "DONE", "", chunks.size());
-            log.info("processed knowledge document id={} chunks={}", documentId, chunks.size());
+                    .setSql("chunk_count = chunk_count + " + chunkCount));
+            updateDocumentProgress(documentId, "DONE", 100, chunkCount);
+            updateDocumentStatus(documentId, "DONE", "", chunkCount);
+            log.info("processed knowledge document id={} chunks={}", documentId, chunkCount);
         } catch (Exception e) {
             log.warn("process knowledge document failed id={}: {}", documentId, e.getMessage(), e);
+            vectorRepository.deleteByDocumentId(documentId);
+            updateDocumentProgress(documentId, "FAILED", 0, null);
             updateDocumentStatus(documentId, "FAILED", e.getMessage(), null);
         } catch (Error e) {
             log.error("process knowledge document fatal error id={}: {}", documentId, e.getMessage(), e);
             try {
+                vectorRepository.deleteByDocumentId(documentId);
+                updateDocumentProgress(documentId, "FAILED", 0, null);
                 updateDocumentStatus(documentId, "FAILED",
                         "文档处理发生严重错误: " + e.getClass().getSimpleName(), null);
             } catch (Exception updateError) {
@@ -648,17 +676,52 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
 
+    private int processDocumentContent(KnowledgeDocumentPo document, KnowledgeBasePo knowledgeBase) throws IOException {
+        Long embeddingModelConfigId = knowledgeBase.getEmbeddingModelConfigId();
+        if (embeddingModelConfigId == null) {
+            throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED, "知识库未配置 embedding 模型");
+        }
+        DocumentChunkProcessor processor = new DocumentChunkProcessor(document, embeddingModelConfigId, true);
+        Path filePath = Path.of(document.getFileKey());
+        if ("pdf".equals(document.getFileType())) {
+            processPdfDocument(filePath, processor);
+        } else if ("csv".equals(document.getFileType())) {
+            processCsvDocument(filePath, processor);
+        } else {
+            processTextDocument(filePath, processor);
+        }
+        return processor.finish();
+    }
+
+    int processTextSegments(KnowledgeDocumentPo document, Long embeddingModelConfigId, Iterable<String> segments) {
+        DocumentChunkProcessor processor = new DocumentChunkProcessor(document, embeddingModelConfigId, false);
+        for (String segment : segments) {
+            processor.accept(segment);
+        }
+        return processor.finish();
+    }
+
     private void submitAfterCommit(Long documentId) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            asyncExecutor.execute(() -> processDocumentAsync(documentId));
+            enqueueDocumentProcessing(documentId);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                asyncExecutor.execute(() -> processDocumentAsync(documentId));
+                enqueueDocumentProcessing(documentId);
             }
         });
+    }
+
+    private void enqueueDocumentProcessing(Long documentId) {
+        try {
+            asyncExecutor.execute(() -> processDocumentAsync(documentId));
+        } catch (RejectedExecutionException e) {
+            log.warn("knowledge document processing queue is full id={}", documentId);
+            updateDocumentProgress(documentId, "FAILED", 0, 0);
+            updateDocumentStatus(documentId, "FAILED", "文档处理队列已满，请稍后重试", null);
+        }
     }
 
     private void updateDocumentStatus(Long documentId, String status, String errorMessage, Integer chunkCount) {
@@ -668,6 +731,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 .set(KnowledgeDocumentPo::getErrorMessage, truncateErrorMessage(errorMessage));
         if (chunkCount != null) {
             wrapper.set(KnowledgeDocumentPo::getChunkCount, chunkCount);
+        }
+        documentMapper.update(null, wrapper);
+    }
+
+    private void updateDocumentProgress(Long documentId, String stage, Integer progress, Integer processedChunkCount) {
+        var wrapper = Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
+                .eq(KnowledgeDocumentPo::getId, documentId)
+                .set(KnowledgeDocumentPo::getProcessStage, stage);
+        if (progress != null) {
+            wrapper.set(KnowledgeDocumentPo::getProcessProgress, Math.max(0, Math.min(100, progress)));
+        }
+        if (processedChunkCount != null) {
+            wrapper.set(KnowledgeDocumentPo::getProcessedChunkCount, Math.max(0, processedChunkCount));
         }
         documentMapper.update(null, wrapper);
     }
@@ -698,6 +774,51 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return text;
     }
 
+    private void processTextDocument(Path filePath, DocumentChunkProcessor processor) throws IOException {
+        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            char[] buffer = new char[8192];
+            int read;
+            while ((read = reader.read(buffer)) != -1) {
+                processor.accept(new String(buffer, 0, read));
+            }
+        }
+    }
+
+    private void processCsvDocument(Path filePath, DocumentChunkProcessor processor) throws IOException {
+        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            String line;
+            List<String> headers = List.of();
+            while ((line = reader.readLine()) != null) {
+                List<String> row = parseCsvLine(line);
+                if (row.stream().noneMatch(StringUtils::hasText)) {
+                    continue;
+                }
+                if (headers.isEmpty()) {
+                    headers = row;
+                    continue;
+                }
+                String formatted = formatCsvRow(headers, row);
+                if (StringUtils.hasText(formatted)) {
+                    processor.accept(formatted);
+                    processor.accept("\n");
+                }
+            }
+        }
+    }
+
+    private void processPdfDocument(Path filePath, DocumentChunkProcessor processor) throws IOException {
+        try (PDDocument pdf = PDDocument.load(filePath.toFile())) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            int pages = pdf.getNumberOfPages();
+            for (int page = 1; page <= pages; page++) {
+                stripper.setStartPage(page);
+                stripper.setEndPage(page);
+                processor.accept(stripper.getText(pdf));
+                processor.accept("\n");
+            }
+        }
+    }
+
     static String extractCsvText(String csvText) {
         String normalized = csvText == null ? "" : csvText.replace("\r\n", "\n").replace('\r', '\n').trim();
         if (normalized.isEmpty()) {
@@ -715,21 +836,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         List<String> lines = new ArrayList<>();
         int startIndex = hasHeader ? 1 : 0;
         for (int i = startIndex; i < rows.size(); i++) {
-            List<String> row = rows.get(i);
-            List<String> cells = new ArrayList<>();
-            for (int j = 0; j < row.size(); j++) {
-                String value = row.get(j).trim();
-                if (!StringUtils.hasText(value)) {
-                    continue;
-                }
-                if (hasHeader && j < headers.size() && StringUtils.hasText(headers.get(j))) {
-                    cells.add(headers.get(j).trim() + ": " + value);
-                } else {
-                    cells.add(value);
-                }
-            }
-            if (!cells.isEmpty()) {
-                lines.add(String.join(" | ", cells));
+            String formatted = hasHeader ? formatCsvRow(headers, rows.get(i)) : formatCsvRow(List.of(), rows.get(i));
+            if (StringUtils.hasText(formatted)) {
+                lines.add(formatted);
             }
         }
         if (lines.isEmpty() && !hasHeader) {
@@ -762,6 +871,22 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return cells;
     }
 
+    private static String formatCsvRow(List<String> headers, List<String> row) {
+        List<String> cells = new ArrayList<>();
+        for (int j = 0; j < row.size(); j++) {
+            String value = row.get(j).trim();
+            if (!StringUtils.hasText(value)) {
+                continue;
+            }
+            if (j < headers.size() && StringUtils.hasText(headers.get(j))) {
+                cells.add(headers.get(j).trim() + ": " + value);
+            } else {
+                cells.add(value);
+            }
+        }
+        return String.join(" | ", cells);
+    }
+
     private List<ChunkDTO> splitChunks(String text) {
         String normalized = text == null ? "" : text.replace("\r\n", "\n").trim();
         if (normalized.isEmpty()) {
@@ -773,7 +898,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         int steps = 0;
         while (start < normalized.length()) {
             steps++;
-            if (steps > MAX_SPLIT_STEPS || chunks.size() >= MAX_CHUNKS_PER_DOCUMENT) {
+            if (steps > maxSplitSteps || chunks.size() >= maxChunksPerDocument) {
                 throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED, "文档分块数量超过上限，请检查文档格式或减小文件大小");
             }
             int end = chooseChunkEnd(normalized, start);
@@ -825,7 +950,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private static int chooseChunkEnd(String text, int start) {
-        int maxEnd = Math.min(start + CHUNK_SIZE, text.length());
+        return chooseChunkEnd(text, start, CHUNK_SIZE);
+    }
+
+    private static int chooseChunkEnd(String text, int start, int chunkSize) {
+        int maxEnd = Math.min(start + chunkSize, text.length());
         if (maxEnd == text.length()) {
             return maxEnd;
         }
@@ -882,12 +1011,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return Math.max(1, count);
     }
 
-    private static void validateUploadFile(MultipartFile file) {
+    private void validateUploadFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BizException(ErrorCode.PARAM_ERROR, "上传文件不能为空");
         }
-        if (file.getSize() > MAX_FILE_SIZE) {
-            throw new BizException(ErrorCode.KNOWLEDGE_FILE_TOO_LARGE, "文件大小不能超过 10MB");
+        if (file.getSize() > maxFileSizeBytes) {
+            throw new BizException(ErrorCode.KNOWLEDGE_FILE_TOO_LARGE, "文件大小不能超过 200MB");
         }
         String fileType = getFileType(file.getOriginalFilename());
         if (!ALLOWED_TYPES.contains(fileType)) {
@@ -927,6 +1056,133 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private static int safeChunkCount(Integer chunkCount) {
         return chunkCount == null ? 0 : Math.max(0, chunkCount);
+    }
+
+    private class DocumentChunkProcessor {
+        private final KnowledgeDocumentPo document;
+        private final Long embeddingModelConfigId;
+        private final boolean progressEnabled;
+        private final int chunkSize;
+        private final int chunkOverlap;
+        private final StringBuilder buffer = new StringBuilder();
+        private final List<KnowledgeChunk> batch = new ArrayList<>();
+        private int chunkIndex;
+        private int chunkCount;
+        private int splitSteps;
+
+        private DocumentChunkProcessor(KnowledgeDocumentPo document, Long embeddingModelConfigId, boolean progressEnabled) {
+            this.document = document;
+            this.embeddingModelConfigId = embeddingModelConfigId;
+            this.progressEnabled = progressEnabled;
+            this.chunkSize = effectiveChunkSize(document);
+            this.chunkOverlap = Math.min(CHUNK_OVERLAP, Math.max(0, chunkSize / 4));
+        }
+
+        private void accept(String text) {
+            if (text == null || text.isEmpty()) {
+                return;
+            }
+            buffer.append(text);
+            drain(false);
+        }
+
+        private int finish() {
+            drain(true);
+            flushBatch();
+            if (chunkCount == 0) {
+                throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED, "文档解析后没有可向量化内容");
+            }
+            return chunkCount;
+        }
+
+        private void drain(boolean flushRemaining) {
+            while (buffer.length() >= chunkSize || (flushRemaining && !buffer.isEmpty())) {
+                splitSteps++;
+                if (splitSteps > maxSplitSteps || chunkCount >= maxChunksPerDocument) {
+                    throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED,
+                            "文档分块数量超过上限，请检查文档格式或减小文件大小");
+                }
+                String current = buffer.toString();
+                int end = flushRemaining && current.length() <= chunkSize
+                        ? current.length()
+                        : chooseChunkEnd(current, 0, chunkSize);
+                String content = current.substring(0, end).trim();
+                if (StringUtils.hasText(content)) {
+                    batch.add(toKnowledgeChunk(content));
+                    chunkCount++;
+                    if (batch.size() >= effectiveEmbeddingBatchSize()) {
+                        flushBatch();
+                    }
+                }
+                if (end == current.length()) {
+                    buffer.setLength(0);
+                    break;
+                }
+                int nextStart = nextChunkStart(current, 0, end, chunkOverlap);
+                buffer.delete(0, nextStart);
+            }
+        }
+
+        private KnowledgeChunk toKnowledgeChunk(String content) {
+            KnowledgeChunk chunk = new KnowledgeChunk();
+            chunk.setKnowledgeBaseId(document.getKnowledgeBaseId());
+            chunk.setDocumentId(document.getId().toString());
+            chunk.setChunkIndex(chunkIndex++);
+            chunk.setContent(content);
+            chunk.setTokenCount(countTokens(content));
+            chunk.setMetadataJson(toJson(Map.of(
+                    "documentId", document.getId(),
+                    "documentName", document.getName(),
+                    "fileType", document.getFileType()
+            )));
+            return chunk;
+        }
+
+        private void flushBatch() {
+            if (batch.isEmpty()) {
+                return;
+            }
+            updateProgress("EMBEDDING", progressForChunkCount(chunkCount), chunkCount);
+            List<List<Double>> embeddings = embeddingService.embed(embeddingModelConfigId,
+                    batch.stream().map(KnowledgeChunk::getContent).toList());
+            if (embeddings.size() != batch.size()) {
+                throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED,
+                        "Embedding 返回数量不匹配，expected=" + batch.size() + " actual=" + embeddings.size());
+            }
+            for (int i = 0; i < batch.size(); i++) {
+                batch.get(i).setEmbedding(embeddings.get(i));
+            }
+            updateProgress("SAVING", progressForChunkCount(chunkCount), chunkCount);
+            vectorRepository.saveDocumentChunks(new ArrayList<>(batch));
+            batch.clear();
+            updateProgress("CHUNKING", progressForChunkCount(chunkCount), chunkCount);
+        }
+
+        private void updateProgress(String stage, Integer progress, Integer processedChunkCount) {
+            if (progressEnabled) {
+                updateDocumentProgress(document.getId(), stage, progress, processedChunkCount);
+            }
+        }
+    }
+
+    private int effectiveEmbeddingBatchSize() {
+        return Math.max(1, Math.min(100, embeddingBatchSize));
+    }
+
+    private int effectiveChunkSize(KnowledgeDocumentPo document) {
+        long fileSize = document.getFileSize() == null ? 0L : Math.max(0L, document.getFileSize());
+        if (fileSize <= 0) {
+            return CHUNK_SIZE;
+        }
+        int targetChunkCount = Math.max(1, maxChunksPerDocument / 2);
+        long estimatedExtractedTextSize = fileSize * EXTRACTED_TEXT_EXPANSION_SAFETY_FACTOR;
+        long dynamicChunkSize = ((estimatedExtractedTextSize + targetChunkCount - 1L) / targetChunkCount)
+                + CHUNK_OVERLAP;
+        return (int) Math.max(CHUNK_SIZE, Math.min(MAX_DYNAMIC_CHUNK_SIZE, dynamicChunkSize));
+    }
+
+    private static int progressForChunkCount(int chunkCount) {
+        return Math.min(95, 5 + Math.max(1, chunkCount / 10));
     }
 
     private record ChunkDTO(int chunkIndex, String content, int tokenCount, List<Double> embedding) {

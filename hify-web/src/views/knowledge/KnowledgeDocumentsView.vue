@@ -142,16 +142,16 @@
       <el-upload
         drag
         :show-file-list="false"
-        accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
+        accept=".txt,.md,.pdf,.csv,text/plain,text/markdown,application/pdf,text/csv"
         :before-upload="beforeUpload"
         :http-request="handleUpload"
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">
-          将 txt / md / pdf 文件拖到此处，或<em>点击上传</em>
+          将 txt / md / pdf / csv 文件拖到此处，或<em>点击上传</em>
         </div>
         <template #tip>
-          <div class="el-upload__tip">仅支持 txt、md、pdf，单个文件不超过 10MB。</div>
+          <div class="el-upload__tip">仅支持 txt、md、pdf、csv，单个文件不超过 10MB。</div>
         </template>
       </el-upload>
     </el-dialog>
@@ -207,7 +207,7 @@ import {
 } from '@/api/knowledge'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
-const ALLOWED_EXTENSIONS = new Set(['txt', 'md', 'pdf'])
+const ALLOWED_EXTENSIONS = new Set(['txt', 'md', 'pdf', 'csv'])
 
 const STATUS_LABEL: Record<DocumentStatus, string> = {
   PENDING: '等待处理',
@@ -313,7 +313,7 @@ const uploadDialogVisible = ref(false)
 const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
   const extension = rawFile.name.split('.').pop()?.toLowerCase() ?? ''
   if (!ALLOWED_EXTENSIONS.has(extension)) {
-    ElMessage.error('仅支持 txt、md、pdf 文件')
+    ElMessage.error('仅支持 txt、md、pdf、csv 文件')
     return false
   }
   if (rawFile.size > MAX_FILE_SIZE) {

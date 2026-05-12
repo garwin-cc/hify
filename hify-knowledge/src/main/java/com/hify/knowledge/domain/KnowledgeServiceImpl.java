@@ -63,7 +63,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final int MAX_CHUNKS_PER_DOCUMENT = 2000;
     private static final int MAX_SPLIT_STEPS = 5000;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
-    private static final Set<String> ALLOWED_TYPES = Set.of("txt", "md", "pdf");
+    private static final Set<String> ALLOWED_TYPES = Set.of("txt", "md", "pdf", "csv");
 
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeDocumentMapper documentMapper;
@@ -687,6 +687,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             try (PDDocument pdf = PDDocument.load(filePath.toFile())) {
                 text = new PDFTextStripper().getText(pdf);
             }
+        } else if ("csv".equals(fileType)) {
+            text = extractCsvText(Files.readString(filePath, StandardCharsets.UTF_8));
         } else {
             text = Files.readString(filePath, StandardCharsets.UTF_8);
         }
@@ -694,6 +696,70 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED, "文档未提取到文字内容，扫描版 PDF 一期不支持");
         }
         return text;
+    }
+
+    static String extractCsvText(String csvText) {
+        String normalized = csvText == null ? "" : csvText.replace("\r\n", "\n").replace('\r', '\n').trim();
+        if (normalized.isEmpty()) {
+            return "";
+        }
+        List<List<String>> rows = normalized.lines()
+                .map(KnowledgeServiceImpl::parseCsvLine)
+                .filter(row -> row.stream().anyMatch(StringUtils::hasText))
+                .toList();
+        if (rows.isEmpty()) {
+            return "";
+        }
+        List<String> headers = rows.get(0);
+        boolean hasHeader = rows.size() > 1 && headers.stream().anyMatch(StringUtils::hasText);
+        List<String> lines = new ArrayList<>();
+        int startIndex = hasHeader ? 1 : 0;
+        for (int i = startIndex; i < rows.size(); i++) {
+            List<String> row = rows.get(i);
+            List<String> cells = new ArrayList<>();
+            for (int j = 0; j < row.size(); j++) {
+                String value = row.get(j).trim();
+                if (!StringUtils.hasText(value)) {
+                    continue;
+                }
+                if (hasHeader && j < headers.size() && StringUtils.hasText(headers.get(j))) {
+                    cells.add(headers.get(j).trim() + ": " + value);
+                } else {
+                    cells.add(value);
+                }
+            }
+            if (!cells.isEmpty()) {
+                lines.add(String.join(" | ", cells));
+            }
+        }
+        if (lines.isEmpty() && !hasHeader) {
+            return normalized;
+        }
+        return String.join("\n", lines);
+    }
+
+    private static List<String> parseCsvLine(String line) {
+        List<String> cells = new ArrayList<>();
+        StringBuilder cell = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char ch = line.charAt(i);
+            if (ch == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    cell.append('"');
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (ch == ',' && !inQuotes) {
+                cells.add(cell.toString());
+                cell.setLength(0);
+            } else {
+                cell.append(ch);
+            }
+        }
+        cells.add(cell.toString());
+        return cells;
     }
 
     private List<ChunkDTO> splitChunks(String text) {
@@ -825,7 +891,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         String fileType = getFileType(file.getOriginalFilename());
         if (!ALLOWED_TYPES.contains(fileType)) {
-            throw new BizException(ErrorCode.KNOWLEDGE_FILE_TYPE_UNSUPPORTED, "仅支持 txt/md/pdf 文件");
+            throw new BizException(ErrorCode.KNOWLEDGE_FILE_TYPE_UNSUPPORTED, "仅支持 txt/md/pdf/csv 文件");
         }
     }
 

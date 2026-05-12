@@ -39,6 +39,20 @@ class KnowledgeServiceImplTest {
     }
 
     @Test
+    void extractCsvTextFormatsRowsWithHeaderNames() {
+        String csv = """
+                name,age,city
+                Alice,18,Shanghai
+                Bob,20,Beijing
+                """;
+
+        String text = KnowledgeServiceImpl.extractCsvText(csv);
+
+        assertThat(text).contains("name: Alice | age: 18 | city: Shanghai");
+        assertThat(text).contains("name: Bob | age: 20 | city: Beijing");
+    }
+
+    @Test
     void upsertChunkPersistsChunkWithMetadataJson() {
         FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(

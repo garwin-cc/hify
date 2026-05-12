@@ -11,6 +11,8 @@ public interface ConversationService {
 
     List<ConversationMessageResp> listMessages(Long sessionId);
 
+    void deleteSession(Long sessionId);
+
     /**
      * 发送消息，返回 SSE 流。
      *

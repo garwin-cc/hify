@@ -35,6 +35,15 @@
         >
           <el-icon><ChatDotRound /></el-icon>
           <span class="session-title">{{ s.title }}</span>
+          <el-button
+            class="session-delete"
+            text
+            circle
+            size="small"
+            :icon="DeleteIcon"
+            :disabled="isStreaming"
+            @click.stop="deleteSession(s)"
+          />
         </div>
         <div v-if="sessionList.length === 0" class="session-empty">暂无会话</div>
       </div>
@@ -94,9 +103,11 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Plus, Promotion } from '@element-plus/icons-vue'
+import { ChatDotRound, Delete as DeleteIcon, Plus, Promotion } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import {
+  deleteConversationSession,
   getAgentOptions,
   getConversationMessages,
   getConversationSessions,
@@ -234,6 +245,31 @@ async function switchSession(s: SessionMeta) {
       error: true,
     }]
   }
+}
+
+async function deleteSession(s: SessionMeta) {
+  if (isStreaming.value) return
+  try {
+    await ElMessageBox.confirm(`确定删除会话「${s.title}」？`, '删除会话', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+
+  await deleteConversationSession(s.id)
+  sessionList.value = sessionList.value.filter(item => item.id !== s.id)
+  saveSessions(loadSessions().filter(item => item.id !== s.id))
+  if (currentSessionId.value === s.id) {
+    closeWorkflowEvents()
+    stopDrip()
+    currentSessionId.value = null
+    messages.value = []
+  }
+  ElMessage.success('会话已删除')
 }
 
 // ── 发送消息 ──────────────────────────────────────────────────────────────
@@ -467,6 +503,21 @@ function escapeHtml(text: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-delete {
+  flex: 0 0 auto;
+  opacity: 0;
+  color: #909399;
+}
+
+.session-item:hover .session-delete,
+.session-item.active .session-delete {
+  opacity: 1;
+}
+
+.session-delete:hover {
+  color: #f56c6c;
 }
 
 .session-empty {

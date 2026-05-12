@@ -116,6 +116,18 @@ public class ConversationServiceImpl implements ConversationService {
                 .collect(Collectors.toList());
     }
 
+    @Override
+    public void deleteSession(Long sessionId) {
+        ChatSessionPo session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
+        }
+        messageMapper.delete(Wrappers.lambdaQuery(ChatMessagePo.class)
+                .eq(ChatMessagePo::getSessionId, sessionId));
+        sessionMapper.deleteById(sessionId);
+        log.info("deleted conversation session id={} agentId={}", sessionId, session.getAgentId());
+    }
+
     /**
      * 不加 @Transactional：此方法立即返回 SseEmitter，LLM 调用在异步线程内完成。
      * 加 @Transactional 会在整个流式过程中持有 DB 连接（最长 130s），耗尽连接池。

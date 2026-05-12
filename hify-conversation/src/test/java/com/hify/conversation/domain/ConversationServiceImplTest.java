@@ -20,10 +20,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.ThreadPoolExecutor;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class ConversationServiceImplTest {
@@ -113,5 +117,29 @@ class ConversationServiceImplTest {
                         tuple(101L, "user", "dna是什么"),
                         tuple(102L, "assistant", "DNA 是脱氧核糖核酸。")
                 );
+    }
+
+    @Test
+    void deleteSessionDeletesSessionAndMessages() {
+        ChatSessionPo session = new ChatSessionPo();
+        session.setId(11L);
+        session.setAgentId(3L);
+        when(sessionMapper.selectById(11L)).thenReturn(session);
+
+        conversationService.deleteSession(11L);
+
+        verify(messageMapper).delete(any());
+        verify(sessionMapper).deleteById(11L);
+    }
+
+    @Test
+    void deleteSessionThrowsWhenSessionNotFound() {
+        when(sessionMapper.selectById(404L)).thenReturn(null);
+
+        assertThatThrownBy(() -> conversationService.deleteSession(404L))
+                .isInstanceOf(com.hify.common.exception.BizException.class)
+                .hasMessageContaining("会话不存在");
+        verify(messageMapper, never()).delete(any());
+        verify(sessionMapper, never()).deleteById(eq(404L));
     }
 }

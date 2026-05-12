@@ -8,6 +8,7 @@ import com.hify.conversation.api.ConversationSessionResp;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,6 +35,12 @@ public class ConversationController {
     @GetMapping("/{sessionId}/messages")
     public Result<List<ConversationMessageResp>> listMessages(@PathVariable Long sessionId) {
         return Result.ok(conversationService.listMessages(sessionId));
+    }
+
+    @DeleteMapping("/{sessionId}")
+    public Result<Void> deleteSession(@PathVariable Long sessionId) {
+        conversationService.deleteSession(sessionId);
+        return Result.ok();
     }
 
     /**

@@ -1,4 +1,4 @@
-import { get } from '@/utils/request'
+import { del, get } from '@/utils/request'
 import type { PageData } from '@/components/HifyTable.vue'
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -73,6 +73,9 @@ export const getConversationSessions = (agentId: number): Promise<SessionMeta[]>
 
 export const getConversationMessages = (sessionId: number): Promise<ConversationMessage[]> =>
   get(`/v1/conversations/${sessionId}/messages`)
+
+export const deleteConversationSession = (sessionId: number): Promise<void> =>
+  del(`/v1/conversations/${sessionId}`)
 
 // ── Conversation SSE ───────────────────────────────────────────────────
 

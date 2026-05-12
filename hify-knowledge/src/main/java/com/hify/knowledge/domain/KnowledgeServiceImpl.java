@@ -60,6 +60,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
     private static final int CHUNK_SIZE = 512;
     private static final int CHUNK_OVERLAP = 64;
+    private static final int MAX_CHUNKS_PER_DOCUMENT = 2000;
+    private static final int MAX_SPLIT_STEPS = 5000;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
     private static final Set<String> ALLOWED_TYPES = Set.of("txt", "md", "pdf");
 
@@ -633,6 +635,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         } catch (Exception e) {
             log.warn("process knowledge document failed id={}: {}", documentId, e.getMessage(), e);
             updateDocumentStatus(documentId, "FAILED", e.getMessage(), null);
+        } catch (Error e) {
+            log.error("process knowledge document fatal error id={}: {}", documentId, e.getMessage(), e);
+            try {
+                updateDocumentStatus(documentId, "FAILED",
+                        "文档处理发生严重错误: " + e.getClass().getSimpleName(), null);
+            } catch (Exception updateError) {
+                log.error("failed to mark knowledge document as FAILED id={}: {}",
+                        documentId, updateError.getMessage(), updateError);
+            }
+            throw e;
         }
     }
 
@@ -692,7 +704,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         List<ChunkDTO> chunks = new ArrayList<>();
         int start = 0;
         int chunkIndex = 0;
+        int steps = 0;
         while (start < normalized.length()) {
+            steps++;
+            if (steps > MAX_SPLIT_STEPS || chunks.size() >= MAX_CHUNKS_PER_DOCUMENT) {
+                throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED, "文档分块数量超过上限，请检查文档格式或减小文件大小");
+            }
             int end = chooseChunkEnd(normalized, start);
             String content = normalized.substring(start, end).trim();
             if (!content.isBlank()) {
@@ -701,10 +718,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             if (end == normalized.length()) {
                 break;
             }
-            start = rewindByTokens(normalized, end, CHUNK_OVERLAP);
-            if (start <= 0 || start >= end) {
-                start = end;
-            }
+            start = nextChunkStart(normalized, start, end, CHUNK_OVERLAP);
         }
         return chunks;
     }
@@ -772,6 +786,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             }
         }
         return pos;
+    }
+
+    static int nextChunkStart(String text, int currentStart, int end, int overlapTokens) {
+        int nextStart = rewindByTokens(text, end, overlapTokens);
+        if (nextStart <= currentStart || nextStart >= end) {
+            return end;
+        }
+        return nextStart;
     }
 
     private static int countTokens(String content) {

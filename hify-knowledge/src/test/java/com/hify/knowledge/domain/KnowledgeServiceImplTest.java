@@ -24,6 +24,21 @@ import static org.mockito.Mockito.when;
 class KnowledgeServiceImplTest {
 
     @Test
+    void nextChunkStartFallsBackToEndWhenOverlapWouldMoveBackward() {
+        String text = """
+                Alpha beta gamma delta epsilon zeta eta theta iota kappa.
+                Lambda mu nu xi omicron pi rho sigma tau upsilon.
+                Phi chi psi omega alpha beta gamma delta epsilon.
+                """;
+        int currentStart = 80;
+        int end = 120;
+
+        int nextStart = KnowledgeServiceImpl.nextChunkStart(text, currentStart, end, 64);
+
+        assertThat(nextStart).isEqualTo(end);
+    }
+
+    @Test
     void upsertChunkPersistsChunkWithMetadataJson() {
         FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(

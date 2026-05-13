@@ -11,8 +11,12 @@ import com.hify.knowledge.infra.RagRetrievalTraceMapper;
 import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.ModelConfigService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.reflect.Field;
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +29,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class KnowledgeServiceImplTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void nextChunkStartFallsBackToEndWhenOverlapWouldMoveBackward() {
@@ -53,6 +60,17 @@ class KnowledgeServiceImplTest {
 
         assertThat(text).contains("name: Alice | age: 18 | city: Shanghai");
         assertThat(text).contains("name: Bob | age: 20 | city: Beijing");
+    }
+
+    @Test
+    void readTextFileDecodesGb18030CsvWithoutMalformedInputError() throws Exception {
+        Path csv = tempDir.resolve("gb18030.csv");
+        Files.write(csv, "名称,说明\n蘑菇,中文知识库\n".getBytes(Charset.forName("GB18030")));
+
+        String text = KnowledgeServiceImpl.readTextFile(csv);
+
+        assertThat(text).contains("名称,说明");
+        assertThat(text).contains("蘑菇,中文知识库");
     }
 
     @Test

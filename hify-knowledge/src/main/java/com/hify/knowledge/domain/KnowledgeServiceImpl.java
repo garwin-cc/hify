@@ -33,7 +33,10 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
+import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.UnmappableCharacterException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -71,6 +74,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final int DEFAULT_MAX_SPLIT_STEPS = 100_000;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
     private static final Set<String> ALLOWED_TYPES = Set.of("txt", "md", "pdf", "csv");
+    private static final List<Charset> TEXT_CHARSET_CANDIDATES = List.of(
+            StandardCharsets.UTF_8,
+            Charset.forName("GB18030"),
+            StandardCharsets.ISO_8859_1);
     private static final String STATUS_PENDING = "PENDING";
     private static final String STATUS_PROCESSING = "PROCESSING";
     private static final String STATUS_DONE = "DONE";
@@ -947,9 +954,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 text = new PDFTextStripper().getText(pdf);
             }
         } else if ("csv".equals(fileType)) {
-            text = extractCsvText(Files.readString(filePath, StandardCharsets.UTF_8));
+            text = extractCsvText(readTextFile(filePath));
         } else {
-            text = Files.readString(filePath, StandardCharsets.UTF_8);
+            text = readTextFile(filePath);
         }
         if (!StringUtils.hasText(text)) {
             throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED, "文档未提取到文字内容，扫描版 PDF 一期不支持");
@@ -958,7 +965,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private void processTextDocument(Path filePath, DocumentChunkProcessor processor) throws IOException {
-        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = newTextReader(filePath)) {
             char[] buffer = new char[8192];
             int read;
             while ((read = reader.read(buffer)) != -1) {
@@ -968,7 +975,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private void processCsvDocument(Path filePath, DocumentChunkProcessor processor) throws IOException {
-        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = newTextReader(filePath)) {
             String line;
             List<String> headers = List.of();
             while ((line = reader.readLine()) != null) {
@@ -985,6 +992,39 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                     processor.accept(formatted);
                     processor.accept("\n");
                 }
+            }
+        }
+    }
+
+    static String readTextFile(Path filePath) throws IOException {
+        return Files.readString(filePath, detectTextCharset(filePath));
+    }
+
+    private static BufferedReader newTextReader(Path filePath) throws IOException {
+        return Files.newBufferedReader(filePath, detectTextCharset(filePath));
+    }
+
+    private static Charset detectTextCharset(Path filePath) throws IOException {
+        IOException lastError = null;
+        for (Charset charset : TEXT_CHARSET_CANDIDATES) {
+            try {
+                verifyReadableWithCharset(filePath, charset);
+                return charset;
+            } catch (MalformedInputException | UnmappableCharacterException e) {
+                lastError = e;
+            }
+        }
+        if (lastError != null) {
+            throw lastError;
+        }
+        return StandardCharsets.UTF_8;
+    }
+
+    private static void verifyReadableWithCharset(Path filePath, Charset charset) throws IOException {
+        try (BufferedReader reader = Files.newBufferedReader(filePath, charset)) {
+            char[] buffer = new char[8192];
+            while (reader.read(buffer) != -1) {
+                // Drain the reader to force decoder errors before processing starts.
             }
         }
     }

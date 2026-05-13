@@ -171,6 +171,18 @@
         <el-form-item label="Base URL">
           <el-input v-model="form.baseUrl" placeholder="https://api.openai.com（留空使用官方默认）" />
         </el-form-item>
+
+        <el-form-item v-if="editingId !== null" label="状态">
+          <el-switch
+            v-model="form.enabled"
+            :active-value="1"
+            :inactive-value="0"
+            active-text="启用"
+            inactive-text="停用"
+            inline-prompt
+          />
+          <div class="form-hint">停用后，该提供商不会再用于模型调用和健康检查。</div>
+        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -431,6 +443,7 @@ const form = reactive({
   type:    '',
   apiKey:  '',
   baseUrl: '',
+  enabled: 1,
 })
 
 const rules: FormRules = {
@@ -450,6 +463,7 @@ function handleEdit(row: ProviderListItem) {
   form.type = row.type
   form.apiKey = ''
   form.baseUrl = row.baseUrl
+  form.enabled = row.enabled ? 1 : 0
   dialogVisible.value = true
 }
 
@@ -458,6 +472,7 @@ function resetForm() {
   form.type = ''
   form.apiKey = ''
   form.baseUrl = ''
+  form.enabled = 1
 }
 
 function handleDialogClosed() {
@@ -478,6 +493,7 @@ async function handleSubmit() {
         type:    form.type,
         apiKey:  form.apiKey  || undefined,
         baseUrl: form.baseUrl,
+        enabled: form.enabled,
       })
       notifySuccess('提供商已更新')
     } else {

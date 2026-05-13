@@ -1,5 +1,6 @@
 import { del, get } from '@/utils/request'
 import type { PageData } from '@/components/HifyTable.vue'
+import { useAuthStore } from '@/stores/auth'
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -92,13 +93,18 @@ export function streamMessage(
   callbacks: StreamCallbacks,
 ): () => void {
   const controller = new AbortController()
+  const auth = useAuthStore()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (auth.token) {
+    headers.Authorization = `Bearer ${auth.token}`
+  }
 
   ;(async () => {
     let response: Response
     try {
       response = await fetch('/api/v1/conversations/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ agentId, sessionId, content }),
         signal: controller.signal,
       })
@@ -117,9 +123,21 @@ export function streamMessage(
       return
     }
 
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType.includes('application/json')) {
+      try {
+        const data = await response.json()
+        callbacks.onError(data.message ?? '请求失败')
+      } catch {
+        callbacks.onError('请求失败')
+      }
+      return
+    }
+
     const reader = response.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let finished = false
 
     try {
       while (true) {
@@ -139,12 +157,21 @@ export function streamMessage(
             try {
               const ev: SseEvent = JSON.parse(raw)
               if (ev.type === 'token') callbacks.onToken(ev.content)
-              else if (ev.type === 'done') callbacks.onDone(ev)
+              else if (ev.type === 'done') {
+                finished = true
+                callbacks.onDone(ev)
+              }
               else if (ev.type === 'workflow_start') callbacks.onWorkflowStart?.(ev)
-              else if (ev.type === 'error') callbacks.onError(ev.message)
+              else if (ev.type === 'error') {
+                finished = true
+                callbacks.onError(ev.message)
+              }
             } catch { /* ignore parse errors */ }
           }
         }
+      }
+      if (!finished && !controller.signal.aborted) {
+        callbacks.onError('连接已结束但未收到完成事件')
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') callbacks.onError(err.message ?? '连接中断')

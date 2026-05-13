@@ -578,6 +578,7 @@ import {
   type WorkflowVersion,
 } from '@/api/workflow'
 import { getModelGroups, type ModelGroup } from '@/api/agent'
+import { subscribeSse } from '@/api/sse'
 import { notifySuccess } from '@/utils/notify'
 
 type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'END'
@@ -606,7 +607,7 @@ const reviewTask = ref<WorkflowReviewTask | null>(null)
 const reviewComment = ref('')
 const reviewEditedContent = ref('')
 const runPollingTimer = ref<number | null>(null)
-const runEventSource = ref<EventSource | null>(null)
+const cancelRunEventStream = ref<(() => void) | null>(null)
 const lastRunEventSeq = ref(0)
 const canvasScale = ref(1)
 const modelGroups = ref<ModelGroup[]>([])
@@ -1512,39 +1513,41 @@ async function handleReviewAction(action: string) {
 
 function startRunEventStream(runId: number, afterEventSeq = 0) {
   stopRunEventStream()
-  runEventSource.value = new EventSource(workflowRunEventsUrl(runId, afterEventSeq))
-  runEventSource.value.addEventListener('workflow-run-event', async (message) => {
-    try {
-      const event = JSON.parse((message as MessageEvent).data) as WorkflowRunEvent
-      lastRunEventSeq.value = Math.max(lastRunEventSeq.value, event.eventSeq ?? 0)
-      persistRunResumeState()
-      const detail = await getWorkflowRunDetail(runId)
-      latestRun.value = detail
-      await syncReviewTaskIfWaiting(detail)
-      if (detail.status === 'WAITING') {
-        runningWorkflow.value = false
-        stopRunEventStream()
-        return
+  cancelRunEventStream.value = subscribeSse(workflowRunEventsUrl(runId, afterEventSeq), {
+    async onMessage(message) {
+      if (message.event !== 'workflow-run-event') return
+      try {
+        const event = JSON.parse(message.data) as WorkflowRunEvent
+        lastRunEventSeq.value = Math.max(lastRunEventSeq.value, event.eventSeq ?? 0)
+        persistRunResumeState()
+        const detail = await getWorkflowRunDetail(runId)
+        latestRun.value = detail
+        await syncReviewTaskIfWaiting(detail)
+        if (detail.status === 'WAITING') {
+          runningWorkflow.value = false
+          stopRunEventStream()
+          return
+        }
+        if (isTerminalRun(detail.status)) {
+          runningWorkflow.value = false
+          stopRunEventStream()
+          clearRunResumeState()
+        }
+      } catch {
+        startRunPolling(runId)
       }
-      if (isTerminalRun(detail.status)) {
-        runningWorkflow.value = false
-        stopRunEventStream()
-        clearRunResumeState()
-      }
-    } catch {
+    },
+    onError() {
+      stopRunEventStream()
       startRunPolling(runId)
-    }
+    },
   })
-  runEventSource.value.onerror = () => {
-    stopRunEventStream()
-    startRunPolling(runId)
-  }
 }
 
 function stopRunEventStream() {
-  if (runEventSource.value) {
-    runEventSource.value.close()
-    runEventSource.value = null
+  if (cancelRunEventStream.value) {
+    cancelRunEventStream.value()
+    cancelRunEventStream.value = null
   }
 }
 

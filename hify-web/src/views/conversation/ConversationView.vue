@@ -117,6 +117,7 @@ import {
 } from '@/api/conversation'
 import type { AgentOption, SessionMeta, DoneEvent } from '@/api/conversation'
 import { workflowRunEventsUrl, getWorkflowRunDetail } from '@/api/workflow'
+import { subscribeSse } from '@/api/sse'
 import type { WorkflowRunEvent } from '@/api/workflow'
 
 // ── 状态 ──────────────────────────────────────────────────────────────────
@@ -145,7 +146,7 @@ const selectedAgentName = computed(() => {
 })
 
 let cancelStream: (() => void) | null = null
-let workflowEventSource: EventSource | null = null
+let cancelWorkflowEvents: (() => void) | null = null
 
 // ── 打字机队列（30ms/字符）────────────────────────────────────────────────────
 // SSE tokens 批量到达，这里逐字符匀速输出，避免内容整块跳入。
@@ -331,22 +332,24 @@ function send() {
 
 function subscribeWorkflowEvents(runId: number, aiIdx: number) {
   closeWorkflowEvents()
-  workflowEventSource = new EventSource(workflowRunEventsUrl(runId))
-  workflowEventSource.onmessage = event => {
-    try {
-      const data = JSON.parse(event.data) as WorkflowRunEvent
-      appendWorkflowEvent(aiIdx, formatWorkflowEvent(data))
-      if (data.eventType === 'RUN_SUCCEEDED' || data.eventType === 'RUN_FAILED' || data.eventType === 'RUN_TIMEOUT') {
-        closeWorkflowEvents()
-        loadWorkflowFinalResult(runId, aiIdx)
+  cancelWorkflowEvents = subscribeSse(workflowRunEventsUrl(runId), {
+    onMessage(message) {
+      if (message.event !== 'workflow-run-event' && message.event !== 'message') return
+      try {
+        const data = JSON.parse(message.data) as WorkflowRunEvent
+        appendWorkflowEvent(aiIdx, formatWorkflowEvent(data))
+        if (data.eventType === 'RUN_SUCCEEDED' || data.eventType === 'RUN_FAILED' || data.eventType === 'RUN_TIMEOUT') {
+          closeWorkflowEvents()
+          loadWorkflowFinalResult(runId, aiIdx)
+        }
+      } catch {
+        // ignore malformed SSE payloads
       }
-    } catch {
-      // ignore malformed SSE payloads
-    }
-  }
-  workflowEventSource.onerror = () => {
-    closeWorkflowEvents()
-  }
+    },
+    onError() {
+      closeWorkflowEvents()
+    },
+  })
 }
 
 function appendWorkflowEvent(aiIdx: number, text: string) {
@@ -376,8 +379,8 @@ async function loadWorkflowFinalResult(runId: number, aiIdx: number) {
 }
 
 function closeWorkflowEvents() {
-  workflowEventSource?.close()
-  workflowEventSource = null
+  cancelWorkflowEvents?.()
+  cancelWorkflowEvents = null
 }
 
 function onKeydown(e: Event | KeyboardEvent) {

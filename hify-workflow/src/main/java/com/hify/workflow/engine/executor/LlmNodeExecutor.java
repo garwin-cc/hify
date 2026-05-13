@@ -13,6 +13,7 @@ import com.hify.model.infra.ProviderMapper;
 import com.hify.model.infra.ProviderPo;
 import com.hify.workflow.engine.ExecutionContext;
 import com.hify.workflow.engine.NodeConfigDef;
+import com.hify.workflow.engine.WorkflowCallTrace;
 import com.hify.workflow.engine.WorkflowNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -48,10 +49,29 @@ public class LlmNodeExecutor extends AbstractNodeExecutor implements NodeExecuto
                     .maxTokens(llmConfig.maxTokens())
                     .build();
 
+            long startedAt = System.currentTimeMillis();
             ChatResponse response = adapter.chat(provider, request, WORKFLOW_LLM_TIMEOUT_SECONDS);
+            ctx.recordCall(new WorkflowCallTrace(
+                    "LLM",
+                    provider.getName() + "/" + modelConfig.getModelId(),
+                    java.util.Map.of("provider", provider.getName(), "modelId", modelConfig.getModelId()),
+                    java.util.Map.of("finishReason", response == null ? "" : response.getFinishReason(),
+                            "inputTokens", response == null ? 0 : response.getInputTokens(),
+                            "outputTokens", response == null ? 0 : response.getOutputTokens()),
+                    "SUCCESS",
+                    null,
+                    elapsed(startedAt)));
             ctx.set(node.nodeKey(), outputVariable(llmConfig.outputVariable()),
                     response == null ? null : response.getContent());
         } catch (Exception e) {
+            ctx.recordCall(new WorkflowCallTrace(
+                    "LLM",
+                    "",
+                    java.util.Map.of(),
+                    java.util.Map.of(),
+                    "FAILED",
+                    e.getMessage(),
+                    null));
             throw toExecuteException(node, e);
         }
     }
@@ -77,5 +97,9 @@ public class LlmNodeExecutor extends AbstractNodeExecutor implements NodeExecuto
                     "模型提供商不存在或已禁用: " + providerId);
         }
         return provider;
+    }
+
+    private static int elapsed(long startedAt) {
+        return (int) Math.min(Integer.MAX_VALUE, System.currentTimeMillis() - startedAt);
     }
 }

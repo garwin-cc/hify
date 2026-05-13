@@ -14,6 +14,10 @@ public class WorkflowRunResp {
 
     private Long workflowVersionId;
 
+    private String traceId;
+
+    private Long rerunFromRunId;
+
     private String status;
 
     private String input;

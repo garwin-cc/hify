@@ -114,10 +114,30 @@ export interface WorkflowNodeRun {
   nodeKey: string
   nodeType: string
   status: 'RUNNING' | 'WAITING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'CANCELED' | 'SKIPPED'
+  inputSnapshot?: Record<string, unknown>
   outputs: Record<string, unknown>
   error?: string
   elapsedMs?: number
+  startedAt?: string
   createdAt: string
+  finishedAt?: string
+  callTraces?: WorkflowNodeCallTrace[]
+}
+
+export interface WorkflowNodeCallTrace {
+  id: number
+  workflowRunId: number
+  workflowNodeRunId?: number
+  nodeKey: string
+  nodeType: string
+  callType: 'LLM' | 'API_CALL' | 'MCP' | 'HUMAN_REVIEW' | 'CODE_TASK' | string
+  target: string
+  requestSnapshot?: Record<string, unknown>
+  responseSnapshot?: Record<string, unknown>
+  status: string
+  errorMessage?: string
+  durationMs?: number
+  startedAt?: string
   finishedAt?: string
 }
 
@@ -125,6 +145,8 @@ export interface WorkflowRun {
   id: number
   workflowId: number
   workflowVersionId?: number
+  traceId?: string
+  rerunFromRunId?: number
   status: 'RUNNING' | 'WAITING' | 'SUCCESS' | 'FAILED' | 'TIMEOUT' | 'CANCELED'
   input: string
   output?: string
@@ -231,6 +253,9 @@ export const startAsyncWorkflowRun = (id: number, userMessage: string): Promise<
 
 export const getWorkflowRunDetail = (runId: number): Promise<WorkflowRun> =>
   get(`/v1/workflow-runs/${runId}`)
+
+export const rerunWorkflowRun = (runId: number): Promise<WorkflowRun> =>
+  post(`/v1/workflow-runs/${runId}/rerun`)
 
 export const getWorkflowReviewTask = (runId: number): Promise<WorkflowReviewTask> =>
   get(`/v1/workflow-runs/${runId}/review`)

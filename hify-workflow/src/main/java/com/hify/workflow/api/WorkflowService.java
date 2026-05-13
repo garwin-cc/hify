@@ -24,6 +24,8 @@ public interface WorkflowService {
 
     WorkflowRunResp getRunDetail(Long runId);
 
+    WorkflowRunResp rerunRun(Long runId);
+
     SseEmitter streamRunEvents(Long runId, Integer afterEventSeq);
 
     WorkflowReviewTaskResp getReviewTask(Long runId);

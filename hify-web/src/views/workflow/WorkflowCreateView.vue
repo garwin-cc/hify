@@ -177,6 +177,21 @@
             <div class="run-summary__header">
               <strong>{{ latestRun.status }}</strong>
               <span v-if="latestRun.elapsedMs != null">{{ latestRun.elapsedMs }}ms</span>
+              <el-button size="small" link @click="runDetailVisible = true">运行详情</el-button>
+              <el-button
+                v-if="canRerunLatestRun"
+                size="small"
+                link
+                type="primary"
+                :loading="runningWorkflow"
+                @click="handleRerunLatestRun"
+              >
+                重跑
+              </el-button>
+            </div>
+            <div v-if="latestRun.traceId" class="run-summary__block">
+              <span>Trace</span>
+              <p>{{ latestRun.traceId }}</p>
             </div>
             <div v-if="latestRun.workflowVersionId" class="run-summary__block">
               <span>版本快照</span>
@@ -543,6 +558,88 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-drawer v-model="runDetailVisible" title="运行详情" size="620px">
+      <template v-if="latestRun">
+        <section class="run-detail-section">
+          <h3>基础信息</h3>
+          <dl class="run-detail-grid">
+            <dt>runId</dt>
+            <dd>{{ latestRun.id }}</dd>
+            <dt>traceId</dt>
+            <dd>{{ latestRun.traceId || '-' }}</dd>
+            <dt>versionId</dt>
+            <dd>{{ latestRun.workflowVersionId || '-' }}</dd>
+            <dt>状态</dt>
+            <dd>{{ latestRun.status }}</dd>
+            <dt>当前节点</dt>
+            <dd>{{ latestRun.currentNodeKey || '-' }}</dd>
+            <dt>耗时</dt>
+            <dd>{{ latestRun.elapsedMs ?? '-' }}ms</dd>
+          </dl>
+          <div class="run-detail-json">
+            <span>输入</span>
+            <el-input :model-value="latestRun.input || ''" type="textarea" :rows="3" readonly />
+          </div>
+          <div class="run-detail-json">
+            <span>输出</span>
+            <el-input :model-value="latestRun.output || ''" type="textarea" :rows="3" readonly />
+          </div>
+          <div v-if="latestRun.error" class="run-detail-error">{{ latestRun.error }}</div>
+        </section>
+
+        <section class="run-detail-section">
+          <h3>节点执行顺序</h3>
+          <el-timeline>
+            <el-timeline-item
+              v-for="nodeRun in latestRun.nodeRuns"
+              :key="nodeRun.id"
+              :type="runTagType(nodeRun.status)"
+              :timestamp="nodeRun.startedAt || nodeRun.createdAt"
+            >
+              <div class="node-run-card">
+                <div class="node-run-card__head">
+                  <strong>{{ nodeRun.nodeKey }}</strong>
+                  <el-tag size="small" :type="runTagType(nodeRun.status)">{{ nodeRun.status }}</el-tag>
+                  <span>{{ nodeRun.nodeType }}</span>
+                  <span v-if="nodeRun.elapsedMs != null">{{ nodeRun.elapsedMs }}ms</span>
+                </div>
+                <el-collapse>
+                  <el-collapse-item title="输入快照" name="input">
+                    <el-input
+                      :model-value="JSON.stringify(nodeRun.inputSnapshot ?? {}, null, 2)"
+                      type="textarea"
+                      :rows="5"
+                      readonly
+                    />
+                  </el-collapse-item>
+                  <el-collapse-item title="输出快照" name="output">
+                    <el-input
+                      :model-value="JSON.stringify(nodeRun.outputs ?? {}, null, 2)"
+                      type="textarea"
+                      :rows="5"
+                      readonly
+                    />
+                  </el-collapse-item>
+                  <el-collapse-item v-if="nodeRun.callTraces?.length" title="外部调用" name="calls">
+                    <div v-for="call in nodeRun.callTraces" :key="call.id" class="call-trace-item">
+                      <div class="call-trace-item__head">
+                        <strong>{{ call.callType }}</strong>
+                        <span>{{ call.target || '-' }}</span>
+                        <el-tag size="small" :type="runTagType(call.status)">{{ call.status }}</el-tag>
+                        <span v-if="call.durationMs != null">{{ call.durationMs }}ms</span>
+                      </div>
+                      <div v-if="call.errorMessage" class="run-detail-error">{{ call.errorMessage }}</div>
+                    </div>
+                  </el-collapse-item>
+                </el-collapse>
+                <div v-if="nodeRun.error" class="run-detail-error">{{ nodeRun.error }}</div>
+              </div>
+            </el-timeline-item>
+          </el-timeline>
+        </section>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -561,6 +658,7 @@ import {
   getWorkflowReviewTask,
   getWorkflowRunDetail,
   getWorkflowVersions,
+  rerunWorkflowRun,
   restoreWorkflowVersion,
   startAsyncWorkflowRun,
   submitWorkflowReview,
@@ -604,6 +702,7 @@ const linkingFrom = ref('')
 const runInput = ref('我要申请退款')
 const latestRun = ref<WorkflowRun | null>(null)
 const reviewTask = ref<WorkflowReviewTask | null>(null)
+const runDetailVisible = ref(false)
 const reviewComment = ref('')
 const reviewEditedContent = ref('')
 const runPollingTimer = ref<number | null>(null)
@@ -1469,6 +1568,34 @@ function isTerminalRun(status?: string) {
   return ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELED'].includes(status ?? '')
 }
 
+const canRerunLatestRun = computed(() => ['FAILED', 'TIMEOUT', 'CANCELED'].includes(latestRun.value?.status ?? ''))
+
+async function handleRerunLatestRun() {
+  if (!latestRun.value || !canRerunLatestRun.value) return
+  stopRunPolling()
+  stopRunEventStream()
+  runningWorkflow.value = true
+  clearReviewTask()
+  lastRunEventSeq.value = 0
+  try {
+    latestRun.value = await rerunWorkflowRun(latestRun.value.id)
+    await syncReviewTaskIfWaiting(latestRun.value)
+    persistRunResumeState()
+    if (latestRun.value.status === 'WAITING') {
+      runningWorkflow.value = false
+      return
+    }
+    if (isTerminalRun(latestRun.value.status)) {
+      runningWorkflow.value = false
+      clearRunResumeState()
+      return
+    }
+    startRunEventStream(latestRun.value.id, lastRunEventSeq.value)
+  } catch {
+    runningWorkflow.value = false
+  }
+}
+
 async function syncReviewTaskIfWaiting(run: WorkflowRun | null) {
   if (!run || run.status !== 'WAITING') {
     clearReviewTask()
@@ -2315,6 +2442,81 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.run-detail-section {
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.run-detail-section h3 {
+  margin: 0 0 12px;
+  font-size: var(--text-md);
+}
+
+.run-detail-grid {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px 12px;
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.run-detail-grid dt {
+  color: var(--text-tertiary);
+}
+
+.run-detail-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.run-detail-json {
+  margin-top: 10px;
+}
+
+.run-detail-json span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.node-run-card {
+  padding: 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.node-run-card__head,
+.call-trace-item__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.call-trace-item {
+  padding: 8px 0;
+  border-top: 1px solid #eef2f7;
+}
+
+.call-trace-item:first-child {
+  border-top: 0;
+}
+
+.run-detail-error {
+  margin-top: 8px;
+  color: #e5484d;
+  font-size: var(--text-sm);
+  line-height: 1.45;
 }
 
 @media (max-width: 1180px) {

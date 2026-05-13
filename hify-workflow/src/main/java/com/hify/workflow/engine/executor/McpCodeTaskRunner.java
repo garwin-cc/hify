@@ -8,6 +8,7 @@ import com.hify.mcp.api.McpClientService;
 import com.hify.mcp.api.McpToolCallAuditRecord;
 import com.hify.mcp.api.McpToolCallAuditService;
 import com.hify.workflow.engine.ExecutionContext;
+import com.hify.workflow.engine.WorkflowCallTrace;
 import com.hify.workflow.engine.WorkflowNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -48,9 +49,25 @@ public class McpCodeTaskRunner implements CodeTaskRunner {
         long start = System.currentTimeMillis();
         try {
             String response = mcpClientService.callTool(config.mcpServerId(), config.toolName(), arguments);
+            ctx.recordCall(new WorkflowCallTrace(
+                    "MCP",
+                    config.toolName(),
+                    Map.of("mcpServerId", config.mcpServerId(), "toolName", config.toolName(), "argumentKeys", arguments.keySet()),
+                    Map.of("resultPreview", response == null ? "" : response),
+                    "SUCCESS",
+                    null,
+                    elapsed(start)));
             recordAudit(ctx, node, config, arguments, System.currentTimeMillis() - start, true, response, null);
             return parseResult(response);
         } catch (Exception e) {
+            ctx.recordCall(new WorkflowCallTrace(
+                    "MCP",
+                    config.toolName(),
+                    Map.of("mcpServerId", config.mcpServerId(), "toolName", config.toolName(), "argumentKeys", arguments.keySet()),
+                    Map.of(),
+                    "FAILED",
+                    e.getMessage(),
+                    elapsed(start)));
             recordAudit(ctx, node, config, arguments, System.currentTimeMillis() - start, false, null, e.getMessage());
             throw e;
         }
@@ -105,5 +122,9 @@ public class McpCodeTaskRunner implements CodeTaskRunner {
             return Collections.emptyList();
         }
         return list.stream().map(String::valueOf).toList();
+    }
+
+    private static int elapsed(long startedAt) {
+        return (int) Math.min(Integer.MAX_VALUE, System.currentTimeMillis() - startedAt);
     }
 }

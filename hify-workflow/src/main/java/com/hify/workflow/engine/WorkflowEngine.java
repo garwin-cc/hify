@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.http.LlmApiException;
+import com.hify.common.log.TraceContext;
 import com.hify.workflow.domain.WorkflowEdgePo;
 import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
@@ -26,6 +27,7 @@ import com.hify.workflow.infra.WorkflowRunMapper;
 import com.hify.workflow.infra.WorkflowVersionMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -59,6 +61,12 @@ public class WorkflowEngine {
     private final ObjectMapper objectMapper;
     private final WorkflowEventPublisher workflowEventPublisher;
     private final WorkflowReviewHandler workflowReviewHandler;
+    private WorkflowCallTraceSink workflowCallTraceSink = WorkflowCallTraceSink.noop();
+
+    @Autowired(required = false)
+    public void setWorkflowCallTraceSink(WorkflowCallTraceSink workflowCallTraceSink) {
+        this.workflowCallTraceSink = workflowCallTraceSink == null ? WorkflowCallTraceSink.noop() : workflowCallTraceSink;
+    }
 
     public String execute(Long workflowId, String userMessage) {
         WorkflowRunPo workflowRun = createWorkflowRun(workflowId, userMessage, RUN_MODE_SYNC, null);
@@ -106,6 +114,7 @@ public class WorkflowEngine {
 
     private String executeRun(WorkflowRunPo workflowRun, Long workflowId, String userMessage, boolean resume) {
         long startedAt = System.currentTimeMillis();
+        ensureWorkflowTrace(workflowRun);
         List<WorkflowNodePo> nodes = loadNodes(workflowId);
         List<WorkflowEdgePo> edges = loadEdges(workflowId);
         Map<String, WorkflowNodePo> nodeMap = toNodeMap(nodes);
@@ -136,6 +145,8 @@ public class WorkflowEngine {
                 }
                 updateWorkflowRunCurrentNode(workflowRun, currentKey);
                 WorkflowNodeRunPo nodeRun = createNodeRun(workflowRun.getId(), current);
+                captureNodeInput(nodeRun, ctx);
+                ctx.bindCurrentNodeRun(nodeRun.getId(), current.getNodeKey(), current.getNodeType(), workflowCallTraceSink);
                 long nodeStartedAt = System.currentTimeMillis();
                 workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_STARTED", currentKey, STATUS_RUNNING,
                         Map.of("nodeType", current.getNodeType(), "nodeName", current.getName()));
@@ -150,6 +161,7 @@ public class WorkflowEngine {
                     }
                     if ("HUMAN_REVIEW".equalsIgnoreCase(current.getNodeType())) {
                         handleHumanReview(workflowRun, current, ctx, nodeRun, nodeStartedAt);
+                        ctx.clearCurrentNodeRun();
                         return null;
                     }
                     if (!"START".equalsIgnoreCase(current.getNodeType())) {
@@ -166,6 +178,8 @@ public class WorkflowEngine {
                     workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_FAILED", currentKey, STATUS_FAILED,
                             Map.of("nodeType", current.getNodeType(), "error", shortError(e), "elapsedMs", elapsed(nodeStartedAt)));
                     throw e;
+                } finally {
+                    ctx.clearCurrentNodeRun();
                 }
             }
 
@@ -302,6 +316,14 @@ public class WorkflowEngine {
         boolean allowEdit = Boolean.TRUE.equals(config.allowEdit());
         workflowReviewHandler.createWaitingReview(workflowRun.getId(), current.getNodeKey(), title, content,
                 actions, allowEdit, outputVariable);
+        ctx.recordCall(new WorkflowCallTrace(
+                "HUMAN_REVIEW",
+                current.getNodeKey(),
+                Map.of("title", title, "actions", actions, "allowEdit", allowEdit),
+                Map.of("reviewStatus", "WAITING"),
+                STATUS_WAITING,
+                null,
+                elapsed(nodeStartedAt)));
         updateNodeRunWaiting(nodeRun, ctx, nodeStartedAt);
         updateWorkflowRunWaiting(workflowRun, current.getNodeKey(), ctx);
         workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "REVIEW_WAITING", current.getNodeKey(), STATUS_WAITING,
@@ -311,6 +333,7 @@ public class WorkflowEngine {
     public WorkflowRunPo createWorkflowRun(Long workflowId, String userMessage, String runMode, LocalDateTime timeoutAt) {
         WorkflowRunPo po = new WorkflowRunPo();
         po.setWorkflowId(workflowId);
+        po.setTraceId(TraceContext.ensureTraceId());
         WorkflowVersionPo version = latestVersion(workflowId);
         if (version != null) {
             po.setWorkflowVersionId(version.getId());
@@ -340,6 +363,18 @@ public class WorkflowEngine {
         }
     }
 
+    private void ensureWorkflowTrace(WorkflowRunPo po) {
+        if (StringUtils.hasText(po.getTraceId())) {
+            return;
+        }
+        po.setTraceId(TraceContext.ensureTraceId());
+        try {
+            workflowRunMapper.updateById(po);
+        } catch (Exception e) {
+            log.warn("failed to update workflow run trace id={}: {}", po.getId(), e.getMessage());
+        }
+    }
+
     private void updateWorkflowRunCurrentNode(WorkflowRunPo po, String currentNodeKey) {
         po.setCurrentNodeKey(currentNodeKey);
         try {
@@ -355,6 +390,7 @@ public class WorkflowEngine {
         po.setNodeKey(node.getNodeKey());
         po.setNodeType(node.getNodeType());
         po.setStatus(STATUS_RUNNING);
+        po.setStartedAt(LocalDateTime.now());
         try {
             workflowNodeRunMapper.insert(po);
         } catch (Exception e) {
@@ -396,6 +432,15 @@ public class WorkflowEngine {
             workflowNodeRunMapper.updateById(po);
         } catch (Exception e) {
             log.warn("failed to update workflow node run failed id={}: {}", po.getId(), e.getMessage());
+        }
+    }
+
+    private void captureNodeInput(WorkflowNodeRunPo nodeRun, ExecutionContext ctx) {
+        nodeRun.setInputSnapshot(toJson(ctx.snapshot()));
+        try {
+            workflowNodeRunMapper.updateById(nodeRun);
+        } catch (Exception e) {
+            log.warn("failed to update workflow node run input id={}: {}", nodeRun.getId(), e.getMessage());
         }
     }
 

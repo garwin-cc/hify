@@ -31,6 +31,12 @@ public class WorkflowRunController {
         return Result.ok(workflowService.getRunDetail(runId));
     }
 
+    @PostMapping("/{runId}/rerun")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<WorkflowRunResp> rerun(@PathVariable Long runId) {
+        return Result.ok(workflowService.rerunRun(runId));
+    }
+
     @GetMapping("/{runId}/events")
     public SseEmitter streamEvents(@PathVariable Long runId,
                                    @RequestParam(required = false) Integer after,

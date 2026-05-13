@@ -385,6 +385,40 @@ class WorkflowEngineTest {
         });
     }
 
+    @Test
+    void recordsTraceIdAndNodeInputSnapshotForRunTroubleshooting() {
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"llm.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new StubLlmExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                versionMapper,
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
+
+        engine.execute(10L, "hello");
+
+        assertThat(updatedRuns).anySatisfy(run -> assertThat(run.getTraceId()).isNotBlank());
+        assertThat(updatedNodeRuns).anySatisfy(run -> {
+            assertThat(run.getNodeKey()).isEqualTo("llm");
+            assertThat(run.getStartedAt()).isNotNull();
+            assertThat(run.getInputSnapshot()).contains("\"start.userMessage\":\"hello\"");
+            assertThat(run.getOutputs()).contains("\"llm.answer\":\"answer: hello\"");
+        });
+    }
+
     private static WorkflowNodePo node(String key, String type, String config) {
         WorkflowNodePo po = new WorkflowNodePo();
         po.setWorkflowId(10L);
@@ -409,6 +443,8 @@ class WorkflowEngineTest {
         WorkflowRunPo copy = new WorkflowRunPo();
         copy.setId(source.getId());
         copy.setWorkflowId(source.getWorkflowId());
+        copy.setTraceId(source.getTraceId());
+        copy.setRerunFromRunId(source.getRerunFromRunId());
         copy.setStatus(source.getStatus());
         copy.setInput(source.getInput());
         copy.setOutput(source.getOutput());

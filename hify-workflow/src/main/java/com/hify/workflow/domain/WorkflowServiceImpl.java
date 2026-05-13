@@ -18,6 +18,7 @@ import com.hify.workflow.api.WorkflowEdgeDto;
 import com.hify.workflow.api.WorkflowListItemResp;
 import com.hify.workflow.api.WorkflowNodeDebugReq;
 import com.hify.workflow.api.WorkflowNodeDebugResp;
+import com.hify.workflow.api.WorkflowNodeCallTraceResp;
 import com.hify.workflow.api.WorkflowNodeRunResp;
 import com.hify.workflow.api.WorkflowNodeDto;
 import com.hify.workflow.api.WorkflowQuery;
@@ -31,6 +32,7 @@ import com.hify.workflow.engine.WorkflowEngine;
 import com.hify.workflow.infra.WorkflowEdgeMapper;
 import com.hify.workflow.infra.WorkflowMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
+import com.hify.workflow.infra.WorkflowNodeCallTraceMapper;
 import com.hify.workflow.infra.WorkflowNodeRunMapper;
 import com.hify.workflow.infra.WorkflowRunMapper;
 import com.hify.workflow.infra.WorkflowVersionMapper;
@@ -63,6 +65,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final WorkflowEdgeMapper edgeMapper;
     private final WorkflowRunMapper workflowRunMapper;
     private final WorkflowNodeRunMapper workflowNodeRunMapper;
+    private final WorkflowNodeCallTraceMapper workflowNodeCallTraceMapper;
     private final WorkflowVersionMapper workflowVersionMapper;
     private final NodeConfigParser nodeConfigParser;
     private final WorkflowEngine workflowEngine;
@@ -157,15 +160,23 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Override
     public WorkflowRunResp startAsyncRun(Long id, WorkflowRunReq req) {
         findWorkflowOrThrow(id);
+        return startAsyncRun(id, req.getUserMessage(), null);
+    }
+
+    private WorkflowRunResp startAsyncRun(Long id, String userMessage, Long rerunFromRunId) {
         WorkflowRunPo run = workflowEngine.createWorkflowRun(
                 id,
-                req.getUserMessage(),
+                userMessage,
                 "ASYNC",
                 LocalDateTime.now().plusSeconds(300));
+        if (rerunFromRunId != null) {
+            run.setRerunFromRunId(rerunFromRunId);
+            workflowRunMapper.updateById(run);
+        }
         try {
             llmExecutor.execute(TraceContext.wrap(() -> {
                 try {
-                    workflowEngine.executeExistingRun(run.getId(), id, req.getUserMessage());
+                    workflowEngine.executeExistingRun(run.getId(), id, userMessage);
                 } catch (Exception e) {
                     log.warn("async workflow run failed runId={} workflowId={}: {}",
                             run.getId(), id, e.getMessage());
@@ -243,6 +254,19 @@ public class WorkflowServiceImpl implements WorkflowService {
                         .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
                         .orderByAsc(WorkflowNodeRunPo::getId));
         return toRunResp(run, nodeRuns);
+    }
+
+    @Override
+    public WorkflowRunResp rerunRun(Long runId) {
+        WorkflowRunPo sourceRun = workflowRunMapper.selectById(runId);
+        if (sourceRun == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
+        }
+        if (!List.of("FAILED", "TIMEOUT", "CANCELED").contains(sourceRun.getStatus())) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "仅失败、超时或取消的工作流运行支持重跑");
+        }
+        findWorkflowOrThrow(sourceRun.getWorkflowId());
+        return startAsyncRun(sourceRun.getWorkflowId(), sourceRun.getInput(), sourceRun.getId());
     }
 
     @Override
@@ -469,6 +493,8 @@ public class WorkflowServiceImpl implements WorkflowService {
         resp.setId(po.getId());
         resp.setWorkflowId(po.getWorkflowId());
         resp.setWorkflowVersionId(po.getWorkflowVersionId());
+        resp.setTraceId(po.getTraceId());
+        resp.setRerunFromRunId(po.getRerunFromRunId());
         resp.setStatus(po.getStatus());
         resp.setInput(po.getInput());
         resp.setOutput(po.getOutput());
@@ -479,8 +505,26 @@ public class WorkflowServiceImpl implements WorkflowService {
         resp.setElapsedMs(po.getElapsedMs());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setFinishedAt(po.getFinishedAt());
-        resp.setNodeRuns(nodeRuns.stream().map(this::toNodeRunResp).toList());
+        Map<Long, List<WorkflowNodeCallTraceResp>> traceMap = loadCallTraces(po.getId());
+        resp.setNodeRuns(nodeRuns.stream().map(nodeRun -> toNodeRunResp(nodeRun, traceMap)).toList());
         return resp;
+    }
+
+    private Map<Long, List<WorkflowNodeCallTraceResp>> loadCallTraces(Long workflowRunId) {
+        if (workflowNodeCallTraceMapper == null) {
+            return Collections.emptyMap();
+        }
+        List<WorkflowNodeCallTracePo> traces = workflowNodeCallTraceMapper.selectList(
+                Wrappers.lambdaQuery(WorkflowNodeCallTracePo.class)
+                        .eq(WorkflowNodeCallTracePo::getWorkflowRunId, workflowRunId)
+                        .orderByAsc(WorkflowNodeCallTracePo::getId));
+        return traces.stream()
+                .map(this::toCallTraceResp)
+                .filter(trace -> trace.getWorkflowNodeRunId() != null)
+                .collect(java.util.stream.Collectors.groupingBy(
+                        WorkflowNodeCallTraceResp::getWorkflowNodeRunId,
+                        java.util.LinkedHashMap::new,
+                        java.util.stream.Collectors.toList()));
     }
 
     private void markRunFailed(WorkflowRunPo run, Exception e) {
@@ -600,17 +644,39 @@ public class WorkflowServiceImpl implements WorkflowService {
         return List.of("SUCCESS", "FAILED", "TIMEOUT", "CANCELED").contains(status);
     }
 
-    private WorkflowNodeRunResp toNodeRunResp(WorkflowNodeRunPo po) {
+    private WorkflowNodeRunResp toNodeRunResp(WorkflowNodeRunPo po, Map<Long, List<WorkflowNodeCallTraceResp>> traceMap) {
         WorkflowNodeRunResp resp = new WorkflowNodeRunResp();
         resp.setId(po.getId());
         resp.setWorkflowRunId(po.getWorkflowRunId());
         resp.setNodeKey(po.getNodeKey());
         resp.setNodeType(po.getNodeType());
         resp.setStatus(po.getStatus());
+        resp.setInputSnapshot(parseOutputs(po.getInputSnapshot()));
         resp.setOutputs(parseOutputs(po.getOutputs()));
         resp.setError(po.getError());
         resp.setElapsedMs(po.getElapsedMs());
+        resp.setStartedAt(po.getStartedAt());
         resp.setCreatedAt(po.getCreatedAt());
+        resp.setFinishedAt(po.getFinishedAt());
+        resp.setCallTraces(traceMap.getOrDefault(po.getId(), Collections.emptyList()));
+        return resp;
+    }
+
+    private WorkflowNodeCallTraceResp toCallTraceResp(WorkflowNodeCallTracePo po) {
+        WorkflowNodeCallTraceResp resp = new WorkflowNodeCallTraceResp();
+        resp.setId(po.getId());
+        resp.setWorkflowRunId(po.getWorkflowRunId());
+        resp.setWorkflowNodeRunId(po.getWorkflowNodeRunId());
+        resp.setNodeKey(po.getNodeKey());
+        resp.setNodeType(po.getNodeType());
+        resp.setCallType(po.getCallType());
+        resp.setTarget(po.getTarget());
+        resp.setRequestSnapshot(parseOutputs(po.getRequestSnapshot()));
+        resp.setResponseSnapshot(parseOutputs(po.getResponseSnapshot()));
+        resp.setStatus(po.getStatus());
+        resp.setErrorMessage(po.getErrorMessage());
+        resp.setDurationMs(po.getDurationMs());
+        resp.setStartedAt(po.getStartedAt());
         resp.setFinishedAt(po.getFinishedAt());
         return resp;
     }

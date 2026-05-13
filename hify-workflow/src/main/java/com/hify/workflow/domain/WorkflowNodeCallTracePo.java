@@ -8,27 +8,33 @@ import lombok.EqualsAndHashCode;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("t_workflow_node_run")
+@TableName("t_workflow_node_call_trace")
 @EqualsAndHashCode(callSuper = false)
-public class WorkflowNodeRunPo extends BaseEntity {
+public class WorkflowNodeCallTracePo extends BaseEntity {
 
     private Long workflowRunId;
+
+    private Long workflowNodeRunId;
 
     private String nodeKey;
 
     private String nodeType;
 
+    private String callType;
+
+    private String target;
+
+    private String requestSnapshot;
+
+    private String responseSnapshot;
+
     private String status;
 
-    private String inputSnapshot;
+    private String errorMessage;
+
+    private Integer durationMs;
 
     private LocalDateTime startedAt;
-
-    private String outputs;
-
-    private String error;
-
-    private Integer elapsedMs;
 
     private LocalDateTime finishedAt;
 }

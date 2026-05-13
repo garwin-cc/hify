@@ -18,13 +18,19 @@ public class WorkflowNodeRunResp {
 
     private String status;
 
+    private Map<String, Object> inputSnapshot;
+
     private Map<String, Object> outputs;
 
     private String error;
 
     private Integer elapsedMs;
 
+    private LocalDateTime startedAt;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime finishedAt;
+
+    private java.util.List<WorkflowNodeCallTraceResp> callTraces;
 }

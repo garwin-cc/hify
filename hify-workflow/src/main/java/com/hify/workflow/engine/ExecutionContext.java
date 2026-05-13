@@ -13,6 +13,10 @@ public class ExecutionContext {
 
     private final Long workflowRunId;
     private final LinkedHashMap<String, Object> variables = new LinkedHashMap<>();
+    private Long workflowNodeRunId;
+    private String currentNodeKey;
+    private String currentNodeType;
+    private WorkflowCallTraceSink callTraceSink = WorkflowCallTraceSink.noop();
 
     public ExecutionContext(Long workflowRunId, String userMessage) {
         this.workflowRunId = workflowRunId;
@@ -28,6 +32,27 @@ public class ExecutionContext {
 
     public Long getWorkflowRunId() {
         return workflowRunId;
+    }
+
+    public void bindCurrentNodeRun(Long nodeRunId, String nodeKey, String nodeType, WorkflowCallTraceSink traceSink) {
+        this.workflowNodeRunId = nodeRunId;
+        this.currentNodeKey = nodeKey;
+        this.currentNodeType = nodeType;
+        this.callTraceSink = traceSink == null ? WorkflowCallTraceSink.noop() : traceSink;
+    }
+
+    public void clearCurrentNodeRun() {
+        this.workflowNodeRunId = null;
+        this.currentNodeKey = null;
+        this.currentNodeType = null;
+        this.callTraceSink = WorkflowCallTraceSink.noop();
+    }
+
+    public void recordCall(WorkflowCallTrace trace) {
+        if (trace == null || currentNodeKey == null) {
+            return;
+        }
+        callTraceSink.record(workflowRunId, workflowNodeRunId, currentNodeKey, currentNodeType, trace);
     }
 
     public void set(String nodeKey, String varName, Object value) {

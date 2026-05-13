@@ -455,7 +455,11 @@ async function handleRetry(row: KnowledgeDocumentItem) {
   const retried = await confirm(
     `确定重试文档「${row.name}」？旧的半成品分块会先被清理。`,
     () => retryDocument(row.id),
-    { successMsg: '文档已重新提交处理' },
+    {
+      title: '重试确认',
+      confirmText: '重试',
+      successMsg: '文档已重新提交处理',
+    },
   )
   if (retried) {
     startPolling(row.id)
@@ -467,7 +471,11 @@ async function handleCancel(row: KnowledgeDocumentItem) {
   const canceled = await confirm(
     `确定取消文档「${row.name}」的处理任务？`,
     () => cancelDocument(row.id),
-    { successMsg: '已请求取消文档处理' },
+    {
+      title: '取消处理确认',
+      confirmText: '取消处理',
+      successMsg: '已请求取消文档处理',
+    },
   )
   if (canceled) {
     startPolling(row.id)

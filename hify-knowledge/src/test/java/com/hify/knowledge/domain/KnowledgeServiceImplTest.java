@@ -138,6 +138,38 @@ class KnowledgeServiceImplTest {
     }
 
     @Test
+    void processTextSegmentsCapsEmbeddingChunkAndBatchSizeForLargeDocuments() throws Exception {
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        FakeEmbeddingService embeddingService = new FakeEmbeddingService();
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                mock(KnowledgeBaseMapper.class),
+                mock(KnowledgeDocumentMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        setIntField(service, "maxChunksPerDocument", 50_000);
+
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(12L);
+        document.setKnowledgeBaseId(1L);
+        document.setName("large.csv");
+        document.setFileType("csv");
+        document.setFileSize(51L * 1024 * 1024);
+
+        int chunkCount = service.processTextSegments(document, 11L, List.of("a".repeat(80_000)));
+
+        assertThat(chunkCount).isGreaterThan(1);
+        assertThat(repository.savedBatches.stream()
+                .flatMap(List::stream)
+                .map(KnowledgeChunk::getContent))
+                .allMatch(content -> content.length() <= 4000);
+        assertThat(embeddingService.batchCharLengths).allMatch(length -> length <= 24_000);
+    }
+
+    @Test
     void upsertChunkPersistsChunkWithMetadataJson() {
         FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
@@ -410,10 +442,12 @@ class KnowledgeServiceImplTest {
 
     private static class FakeEmbeddingService implements EmbeddingService {
         private final List<Integer> batchSizes = new ArrayList<>();
+        private final List<Integer> batchCharLengths = new ArrayList<>();
 
         @Override
         public List<List<Double>> embed(Long modelConfigId, List<String> inputs) {
             batchSizes.add(inputs.size());
+            batchCharLengths.add(inputs.stream().mapToInt(String::length).sum());
             return inputs.stream().map(input -> List.of(0.1, 0.2, 0.3)).toList();
         }
     }

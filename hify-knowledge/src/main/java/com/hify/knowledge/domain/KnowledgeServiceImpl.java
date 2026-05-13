@@ -68,6 +68,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final int CHUNK_SIZE = 512;
     private static final int CHUNK_OVERLAP = 64;
     private static final int MAX_DYNAMIC_CHUNK_SIZE = 32_768;
+    private static final int DEFAULT_MAX_EMBEDDING_CHUNK_CHARS = 4_000;
+    private static final int DEFAULT_MAX_EMBEDDING_BATCH_CHARS = 24_000;
     private static final int EXTRACTED_TEXT_EXPANSION_SAFETY_FACTOR = 4;
     private static final int DEFAULT_EMBEDDING_BATCH_SIZE = 32;
     private static final int DEFAULT_MAX_CHUNKS_PER_DOCUMENT = 50_000;
@@ -117,6 +119,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Value("${hify.knowledge.max-split-steps:" + DEFAULT_MAX_SPLIT_STEPS + "}")
     private int maxSplitSteps = DEFAULT_MAX_SPLIT_STEPS;
+
+    @Value("${hify.knowledge.max-embedding-chunk-chars:" + DEFAULT_MAX_EMBEDDING_CHUNK_CHARS + "}")
+    private int maxEmbeddingChunkChars = DEFAULT_MAX_EMBEDDING_CHUNK_CHARS;
+
+    @Value("${hify.knowledge.max-embedding-batch-chars:" + DEFAULT_MAX_EMBEDDING_BATCH_CHARS + "}")
+    private int maxEmbeddingBatchChars = DEFAULT_MAX_EMBEDDING_BATCH_CHARS;
 
     @Override
     @Transactional
@@ -1289,6 +1297,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         private final int chunkOverlap;
         private final StringBuilder buffer = new StringBuilder();
         private final List<KnowledgeChunk> batch = new ArrayList<>();
+        private int batchCharCount;
         private int chunkIndex;
         private int chunkCount;
         private int splitSteps;
@@ -1332,7 +1341,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                         : chooseChunkEnd(current, 0, chunkSize);
                 String content = current.substring(0, end).trim();
                 if (StringUtils.hasText(content)) {
+                    if (!batch.isEmpty() && batchCharCount + content.length() > effectiveEmbeddingBatchMaxChars()) {
+                        flushBatch();
+                    }
                     batch.add(toKnowledgeChunk(content));
+                    batchCharCount += content.length();
                     chunkCount++;
                     if (batch.size() >= effectiveEmbeddingBatchSize()) {
                         flushBatch();
@@ -1381,6 +1394,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             updateProgress(STAGE_SAVING, progressForChunkCount(chunkCount), chunkCount);
             vectorRepository.saveDocumentChunks(new ArrayList<>(batch));
             batch.clear();
+            batchCharCount = 0;
             checkCancellation(document.getId());
             updateProgress(STAGE_CHUNKING, progressForChunkCount(chunkCount), chunkCount);
         }
@@ -1396,6 +1410,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return Math.max(1, Math.min(100, embeddingBatchSize));
     }
 
+    private int effectiveEmbeddingBatchMaxChars() {
+        return Math.max(effectiveEmbeddingChunkMaxChars(), maxEmbeddingBatchChars);
+    }
+
+    private int effectiveEmbeddingChunkMaxChars() {
+        return Math.max(CHUNK_SIZE, Math.min(MAX_DYNAMIC_CHUNK_SIZE, maxEmbeddingChunkChars));
+    }
+
     private int effectiveChunkSize(KnowledgeDocumentPo document) {
         long fileSize = document.getFileSize() == null ? 0L : Math.max(0L, document.getFileSize());
         if (fileSize <= 0) {
@@ -1405,7 +1427,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         long estimatedExtractedTextSize = fileSize * EXTRACTED_TEXT_EXPANSION_SAFETY_FACTOR;
         long dynamicChunkSize = ((estimatedExtractedTextSize + targetChunkCount - 1L) / targetChunkCount)
                 + CHUNK_OVERLAP;
-        return (int) Math.max(CHUNK_SIZE, Math.min(MAX_DYNAMIC_CHUNK_SIZE, dynamicChunkSize));
+        return (int) Math.max(CHUNK_SIZE, Math.min(effectiveEmbeddingChunkMaxChars(), dynamicChunkSize));
     }
 
     private static int progressForChunkCount(int chunkCount) {

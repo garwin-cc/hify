@@ -29,6 +29,10 @@ public interface KnowledgeService {
 
     void deleteDocument(Long id);
 
+    void retryDocument(Long id);
+
+    void cancelDocument(Long id);
+
     Long upsertChunk(KnowledgeChunkUpsertReq req);
 
     List<KnowledgeSearchResp> searchSimilar(KnowledgeSearchReq req);

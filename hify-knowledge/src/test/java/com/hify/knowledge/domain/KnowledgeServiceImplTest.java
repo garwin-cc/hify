@@ -1,6 +1,7 @@
 package com.hify.knowledge.domain;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hify.knowledge.api.KnowledgeDocumentResp;
 import com.hify.knowledge.api.KnowledgeChunkUpsertReq;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
@@ -19,6 +20,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -250,11 +252,109 @@ class KnowledgeServiceImplTest {
                         && trace.getLatencyMs() >= 0));
     }
 
+    @Test
+    void getDocumentReturnsStructuredProcessingErrorFields() {
+        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(7L);
+        document.setKnowledgeBaseId(1L);
+        document.setName("failed.txt");
+        document.setFileType("txt");
+        document.setParseStatus("FAILED");
+        document.setProcessStage("FAILED");
+        document.setErrorCode("EMBEDDING_CALL_FAILED");
+        document.setFailedStage("EMBEDDING");
+        document.setRetryable(1);
+        document.setCancelRequested(0);
+        document.setRetryCount(2);
+        document.setErrorMessage("embedding timeout");
+        when(documentMapper.selectById(7L)).thenReturn(document);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                mock(KnowledgeBaseMapper.class),
+                documentMapper,
+                new FakeKnowledgeVectorRepository(),
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+
+        KnowledgeDocumentResp resp = service.getDocument(7L);
+
+        assertThat(resp.getErrorCode()).isEqualTo("EMBEDDING_CALL_FAILED");
+        assertThat(resp.getFailedStage()).isEqualTo("EMBEDDING");
+        assertThat(resp.getRetryable()).isEqualTo(1);
+        assertThat(resp.getCancelRequested()).isEqualTo(0);
+        assertThat(resp.getRetryCount()).isEqualTo(2);
+    }
+
+    @Test
+    void retryDocumentClearsOldChunksAndRequeuesFailedDocument() {
+        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        ThreadPoolExecutor executor = mock(ThreadPoolExecutor.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(7L);
+        document.setKnowledgeBaseId(1L);
+        document.setName("failed.txt");
+        document.setFileType("txt");
+        document.setParseStatus("FAILED");
+        document.setChunkCount(0);
+        document.setRetryable(1);
+        when(documentMapper.selectById(7L)).thenReturn(document);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                mock(KnowledgeBaseMapper.class),
+                documentMapper,
+                repository,
+                new ObjectMapper(),
+                executor,
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+
+        service.retryDocument(7L);
+
+        assertThat(repository.deletedDocumentIds).containsExactly(7L);
+        verify(executor).execute(any(Runnable.class));
+    }
+
+    @Test
+    void cancelPendingDocumentMarksCanceledAndDeletesChunks() {
+        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(8L);
+        document.setKnowledgeBaseId(1L);
+        document.setName("pending.txt");
+        document.setFileType("txt");
+        document.setParseStatus("PENDING");
+        when(documentMapper.selectById(8L)).thenReturn(document);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                mock(KnowledgeBaseMapper.class),
+                documentMapper,
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+
+        service.cancelDocument(8L);
+
+        assertThat(repository.deletedDocumentIds).containsExactly(8L);
+        verify(documentMapper).updateById(org.mockito.ArgumentMatchers.<KnowledgeDocumentPo>argThat(updated ->
+                "CANCELED".equals(updated.getParseStatus())
+                        && "CANCELED_BY_USER".equals(updated.getErrorCode())
+                        && Integer.valueOf(0).equals(updated.getRetryable())
+                        && Integer.valueOf(1).equals(updated.getCancelRequested())));
+    }
+
     private static class FakeKnowledgeVectorRepository implements KnowledgeVectorRepository {
         private KnowledgeChunk savedChunk;
         private List<Double> savedEmbedding;
         private List<KnowledgeSearchHit> hits = new ArrayList<>();
         private List<List<KnowledgeChunk>> savedBatches = new ArrayList<>();
+        private List<Long> deletedDocumentIds = new ArrayList<>();
         private int lastTopK;
 
         @Override
@@ -286,6 +386,7 @@ class KnowledgeServiceImplTest {
 
         @Override
         public void deleteByDocumentId(Long documentId) {
+            deletedDocumentIds.add(documentId);
         }
     }
 

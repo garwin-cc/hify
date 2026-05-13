@@ -27,7 +27,11 @@ public class KnowledgeDocumentRecoveryRunner implements ApplicationRunner {
                 .set(KnowledgeDocumentPo::getParseStatus, "FAILED")
                 .set(KnowledgeDocumentPo::getProcessStage, "FAILED")
                 .set(KnowledgeDocumentPo::getProcessProgress, 0)
-                .set(KnowledgeDocumentPo::getErrorMessage, "服务重启或任务超时，文档处理已中断，请重新上传"));
+                .set(KnowledgeDocumentPo::getErrorCode, "INTERNAL_ERROR")
+                .set(KnowledgeDocumentPo::getFailedStage, "PROCESSING")
+                .set(KnowledgeDocumentPo::getRetryable, 1)
+                .set(KnowledgeDocumentPo::getCancelRequested, 0)
+                .set(KnowledgeDocumentPo::getErrorMessage, "服务重启或任务超时，文档处理已中断，请重试"));
         if (updated > 0) {
             log.warn("marked stale processing knowledge documents as failed count={}", updated);
         }

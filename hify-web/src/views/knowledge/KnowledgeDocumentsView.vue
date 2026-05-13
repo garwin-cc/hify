@@ -100,11 +100,11 @@
         <template #status="{ row }">
           <div class="status-cell">
             <el-tooltip
-              v-if="row.status === 'FAILED' && row.errorMessage"
-              :content="row.errorMessage"
+              v-if="(row.status === 'FAILED' || row.status === 'CANCELED') && row.errorMessage"
+              :content="documentErrorText(row)"
               placement="top"
             >
-              <el-tag size="small" type="danger">
+              <el-tag size="small" :type="statusTagType(row.status)">
                 {{ statusLabel(row.status) }}
               </el-tag>
             </el-tooltip>
@@ -132,7 +132,32 @@
         </template>
 
         <template #actions="{ row }">
-          <el-button size="small" @click="handleViewChunks(row)">查看分块</el-button>
+          <el-button
+            v-if="row.status === 'DONE'"
+            size="small"
+            @click="handleViewChunks(row)"
+          >
+            查看分块
+          </el-button>
+          <el-button
+            v-if="row.status === 'FAILED' || row.status === 'CANCELED'"
+            size="small"
+            type="primary"
+            text
+            :disabled="row.status === 'FAILED' && row.retryable !== 1"
+            @click="handleRetry(row)"
+          >
+            重试
+          </el-button>
+          <el-button
+            v-if="row.status === 'PENDING' || row.status === 'PROCESSING'"
+            size="small"
+            type="warning"
+            text
+            @click="handleCancel(row)"
+          >
+            取消
+          </el-button>
           <el-button
             size="small"
             type="danger"
@@ -205,10 +230,12 @@ import { notifySuccess } from '@/utils/notify'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import {
   deleteDocument,
+  cancelDocument,
   getDocument,
   getDocumentChunks,
   getDocumentList,
   getKnowledgeBase,
+  retryDocument,
   testKnowledgeRetrieval,
   uploadKnowledgeDocument,
   type DocumentStatus,
@@ -226,6 +253,7 @@ const STATUS_LABEL: Record<DocumentStatus, string> = {
   PROCESSING: '处理中',
   DONE: '完成',
   FAILED: '失败',
+  CANCELED: '已取消',
 }
 
 const router = useRouter()
@@ -278,6 +306,7 @@ async function fetchList(page: number, pageSize: number): Promise<PageData<Knowl
 function statusTagType(status: DocumentStatus) {
   if (status === 'DONE') return 'success'
   if (status === 'FAILED') return 'danger'
+  if (status === 'CANCELED') return 'info'
   if (status === 'PROCESSING') return 'primary'
   return 'info'
 }
@@ -295,6 +324,16 @@ function processLabel(row: KnowledgeDocumentItem) {
     SAVING: '写入中',
   }
   return stageLabels[row.processStage] ?? statusLabel(row.status)
+}
+
+function documentErrorText(row: KnowledgeDocumentItem) {
+  const parts = [
+    row.failedStage ? `失败阶段：${row.failedStage}` : '',
+    row.errorCode ? `错误类型：${row.errorCode}` : '',
+    `是否可重试：${row.retryable === 1 ? '是' : '否'}`,
+    row.errorMessage ? `原因：${row.errorMessage}` : '',
+  ].filter(Boolean)
+  return parts.join('\n')
 }
 
 function safeProgress(progress?: number) {
@@ -408,6 +447,30 @@ async function handleDelete(row: KnowledgeDocumentItem) {
   )
   if (deleted) {
     stopPolling(row.id)
+    tableRef.value?.refresh()
+  }
+}
+
+async function handleRetry(row: KnowledgeDocumentItem) {
+  const retried = await confirm(
+    `确定重试文档「${row.name}」？旧的半成品分块会先被清理。`,
+    () => retryDocument(row.id),
+    { successMsg: '文档已重新提交处理' },
+  )
+  if (retried) {
+    startPolling(row.id)
+    tableRef.value?.refresh()
+  }
+}
+
+async function handleCancel(row: KnowledgeDocumentItem) {
+  const canceled = await confirm(
+    `确定取消文档「${row.name}」的处理任务？`,
+    () => cancelDocument(row.id),
+    { successMsg: '已请求取消文档处理' },
+  )
+  if (canceled) {
+    startPolling(row.id)
     tableRef.value?.refresh()
   }
 }

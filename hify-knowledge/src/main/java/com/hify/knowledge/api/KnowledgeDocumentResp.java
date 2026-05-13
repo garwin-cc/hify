@@ -29,6 +29,16 @@ public class KnowledgeDocumentResp {
 
     private String errorMessage;
 
+    private String errorCode;
+
+    private String failedStage;
+
+    private Integer retryable;
+
+    private Integer cancelRequested;
+
+    private Integer retryCount;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

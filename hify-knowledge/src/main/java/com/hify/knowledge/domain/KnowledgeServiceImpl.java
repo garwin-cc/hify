@@ -38,6 +38,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HexFormat;
@@ -70,6 +71,24 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final int DEFAULT_MAX_SPLIT_STEPS = 100_000;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
     private static final Set<String> ALLOWED_TYPES = Set.of("txt", "md", "pdf", "csv");
+    private static final String STATUS_PENDING = "PENDING";
+    private static final String STATUS_PROCESSING = "PROCESSING";
+    private static final String STATUS_DONE = "DONE";
+    private static final String STATUS_FAILED = "FAILED";
+    private static final String STATUS_CANCELED = "CANCELED";
+    private static final String STAGE_SAVED = "SAVED";
+    private static final String STAGE_EXTRACTING = "EXTRACTING";
+    private static final String STAGE_CHUNKING = "CHUNKING";
+    private static final String STAGE_EMBEDDING = "EMBEDDING";
+    private static final String STAGE_SAVING = "SAVING";
+    private static final String ERROR_FILE_EMPTY = "FILE_EMPTY";
+    private static final String ERROR_EMBEDDING_MODEL_MISSING = "EMBEDDING_MODEL_MISSING";
+    private static final String ERROR_EMBEDDING_CALL_FAILED = "EMBEDDING_CALL_FAILED";
+    private static final String ERROR_CHUNK_LIMIT_EXCEEDED = "CHUNK_LIMIT_EXCEEDED";
+    private static final String ERROR_VECTOR_SAVE_FAILED = "VECTOR_SAVE_FAILED";
+    private static final String ERROR_QUEUE_FULL = "QUEUE_FULL";
+    private static final String ERROR_CANCELED_BY_USER = "CANCELED_BY_USER";
+    private static final String ERROR_INTERNAL = "INTERNAL_ERROR";
 
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeDocumentMapper documentMapper;
@@ -198,6 +217,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         document.setProcessedChunkCount(0);
         document.setChunkCount(0);
         document.setErrorMessage("");
+        document.setErrorCode("");
+        document.setFailedStage("");
+        document.setRetryable(0);
+        document.setCancelRequested(0);
+        document.setRetryCount(0);
         documentMapper.insert(document);
 
         knowledgeBaseMapper.update(null, Wrappers.lambdaUpdate(KnowledgeBasePo.class)
@@ -247,6 +271,62 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 .setSql("document_count = GREATEST(document_count - 1, 0)")
                 .setSql("chunk_count = GREATEST(chunk_count - " + safeChunkCount(document.getChunkCount()) + ", 0)"));
         log.info("deleted knowledge document id={} kbId={}", id, document.getKnowledgeBaseId());
+    }
+
+    @Override
+    @Transactional
+    public void retryDocument(Long id) {
+        KnowledgeDocumentPo document = findDocumentOrThrow(id);
+        if (!STATUS_FAILED.equals(document.getParseStatus()) && !STATUS_CANCELED.equals(document.getParseStatus())) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "只有失败或已取消的文档可以重试");
+        }
+        if (Integer.valueOf(0).equals(document.getRetryable()) && !STATUS_CANCELED.equals(document.getParseStatus())) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "当前失败类型不支持重试");
+        }
+        vectorRepository.deleteByDocumentId(id);
+        int oldChunkCount = safeChunkCount(document.getChunkCount());
+        if (oldChunkCount > 0) {
+            knowledgeBaseMapper.update(null, Wrappers.lambdaUpdate(KnowledgeBasePo.class)
+                    .eq(KnowledgeBasePo::getId, document.getKnowledgeBaseId())
+                    .setSql("chunk_count = GREATEST(chunk_count - " + oldChunkCount + ", 0)"));
+        }
+        document.setParseStatus(STATUS_PENDING);
+        document.setProcessStage(STAGE_SAVED);
+        document.setProcessProgress(0);
+        document.setProcessedChunkCount(0);
+        document.setChunkCount(0);
+        document.setErrorMessage("");
+        document.setErrorCode("");
+        document.setFailedStage("");
+        document.setRetryable(0);
+        document.setCancelRequested(0);
+        document.setStartedAt(null);
+        document.setFinishedAt(null);
+        document.setRetryCount(safeChunkCount(document.getRetryCount()) + 1);
+        document.setLastRetryAt(LocalDateTime.now());
+        documentMapper.updateById(document);
+        submitAfterCommit(id);
+        log.info("retry knowledge document id={} kbId={}", id, document.getKnowledgeBaseId());
+    }
+
+    @Override
+    @Transactional
+    public void cancelDocument(Long id) {
+        KnowledgeDocumentPo document = findDocumentOrThrow(id);
+        if (STATUS_DONE.equals(document.getParseStatus())
+                || STATUS_FAILED.equals(document.getParseStatus())
+                || STATUS_CANCELED.equals(document.getParseStatus())) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "当前文档状态不支持取消");
+        }
+        if (STATUS_PENDING.equals(document.getParseStatus())) {
+            markDocumentCanceled(id, "文档处理已取消");
+            return;
+        }
+        documentMapper.update(null, Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
+                .eq(KnowledgeDocumentPo::getId, id)
+                .eq(KnowledgeDocumentPo::getParseStatus, STATUS_PROCESSING)
+                .set(KnowledgeDocumentPo::getCancelRequested, 1));
+        log.info("requested cancel knowledge document id={}", id);
     }
 
     @Override
@@ -326,6 +406,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setProcessedChunkCount(po.getProcessedChunkCount());
         resp.setChunkCount(po.getChunkCount());
         resp.setErrorMessage(po.getErrorMessage());
+        resp.setErrorCode(po.getErrorCode());
+        resp.setFailedStage(po.getFailedStage());
+        resp.setRetryable(po.getRetryable());
+        resp.setCancelRequested(po.getCancelRequested());
+        resp.setRetryCount(po.getRetryCount());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
@@ -645,29 +730,51 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (document == null) {
             return;
         }
+        if (STATUS_CANCELED.equals(document.getParseStatus()) || Integer.valueOf(1).equals(document.getCancelRequested())) {
+            markDocumentCanceled(documentId, "文档处理已取消");
+            return;
+        }
         try {
-            updateDocumentStatus(documentId, "PROCESSING", "", null);
-            updateDocumentProgress(documentId, "EXTRACTING", 1, 0);
+            updateDocumentStatus(documentId, STATUS_PROCESSING, "", "", "", 0, 0, null);
+            documentMapper.update(null, Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
+                    .eq(KnowledgeDocumentPo::getId, documentId)
+                    .set(KnowledgeDocumentPo::getStartedAt, LocalDateTime.now())
+                    .set(KnowledgeDocumentPo::getFinishedAt, null));
+            updateDocumentProgress(documentId, STAGE_EXTRACTING, 1, 0);
             KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(document.getKnowledgeBaseId());
             int chunkCount = processDocumentContent(document, knowledgeBase);
             knowledgeBaseMapper.update(null, Wrappers.lambdaUpdate(KnowledgeBasePo.class)
                     .eq(KnowledgeBasePo::getId, document.getKnowledgeBaseId())
                     .setSql("chunk_count = chunk_count + " + chunkCount));
-            updateDocumentProgress(documentId, "DONE", 100, chunkCount);
-            updateDocumentStatus(documentId, "DONE", "", chunkCount);
+            updateDocumentProgress(documentId, STATUS_DONE, 100, chunkCount);
+            updateDocumentStatus(documentId, STATUS_DONE, "", "", "", 0, 0, chunkCount);
+            documentMapper.update(null, Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
+                    .eq(KnowledgeDocumentPo::getId, documentId)
+                    .set(KnowledgeDocumentPo::getFinishedAt, LocalDateTime.now()));
             log.info("processed knowledge document id={} chunks={}", documentId, chunkCount);
+        } catch (DocumentProcessingCanceledException e) {
+            markDocumentCanceled(documentId, e.getMessage());
         } catch (Exception e) {
             log.warn("process knowledge document failed id={}: {}", documentId, e.getMessage(), e);
             vectorRepository.deleteByDocumentId(documentId);
-            updateDocumentProgress(documentId, "FAILED", 0, null);
-            updateDocumentStatus(documentId, "FAILED", e.getMessage(), null);
+            ProcessingFailure failure = classifyFailure(documentId, e);
+            updateDocumentProgress(documentId, STATUS_FAILED, 0, null);
+            updateDocumentStatus(documentId, STATUS_FAILED, e.getMessage(), failure.errorCode(),
+                    failure.failedStage(), failure.retryable() ? 1 : 0, 0, 0);
+            documentMapper.update(null, Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
+                    .eq(KnowledgeDocumentPo::getId, documentId)
+                    .set(KnowledgeDocumentPo::getFinishedAt, LocalDateTime.now()));
         } catch (Error e) {
             log.error("process knowledge document fatal error id={}: {}", documentId, e.getMessage(), e);
             try {
                 vectorRepository.deleteByDocumentId(documentId);
-                updateDocumentProgress(documentId, "FAILED", 0, null);
-                updateDocumentStatus(documentId, "FAILED",
-                        "文档处理发生严重错误: " + e.getClass().getSimpleName(), null);
+                updateDocumentProgress(documentId, STATUS_FAILED, 0, null);
+                updateDocumentStatus(documentId, STATUS_FAILED,
+                        "文档处理发生严重错误: " + e.getClass().getSimpleName(), ERROR_INTERNAL,
+                        currentProcessStage(documentId), 1, 0, 0);
+                documentMapper.update(null, Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
+                        .eq(KnowledgeDocumentPo::getId, documentId)
+                        .set(KnowledgeDocumentPo::getFinishedAt, LocalDateTime.now()));
             } catch (Exception updateError) {
                 log.error("failed to mark knowledge document as FAILED id={}: {}",
                         documentId, updateError.getMessage(), updateError);
@@ -719,20 +826,96 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             asyncExecutor.execute(() -> processDocumentAsync(documentId));
         } catch (RejectedExecutionException e) {
             log.warn("knowledge document processing queue is full id={}", documentId);
-            updateDocumentProgress(documentId, "FAILED", 0, 0);
-            updateDocumentStatus(documentId, "FAILED", "文档处理队列已满，请稍后重试", null);
+            updateDocumentProgress(documentId, STATUS_FAILED, 0, 0);
+            updateDocumentStatus(documentId, STATUS_FAILED, "文档处理队列已满，请稍后重试", ERROR_QUEUE_FULL,
+                    STAGE_SAVED, 1, 0, 0);
         }
     }
 
     private void updateDocumentStatus(Long documentId, String status, String errorMessage, Integer chunkCount) {
+        updateDocumentStatus(documentId, status, errorMessage, null, null, null, null, chunkCount);
+    }
+
+    private void updateDocumentStatus(Long documentId, String status, String errorMessage, String errorCode,
+                                      String failedStage, Integer retryable, Integer cancelRequested,
+                                      Integer chunkCount) {
         var wrapper = Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
                 .eq(KnowledgeDocumentPo::getId, documentId)
                 .set(KnowledgeDocumentPo::getParseStatus, status)
                 .set(KnowledgeDocumentPo::getErrorMessage, truncateErrorMessage(errorMessage));
+        if (errorCode != null) {
+            wrapper.set(KnowledgeDocumentPo::getErrorCode, errorCode);
+        }
+        if (failedStage != null) {
+            wrapper.set(KnowledgeDocumentPo::getFailedStage, failedStage);
+        }
+        if (retryable != null) {
+            wrapper.set(KnowledgeDocumentPo::getRetryable, retryable);
+        }
+        if (cancelRequested != null) {
+            wrapper.set(KnowledgeDocumentPo::getCancelRequested, cancelRequested);
+        }
         if (chunkCount != null) {
             wrapper.set(KnowledgeDocumentPo::getChunkCount, chunkCount);
         }
         documentMapper.update(null, wrapper);
+    }
+
+    private void markDocumentCanceled(Long documentId, String message) {
+        vectorRepository.deleteByDocumentId(documentId);
+        KnowledgeDocumentPo document = documentMapper.selectById(documentId);
+        if (document == null) {
+            return;
+        }
+        document.setParseStatus(STATUS_CANCELED);
+        document.setProcessStage(STATUS_CANCELED);
+        document.setProcessProgress(0);
+        document.setProcessedChunkCount(0);
+        document.setChunkCount(0);
+        document.setErrorMessage(truncateErrorMessage(message));
+        document.setErrorCode(ERROR_CANCELED_BY_USER);
+        document.setFailedStage(STATUS_CANCELED);
+        document.setRetryable(0);
+        document.setCancelRequested(1);
+        document.setFinishedAt(LocalDateTime.now());
+        documentMapper.updateById(document);
+        log.info("canceled knowledge document id={}", documentId);
+    }
+
+    private void checkCancellation(Long documentId) {
+        KnowledgeDocumentPo document = documentMapper.selectById(documentId);
+        if (document != null && (STATUS_CANCELED.equals(document.getParseStatus())
+                || Integer.valueOf(1).equals(document.getCancelRequested()))) {
+            throw new DocumentProcessingCanceledException("文档处理已取消");
+        }
+    }
+
+    private String currentProcessStage(Long documentId) {
+        KnowledgeDocumentPo document = documentMapper.selectById(documentId);
+        return document == null || !StringUtils.hasText(document.getProcessStage())
+                ? STAGE_SAVED
+                : document.getProcessStage();
+    }
+
+    private ProcessingFailure classifyFailure(Long documentId, Exception e) {
+        String stage = currentProcessStage(documentId);
+        String message = e.getMessage() == null ? "" : e.getMessage();
+        if (message.contains("未配置 embedding 模型")) {
+            return new ProcessingFailure(ERROR_EMBEDDING_MODEL_MISSING, stage, true);
+        }
+        if (message.contains("未提取到文字内容") || message.contains("没有可向量化内容")) {
+            return new ProcessingFailure(ERROR_FILE_EMPTY, stage, false);
+        }
+        if (message.contains("分块数量超过上限")) {
+            return new ProcessingFailure(ERROR_CHUNK_LIMIT_EXCEEDED, stage, false);
+        }
+        if (STAGE_EMBEDDING.equals(stage)) {
+            return new ProcessingFailure(ERROR_EMBEDDING_CALL_FAILED, stage, true);
+        }
+        if (STAGE_SAVING.equals(stage)) {
+            return new ProcessingFailure(ERROR_VECTOR_SAVE_FAILED, stage, true);
+        }
+        return new ProcessingFailure(ERROR_INTERNAL, stage, true);
     }
 
     private void updateDocumentProgress(Long documentId, String stage, Integer progress, Integer processedChunkCount) {
@@ -1097,6 +1280,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
         private void drain(boolean flushRemaining) {
             while (buffer.length() >= chunkSize || (flushRemaining && !buffer.isEmpty())) {
+                checkCancellation(document.getId());
                 splitSteps++;
                 if (splitSteps > maxSplitSteps || chunkCount >= maxChunksPerDocument) {
                     throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED,
@@ -1142,7 +1326,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             if (batch.isEmpty()) {
                 return;
             }
-            updateProgress("EMBEDDING", progressForChunkCount(chunkCount), chunkCount);
+            checkCancellation(document.getId());
+            updateProgress(STAGE_EMBEDDING, progressForChunkCount(chunkCount), chunkCount);
             List<List<Double>> embeddings = embeddingService.embed(embeddingModelConfigId,
                     batch.stream().map(KnowledgeChunk::getContent).toList());
             if (embeddings.size() != batch.size()) {
@@ -1152,10 +1337,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             for (int i = 0; i < batch.size(); i++) {
                 batch.get(i).setEmbedding(embeddings.get(i));
             }
-            updateProgress("SAVING", progressForChunkCount(chunkCount), chunkCount);
+            checkCancellation(document.getId());
+            updateProgress(STAGE_SAVING, progressForChunkCount(chunkCount), chunkCount);
             vectorRepository.saveDocumentChunks(new ArrayList<>(batch));
             batch.clear();
-            updateProgress("CHUNKING", progressForChunkCount(chunkCount), chunkCount);
+            checkCancellation(document.getId());
+            updateProgress(STAGE_CHUNKING, progressForChunkCount(chunkCount), chunkCount);
         }
 
         private void updateProgress(String stage, Integer progress, Integer processedChunkCount) {
@@ -1189,5 +1376,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private record RetrievalOptions(int topK, int candidateTopK, double scoreThreshold, String retrievalMode) {
+    }
+
+    private record ProcessingFailure(String errorCode, String failedStage, boolean retryable) {
+    }
+
+    private static class DocumentProcessingCanceledException extends RuntimeException {
+        private DocumentProcessingCanceledException(String message) {
+            super(message);
+        }
     }
 }

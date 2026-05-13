@@ -5,6 +5,8 @@ import com.hify.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.time.LocalDateTime;
+
 @Data
 @TableName("t_knowledge_document")
 @EqualsAndHashCode(callSuper = false)
@@ -31,4 +33,20 @@ public class KnowledgeDocumentPo extends BaseEntity {
     private Integer chunkCount;
 
     private String errorMessage;
+
+    private String errorCode;
+
+    private String failedStage;
+
+    private Integer retryable;
+
+    private Integer cancelRequested;
+
+    private LocalDateTime startedAt;
+
+    private LocalDateTime finishedAt;
+
+    private Integer retryCount;
+
+    private LocalDateTime lastRetryAt;
 }

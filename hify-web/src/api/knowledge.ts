@@ -49,7 +49,7 @@ export interface UpdateKnowledgeRetrievalConfigReq {
   rerankTopN?: number
 }
 
-export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'FAILED'
+export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'FAILED' | 'CANCELED'
 
 export interface KnowledgeDocumentItem {
   id: number
@@ -63,6 +63,11 @@ export interface KnowledgeDocumentItem {
   processedChunkCount: number
   chunkCount: number
   errorMessage: string
+  errorCode: string
+  failedStage: string
+  retryable: number
+  cancelRequested: number
+  retryCount: number
   createdAt: string
   updatedAt: string
 }
@@ -150,6 +155,12 @@ export const getDocumentChunks = (id: number): Promise<KnowledgeChunkItem[]> =>
 
 export const deleteDocument = (id: number) =>
   del(`/v1/documents/${id}`)
+
+export const retryDocument = (id: number) =>
+  post(`/v1/documents/${id}/retry`)
+
+export const cancelDocument = (id: number) =>
+  post(`/v1/documents/${id}/cancel`)
 
 export const testKnowledgeRetrieval = (
   knowledgeBaseId: number,

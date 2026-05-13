@@ -21,6 +21,10 @@ public class AgentDetailResp {
     private BigDecimal temperature;
     private Integer maxTokens;
     private Integer maxContextTurns;
+    private Integer memoryEnabled;
+    private Integer summaryTriggerMessageCount;
+    private Integer summaryMaxTokens;
+    private Long summaryModelConfigId;
     private List<Long> toolIds;
     private Integer enabled;
     private LocalDateTime createdAt;

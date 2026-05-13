@@ -63,6 +63,13 @@ export interface ConversationTraceDetail {
       contentPreview?: string
     }>
   }
+  memory?: {
+    enabled: boolean
+    summaryUsed: boolean
+    summaryVersion?: number
+    summaryLatencyMs?: number
+    summaryErrorMessage?: string
+  }
   mcp?: {
     triggered: boolean
     toolCalls: Array<{
@@ -87,6 +94,21 @@ export interface ConversationTraceDetail {
     errorCode?: string
     errorMessage?: string
   }
+}
+
+export interface ConversationSummary {
+  id: number
+  sessionId: number
+  agentId: number
+  summary: string
+  version: number
+  sourceMessageStartId?: number
+  sourceMessageEndId?: number
+  sourceMessageCount: number
+  status: string
+  errorMessage?: string
+  summarizedAt?: string
+  updatedAt?: string
 }
 
 export interface TokenEvent {
@@ -142,6 +164,12 @@ export const getConversationMessages = (sessionId: number): Promise<Conversation
 
 export const getConversationTrace = (messageId: number): Promise<ConversationTraceDetail> =>
   get(`/v1/conversations/messages/${messageId}/trace`)
+
+export const getConversationSummary = (sessionId: number): Promise<ConversationSummary | null> =>
+  get(`/v1/conversations/${sessionId}/summary`)
+
+export const clearConversationSummary = (sessionId: number): Promise<void> =>
+  del(`/v1/conversations/${sessionId}/summary`)
 
 export const deleteConversationSession = (sessionId: number): Promise<void> =>
   del(`/v1/conversations/${sessionId}`)

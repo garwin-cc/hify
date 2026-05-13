@@ -39,6 +39,18 @@ public class CreateAgentReq {
     @Max(value = 200, message = "maxContextTurns 不超过 200")
     private Integer maxContextTurns;
 
+    private Integer memoryEnabled;
+
+    @Min(value = 4, message = "summaryTriggerMessageCount 最小为 4")
+    @Max(value = 500, message = "summaryTriggerMessageCount 不超过 500")
+    private Integer summaryTriggerMessageCount;
+
+    @Min(value = 100, message = "summaryMaxTokens 最小为 100")
+    @Max(value = 4000, message = "summaryMaxTokens 不超过 4000")
+    private Integer summaryMaxTokens;
+
+    private Long summaryModelConfigId;
+
     /** 绑定的 MCP 工具 ID 列表，顺序即为 sort_order */
     private List<Long> toolIds;
 }

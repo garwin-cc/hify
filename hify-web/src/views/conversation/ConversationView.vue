@@ -23,6 +23,12 @@
           style="margin-top: 8px; width: 100%"
           @click="newSession"
         >新建会话</el-button>
+        <el-button
+          size="small"
+          style="margin-top: 8px; width: 100%"
+          :disabled="!currentSessionId || isStreaming"
+          @click="clearCurrentSummary"
+        >清空记忆摘要</el-button>
       </div>
 
       <div class="session-list">
@@ -135,6 +141,17 @@
         </section>
 
         <section class="trace-section">
+          <h3>Memory</h3>
+          <dl>
+            <dt>启用</dt><dd>{{ traceDetail.memory?.enabled ? '是' : '否' }}</dd>
+            <dt>使用摘要</dt><dd>{{ traceDetail.memory?.summaryUsed ? '是' : '否' }}</dd>
+            <dt>摘要版本</dt><dd>{{ traceDetail.memory?.summaryVersion ?? '-' }}</dd>
+            <dt>摘要耗时</dt><dd>{{ traceDetail.memory?.summaryLatencyMs ?? '-' }}ms</dd>
+            <dt>摘要错误</dt><dd>{{ traceDetail.memory?.summaryErrorMessage || '-' }}</dd>
+          </dl>
+        </section>
+
+        <section class="trace-section">
           <h3>MCP</h3>
           <div v-if="!traceDetail.mcp?.triggered" class="trace-empty">未触发</div>
           <div v-for="tool in traceDetail.mcp?.toolCalls ?? []" :key="tool.toolName" class="trace-item">
@@ -177,6 +194,7 @@ import { ChatDotRound, Delete as DeleteIcon, InfoFilled, Plus, Promotion } from 
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import {
+  clearConversationSummary,
   deleteConversationSession,
   getAgentOptions,
   getConversationMessages,
@@ -349,6 +367,21 @@ async function deleteSession(s: SessionMeta) {
     messages.value = []
   }
   ElMessage.success('会话已删除')
+}
+
+async function clearCurrentSummary() {
+  if (!currentSessionId.value || isStreaming.value) return
+  try {
+    await ElMessageBox.confirm('确定清空当前会话的记忆摘要？对话消息不会被删除。', '清空记忆摘要', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  await clearConversationSummary(currentSessionId.value)
+  ElMessage.success('记忆摘要已清空')
 }
 
 // ── 发送消息 ──────────────────────────────────────────────────────────────

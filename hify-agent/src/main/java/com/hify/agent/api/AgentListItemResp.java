@@ -18,6 +18,7 @@ public class AgentListItemResp {
     private Long workflowId;
     private List<Long> knowledgeBaseIds;
     private BigDecimal temperature;
+    private Integer memoryEnabled;
     private Integer toolCount;
     private Integer enabled;
     private LocalDateTime createdAt;

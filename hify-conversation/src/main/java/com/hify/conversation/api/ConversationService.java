@@ -13,6 +13,10 @@ public interface ConversationService {
 
     ConversationTraceDetailResp getMessageTrace(Long messageId);
 
+    ConversationSummaryResp getSessionSummary(Long sessionId);
+
+    void clearSessionSummary(Long sessionId);
+
     void deleteSession(Long sessionId);
 
     /**

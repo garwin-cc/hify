@@ -43,6 +43,18 @@ public class AgentPo extends BaseEntity {
     /** 上下文滑动窗口轮数，NULL 表示不裁剪 */
     private Integer maxContextTurns;
 
+    /** 是否启用会话摘要记忆 */
+    private Integer memoryEnabled;
+
+    /** 触发摘要更新的消息数阈值 */
+    private Integer summaryTriggerMessageCount;
+
+    /** 摘要最大输出 token 数 */
+    private Integer summaryMaxTokens;
+
+    /** 摘要模型配置，NULL 表示复用 Agent 聊天模型 */
+    private Long summaryModelConfigId;
+
     private Integer enabled;
 
     /** 乐观锁版本号，防止并发覆写 */

@@ -8,6 +8,9 @@ import com.hify.conversation.infra.ChatMessageMapper;
 import com.hify.conversation.infra.ChatMessagePo;
 import com.hify.conversation.infra.ChatSessionMapper;
 import com.hify.conversation.infra.ChatSessionPo;
+import com.hify.conversation.infra.ChatSessionSummaryMapper;
+import com.hify.conversation.infra.ChatSessionSummaryPo;
+import com.hify.model.api.ChatMessage;
 import com.hify.model.api.LlmCallService;
 import com.hify.mcp.api.McpToolCallAuditService;
 import org.junit.jupiter.api.Test;
@@ -38,6 +41,9 @@ class ConversationServiceImplTest {
 
     @Mock
     private ChatMessageMapper messageMapper;
+
+    @Mock
+    private ChatSessionSummaryMapper summaryMapper;
 
     @Mock
     private AgentService agentService;
@@ -154,5 +160,34 @@ class ConversationServiceImplTest {
 
         assertThat(preview).hasSizeLessThanOrEqualTo(512);
         assertThat(preview).endsWith("...");
+    }
+
+    @Test
+    void buildSystemPromptAppendsSummaryAfterBasePrompt() throws Exception {
+        Method buildSystemPrompt = ConversationServiceImpl.class.getDeclaredMethod(
+                "buildSystemPrompt",
+                String.class,
+                com.hify.agent.api.AgentDetailResp.class,
+                List.class,
+                ChatSessionSummaryPo.class);
+        buildSystemPrompt.setAccessible(true);
+        com.hify.agent.api.AgentDetailResp agent = new com.hify.agent.api.AgentDetailResp();
+        agent.setId(7L);
+        agent.setSystemPrompt("你是医疗助手");
+        agent.setKnowledgeBaseIds(List.of());
+        ChatSessionSummaryPo summary = new ChatSessionSummaryPo();
+        summary.setSummary("用户目标：持续跟进右手第四掌骨骨折恢复。");
+
+        String prompt = (String) buildSystemPrompt.invoke(nullSafeService(), "trace-1", agent,
+                List.of(ChatMessage.builder().role("user").content("现在可以训练吗").build()), summary);
+
+        assertThat(prompt).contains("你是医疗助手");
+        assertThat(prompt).contains("【会话摘要 / 记忆】");
+        assertThat(prompt).contains("用户目标：持续跟进右手第四掌骨骨折恢复。");
+        assertThat(prompt.indexOf("你是医疗助手")).isLessThan(prompt.indexOf("【会话摘要 / 记忆】"));
+    }
+
+    private ConversationServiceImpl nullSafeService() {
+        return conversationService;
     }
 }

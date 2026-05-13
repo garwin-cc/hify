@@ -63,6 +63,12 @@
           <span v-else class="no-data">–</span>
         </template>
 
+        <template #memory="{ row }">
+          <el-tag :type="row.memoryEnabled === 1 ? 'success' : 'info'" size="small">
+            {{ row.memoryEnabled === 1 ? '开启' : '关闭' }}
+          </el-tag>
+        </template>
+
         <!-- 状态 -->
         <template #enabled="{ row }">
           <el-tag :type="row.enabled === 1 ? 'success' : 'info'" size="small">
@@ -247,6 +253,41 @@
               />
               <span class="form-hint-inline">1 – 200，留空不限制</span>
             </el-form-item>
+
+            <el-divider content-position="left">记忆</el-divider>
+
+            <el-form-item label="Agent 记忆">
+              <el-switch
+                v-model="form.memoryEnabled"
+                :active-value="1"
+                :inactive-value="0"
+                active-text="开启"
+                inactive-text="关闭"
+              />
+              <span class="form-hint-block">开启后会在长会话中生成摘要，摘要失败不影响正常对话。</span>
+            </el-form-item>
+
+            <el-form-item label="摘要触发消息数">
+              <el-input-number
+                v-model="form.summaryTriggerMessageCount"
+                :min="4"
+                :max="500"
+                controls-position="right"
+                style="width: 160px"
+                :disabled="form.memoryEnabled !== 1"
+              />
+            </el-form-item>
+
+            <el-form-item label="摘要 Max Tokens">
+              <el-input-number
+                v-model="form.summaryMaxTokens"
+                :min="100"
+                :max="4000"
+                controls-position="right"
+                style="width: 160px"
+                :disabled="form.memoryEnabled !== 1"
+              />
+            </el-form-item>
           </el-tab-pane>
 
           <!-- 工具绑定 -->
@@ -317,6 +358,7 @@ const columns: HifyColumn[] = [
   { label: '关联模型', slot: 'model',       minWidth: '180' },
   { label: '工具数量', slot: 'toolCount',   width: '90',  align: 'center' },
   { label: 'Temp.',   slot: 'temperature', width: '80',  align: 'center' },
+  { label: '记忆',     slot: 'memory',      width: '80',  align: 'center' },
   { label: '状态',     slot: 'enabled',     width: '80',  align: 'center' },
   { label: '创建时间', slot: 'createdAt',   width: '110' },
   { label: '操作',     slot: 'actions',     width: '160', align: 'right' },
@@ -435,6 +477,9 @@ const form = reactive({
   temperature:     0.7,
   maxTokens:       undefined as number | undefined,
   maxContextTurns: undefined as number | undefined,
+  memoryEnabled:   0,
+  summaryTriggerMessageCount: 20,
+  summaryMaxTokens: 800,
   toolIds:         [] as number[],
 })
 
@@ -454,6 +499,9 @@ function resetForm() {
   form.temperature     = 0.7
   form.maxTokens       = undefined
   form.maxContextTurns = undefined
+  form.memoryEnabled   = 0
+  form.summaryTriggerMessageCount = 20
+  form.summaryMaxTokens = 800
   form.toolIds         = []
   activeTab.value      = 'basic'
 }
@@ -478,6 +526,9 @@ async function handleEdit(row: AgentListItem) {
     form.systemPrompt    = detail.systemPrompt
     form.maxTokens       = detail.maxTokens    ?? undefined
     form.maxContextTurns = detail.maxContextTurns ?? undefined
+    form.memoryEnabled   = detail.memoryEnabled ?? 0
+    form.summaryTriggerMessageCount = detail.summaryTriggerMessageCount ?? 20
+    form.summaryMaxTokens = detail.summaryMaxTokens ?? 800
     form.workflowId      = detail.workflowId ?? null
     form.knowledgeBaseIds = detail.knowledgeBaseIds ?? []
     form.toolIds         = detail.toolIds       ?? []
@@ -514,6 +565,9 @@ async function handleSubmit() {
         temperature:     form.temperature,
         maxTokens:       form.maxTokens    ?? null,
         maxContextTurns: form.maxContextTurns ?? null,
+        memoryEnabled:   form.memoryEnabled,
+        summaryTriggerMessageCount: form.summaryTriggerMessageCount,
+        summaryMaxTokens: form.summaryMaxTokens,
         toolIds:         form.toolIds,
       })
       notifySuccess('Agent 已更新')
@@ -528,6 +582,9 @@ async function handleSubmit() {
         temperature:     form.temperature,
         maxTokens:       form.maxTokens,
         maxContextTurns: form.maxContextTurns,
+        memoryEnabled:   form.memoryEnabled,
+        summaryTriggerMessageCount: form.summaryTriggerMessageCount,
+        summaryMaxTokens: form.summaryMaxTokens,
         toolIds:         form.toolIds.length > 0 ? form.toolIds : undefined,
       })
       notifySuccess('Agent 已创建')

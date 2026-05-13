@@ -19,6 +19,7 @@ public class ConversationTraceDetailResp {
     private ModelTrace model;
     private WorkflowTrace workflow;
     private RagTrace rag;
+    private MemoryTrace memory;
     private McpTrace mcp;
     private LlmTrace llm;
 
@@ -60,6 +61,15 @@ public class ConversationTraceDetailResp {
         private Integer chunkIndex;
         private Double score;
         private String contentPreview;
+    }
+
+    @Data
+    public static class MemoryTrace {
+        private Boolean enabled;
+        private Boolean summaryUsed;
+        private Integer summaryVersion;
+        private Integer summaryLatencyMs;
+        private String summaryErrorMessage;
     }
 
     @Data

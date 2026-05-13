@@ -28,6 +28,7 @@ export interface AgentListItem {
   workflowId?: number | null
   knowledgeBaseIds: number[]
   temperature: number | null
+  memoryEnabled?: number
   toolCount: number
   enabled: number
   createdAt: string
@@ -46,6 +47,10 @@ export interface AgentDetail {
   temperature: number | null
   maxTokens: number | null
   maxContextTurns: number | null
+  memoryEnabled?: number
+  summaryTriggerMessageCount?: number | null
+  summaryMaxTokens?: number | null
+  summaryModelConfigId?: number | null
   toolIds: number[]
   enabled: number
   createdAt: string
@@ -62,6 +67,10 @@ export interface CreateAgentReq {
   temperature?: number
   maxTokens?: number
   maxContextTurns?: number
+  memoryEnabled?: number
+  summaryTriggerMessageCount?: number
+  summaryMaxTokens?: number
+  summaryModelConfigId?: number | null
   toolIds?: number[]
 }
 
@@ -76,6 +85,10 @@ export interface UpdateAgentReq {
   temperature?: number | null
   maxTokens?: number | null
   maxContextTurns?: number | null
+  memoryEnabled?: number | null
+  summaryTriggerMessageCount?: number | null
+  summaryMaxTokens?: number | null
+  summaryModelConfigId?: number | null
   toolIds?: number[] | null
 }
 

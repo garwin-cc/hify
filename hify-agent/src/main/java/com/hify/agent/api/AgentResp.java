@@ -18,6 +18,7 @@ public class AgentResp {
     private List<Long> knowledgeBaseIds;
     private BigDecimal temperature;
     private Integer maxTurns;
+    private Integer memoryEnabled;
     private Integer enabled;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

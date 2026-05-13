@@ -15,11 +15,14 @@ import com.hify.common.metrics.HifyMetrics;
 import com.hify.conversation.api.ConversationMessageResp;
 import com.hify.conversation.api.ConversationService;
 import com.hify.conversation.api.ConversationSessionResp;
+import com.hify.conversation.api.ConversationSummaryResp;
 import com.hify.conversation.api.ConversationTraceDetailResp;
 import com.hify.conversation.infra.ChatMessageMapper;
 import com.hify.conversation.infra.ChatMessagePo;
 import com.hify.conversation.infra.ChatSessionMapper;
 import com.hify.conversation.infra.ChatSessionPo;
+import com.hify.conversation.infra.ChatSessionSummaryMapper;
+import com.hify.conversation.infra.ChatSessionSummaryPo;
 import com.hify.conversation.infra.ConversationLlmTraceMapper;
 import com.hify.conversation.infra.ConversationLlmTracePo;
 import com.hify.conversation.infra.ConversationRagTraceMapper;
@@ -54,6 +57,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -87,6 +91,7 @@ public class ConversationServiceImpl implements ConversationService {
 
     private final ChatSessionMapper sessionMapper;
     private final ChatMessageMapper messageMapper;
+    private final ChatSessionSummaryMapper summaryMapper;
     private final ConversationTraceMapper conversationTraceMapper;
     private final ConversationRagTraceMapper conversationRagTraceMapper;
     private final ConversationLlmTraceMapper conversationLlmTraceMapper;
@@ -152,6 +157,30 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     @Override
+    public ConversationSummaryResp getSessionSummary(Long sessionId) {
+        ChatSessionPo session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
+        }
+        ChatSessionSummaryPo summary = latestSummary(sessionId);
+        if (summary == null) {
+            return null;
+        }
+        return toSummaryResp(summary);
+    }
+
+    @Override
+    public void clearSessionSummary(Long sessionId) {
+        ChatSessionPo session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
+        }
+        summaryMapper.delete(Wrappers.lambdaQuery(ChatSessionSummaryPo.class)
+                .eq(ChatSessionSummaryPo::getSessionId, sessionId));
+        log.info("cleared conversation summary sessionId={} agentId={}", sessionId, session.getAgentId());
+    }
+
+    @Override
     public void deleteSession(Long sessionId) {
         ChatSessionPo session = sessionMapper.selectById(sessionId);
         if (session == null) {
@@ -159,6 +188,8 @@ public class ConversationServiceImpl implements ConversationService {
         }
         messageMapper.delete(Wrappers.lambdaQuery(ChatMessagePo.class)
                 .eq(ChatMessagePo::getSessionId, sessionId));
+        summaryMapper.delete(Wrappers.lambdaQuery(ChatSessionSummaryPo.class)
+                .eq(ChatSessionSummaryPo::getSessionId, sessionId));
         sessionMapper.deleteById(sessionId);
         log.info("deleted conversation session id={} agentId={}", sessionId, session.getAgentId());
     }
@@ -178,13 +209,12 @@ public class ConversationServiceImpl implements ConversationService {
         // 持久化用户消息（状态直接 DONE，用户消息无需 STREAMING 过渡）
         Long userMsgId = insertMessage(session.getId(), traceId, "user", content, null, null, "DONE", null, null);
 
-        // 加载历史（id < userMsgId 的已完成消息），构造上下文列表
-        List<ChatMessage> contextMessages = buildContextMessages(session.getId(), userMsgId, content,
-                agent.getMaxContextTurns());
-
         // 创建助手消息占位符，后续流式填充
         Long assistantMsgId = insertMessage(session.getId(), traceId, "assistant", "", null, null, "PENDING", null, null);
         createConversationTrace(traceId, session, agent, userMsgId, assistantMsgId);
+
+        // 加载历史（id < userMsgId 的已完成消息），构造摘要 + 短期上下文列表
+        ConversationContext context = buildConversationContext(traceId, session.getId(), userMsgId, content, agent);
         log.info("chat request accepted traceId={} agentId={} sessionId={} userMsgId={} assistantMsgId={} contentLength={}",
                 traceId, agentId, session.getId(), userMsgId, assistantMsgId, content == null ? 0 : content.length());
 
@@ -208,7 +238,7 @@ public class ConversationServiceImpl implements ConversationService {
         );
 
         llmExecutor.execute(TraceContext.wrap(() ->
-            doStream(emitter, cancelled, traceId, agent, session, assistantMsgId, contextMessages)
+            doStream(emitter, cancelled, traceId, agent, session, assistantMsgId, context)
         ));
 
         return emitter;
@@ -227,10 +257,11 @@ public class ConversationServiceImpl implements ConversationService {
 
     private void doStream(SseEmitter emitter, AtomicBoolean cancelled, String traceId,
                           AgentDetailResp agent, ChatSessionPo session,
-                          Long assistantMsgId, List<ChatMessage> contextMessages) {
+                          Long assistantMsgId, ConversationContext context) {
 
         updateMessageStatus(assistantMsgId, "STREAMING");
 
+        List<ChatMessage> contextMessages = context.messages();
         StringBuilder fullContent = new StringBuilder();
         long          streamStart = System.currentTimeMillis();
         log.info("chat stream start traceId={} agentId={} sessionId={} assistantMsgId={} workflowId={} modelConfigId={}",
@@ -314,7 +345,7 @@ public class ConversationServiceImpl implements ConversationService {
             AtomicReference<Long> llmTraceId = new AtomicReference<>(createLlmTrace(traceId, agent.getModelConfigId()));
             AtomicBoolean firstTokenRecorded = new AtomicBoolean(false);
             ChatRequest request = ChatRequest.builder()
-                    .systemPrompt(buildSystemPrompt(traceId, agent, contextMessages))
+                    .systemPrompt(buildSystemPrompt(traceId, agent, contextMessages, context.summary()))
                     .messages(contextMessages)
                     .tools(toolSchemas.isEmpty() ? null : toolSchemas)
                     .temperature(agent.getTemperature())
@@ -370,7 +401,7 @@ public class ConversationServiceImpl implements ConversationService {
                     int latency = (int) (System.currentTimeMillis() - streamStart);
                     finishLlmTrace(llmTraceId.get(), response, latency, "DONE", null, null);
                     completeAssistantStream(emitter, cancelled, session.getId(), assistantMsgId,
-                            agent.getId(), traceId, fullContent.toString(), response, latency);
+                            agent, traceId, fullContent.toString(), response, latency);
                 }
 
                 @Override
@@ -485,7 +516,7 @@ public class ConversationServiceImpl implements ConversationService {
                     int latency = (int) (System.currentTimeMillis() - streamStart);
                     finishLlmTrace(llmTraceId, response, latency, "DONE", null, null);
                     completeAssistantStream(emitter, cancelled, session.getId(), assistantMsgId,
-                            agent.getId(), traceId, fullContent.toString(), response, latency);
+                            agent, traceId, fullContent.toString(), response, latency);
                 }
 
                 @Override
@@ -514,11 +545,12 @@ public class ConversationServiceImpl implements ConversationService {
 
     private void completeAssistantStream(SseEmitter emitter, AtomicBoolean cancelled,
                                          Long sessionId, Long assistantMsgId,
-                                         Long agentId, String traceId, String content, ChatResponse response, int latencyMs) {
+                                         AgentDetailResp agent, String traceId, String content, ChatResponse response, int latencyMs) {
         // 无论客户端是否已断开，都将最终结果写库
         finalizeMessage(assistantMsgId, content, response, latencyMs);
         incrementSessionCount(sessionId, 2);
-        hifyMetrics.recordChatRequest(agentId, "success", latencyMs);
+        hifyMetrics.recordChatRequest(agent.getId(), "success", latencyMs);
+        updateSummaryAsync(traceId, sessionId, agent, assistantMsgId);
         if (!cancelled.get()) {
             finishConversationTrace(traceId, "DONE", null, null);
         }
@@ -773,6 +805,8 @@ public class ConversationServiceImpl implements ConversationService {
             po.setWorkflowId(agent.getWorkflowId());
             po.setRagTriggered(0);
             po.setMcpTriggered(0);
+            po.setMemoryEnabled(memoryEnabled(agent) ? 1 : 0);
+            po.setSummaryUsed(0);
             po.setStatus("RUNNING");
             po.setStartedAt(LocalDateTime.now());
             conversationTraceMapper.insert(po);
@@ -898,6 +932,201 @@ public class ConversationServiceImpl implements ConversationService {
         }
     }
 
+    private void markSummaryUsed(String traceId, Integer summaryVersion) {
+        try {
+            conversationTraceMapper.update(null, Wrappers.lambdaUpdate(ConversationTracePo.class)
+                    .eq(ConversationTracePo::getTraceId, traceId)
+                    .set(ConversationTracePo::getSummaryUsed, 1)
+                    .set(ConversationTracePo::getSummaryVersion, summaryVersion));
+        } catch (Exception e) {
+            log.warn("summary trace update failed traceId={} message={}", traceId, e.getMessage());
+        }
+    }
+
+    private void finishSummaryTrace(String traceId, long startedAt, String errorMessage) {
+        try {
+            conversationTraceMapper.update(null, Wrappers.lambdaUpdate(ConversationTracePo.class)
+                    .eq(ConversationTracePo::getTraceId, traceId)
+                    .set(ConversationTracePo::getSummaryLatencyMs, (int) (System.currentTimeMillis() - startedAt))
+                    .set(ConversationTracePo::getSummaryErrorMessage, abbreviate(errorMessage, 512)));
+        } catch (Exception e) {
+            log.warn("summary trace finish failed traceId={} message={}", traceId, e.getMessage());
+        }
+    }
+
+    private void updateSummaryAsync(String traceId, Long sessionId, AgentDetailResp agent, Long latestMessageId) {
+        if (!memoryEnabled(agent)) {
+            return;
+        }
+        try {
+            if (llmExecutor.getActiveCount() >= llmExecutor.getMaximumPoolSize()
+                    && llmExecutor.getQueue().remainingCapacity() == 0) {
+                log.warn("summary task skipped because llmExecutor is saturated traceId={} sessionId={}",
+                        traceId, sessionId);
+                finishSummaryTrace(traceId, System.currentTimeMillis(), "摘要任务跳过：LLM 线程池已满载");
+                return;
+            }
+            llmExecutor.execute(TraceContext.wrap(() -> updateSummaryIfNeeded(traceId, sessionId, agent, latestMessageId)));
+        } catch (Exception e) {
+            log.warn("summary task submit failed traceId={} sessionId={} message={}", traceId, sessionId, e.getMessage());
+            finishSummaryTrace(traceId, System.currentTimeMillis(), e.getMessage());
+        }
+    }
+
+    private void updateSummaryIfNeeded(String traceId, Long sessionId, AgentDetailResp agent, Long latestMessageId) {
+        long startedAt = System.currentTimeMillis();
+        try {
+            int threshold = effectiveSummaryTriggerMessageCount(agent);
+            Long doneCount = messageMapper.selectCount(Wrappers.lambdaQuery(ChatMessagePo.class)
+                    .eq(ChatMessagePo::getSessionId, sessionId)
+                    .eq(ChatMessagePo::getStatus, "DONE"));
+            if (doneCount == null || doneCount < threshold) {
+                return;
+            }
+
+            ChatSessionSummaryPo currentSummary = latestSummary(sessionId);
+            if (currentSummary != null
+                    && currentSummary.getSourceMessageEndId() != null
+                    && currentSummary.getSourceMessageEndId() >= latestMessageId) {
+                return;
+            }
+
+            Long afterMessageId = currentSummary == null ? null : currentSummary.getSourceMessageEndId();
+            List<ChatMessagePo> newMessages = messageMapper.selectList(Wrappers.lambdaQuery(ChatMessagePo.class)
+                    .eq(ChatMessagePo::getSessionId, sessionId)
+                    .eq(ChatMessagePo::getStatus, "DONE")
+                    .gt(afterMessageId != null, ChatMessagePo::getId, afterMessageId)
+                    .le(ChatMessagePo::getId, latestMessageId)
+                    .orderByAsc(ChatMessagePo::getId));
+            if (newMessages.isEmpty()) {
+                return;
+            }
+
+            String prompt = buildSummaryPrompt(currentSummary, newMessages);
+            ChatResponse response = llmCallService.chat(effectiveSummaryModelConfigId(agent), ChatRequest.builder()
+                    .messages(List.of(ChatMessage.builder().role("user").content(prompt).build()))
+                    .maxTokens(effectiveSummaryMaxTokens(agent))
+                    .temperature(BigDecimal.ZERO)
+                    .build());
+            String summaryText = response == null ? null : response.getContent();
+            if (!StringUtils.hasText(summaryText)) {
+                throw new BizException(ErrorCode.LLM_CALL_ERROR, "摘要模型返回为空");
+            }
+            saveSessionSummary(sessionId, agent.getId(), currentSummary, newMessages, summaryText.trim());
+            finishSummaryTrace(traceId, startedAt, null);
+            log.info("conversation summary updated traceId={} sessionId={} messages={} latencyMs={}",
+                    traceId, sessionId, newMessages.size(), System.currentTimeMillis() - startedAt);
+        } catch (Exception e) {
+            saveFailedSummary(sessionId, agent.getId(), latestMessageId, e.getMessage());
+            finishSummaryTrace(traceId, startedAt, e.getMessage());
+            log.warn("conversation summary update failed traceId={} sessionId={} message={}",
+                    traceId, sessionId, e.getMessage());
+        }
+    }
+
+    private void saveSessionSummary(Long sessionId, Long agentId, ChatSessionSummaryPo currentSummary,
+                                    List<ChatMessagePo> sourceMessages, String summaryText) {
+        ChatSessionSummaryPo po = currentSummary == null ? new ChatSessionSummaryPo() : currentSummary;
+        po.setSessionId(sessionId);
+        po.setAgentId(agentId);
+        po.setSummary(summaryText);
+        po.setVersion(currentSummary == null || currentSummary.getVersion() == null
+                ? 1 : currentSummary.getVersion() + 1);
+        po.setSourceMessageStartId(currentSummary != null && currentSummary.getSourceMessageStartId() != null
+                ? currentSummary.getSourceMessageStartId()
+                : sourceMessages.get(0).getId());
+        po.setSourceMessageEndId(sourceMessages.get(sourceMessages.size() - 1).getId());
+        po.setSourceMessageCount(currentSummary == null || currentSummary.getSourceMessageCount() == null
+                ? sourceMessages.size()
+                : currentSummary.getSourceMessageCount() + sourceMessages.size());
+        po.setStatus("DONE");
+        po.setErrorMessage(null);
+        po.setSummarizedAt(LocalDateTime.now());
+        if (currentSummary == null) {
+            summaryMapper.insert(po);
+        } else {
+            summaryMapper.updateById(po);
+        }
+    }
+
+    private void saveFailedSummary(Long sessionId, Long agentId, Long latestMessageId, String errorMessage) {
+        try {
+            ChatSessionSummaryPo po = new ChatSessionSummaryPo();
+            po.setSessionId(sessionId);
+            po.setAgentId(agentId);
+            po.setSummary("");
+            po.setVersion(1);
+            po.setSourceMessageEndId(latestMessageId);
+            po.setSourceMessageCount(0);
+            po.setStatus("FAILED");
+            po.setErrorMessage(abbreviate(errorMessage, 512));
+            po.setSummarizedAt(LocalDateTime.now());
+            summaryMapper.insert(po);
+        } catch (Exception e) {
+            log.warn("failed summary record insert failed sessionId={} message={}", sessionId, e.getMessage());
+        }
+    }
+
+    private String buildSummaryPrompt(ChatSessionSummaryPo currentSummary, List<ChatMessagePo> messages) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("请将以下对话压缩成后续对话需要保留的摘要。\n")
+                .append("只保留用户目标、明确偏好、关键事实、未完成任务、重要约束。\n")
+                .append("不要写入知识库参考资料原文，不要引入对话中没有的信息。\n")
+                .append("请用以下结构输出：\n")
+                .append("【用户目标】\n【关键事实】\n【偏好和约束】\n【未完成事项】\n\n");
+        if (currentSummary != null && StringUtils.hasText(currentSummary.getSummary())) {
+            builder.append("【已有摘要】\n").append(currentSummary.getSummary()).append("\n\n");
+        }
+        builder.append("【新增对话】\n");
+        for (ChatMessagePo message : messages) {
+            builder.append(message.getRole()).append(": ")
+                    .append(abbreviate(message.getContent(), 2000))
+                    .append("\n");
+        }
+        return builder.toString();
+    }
+
+    private ChatSessionSummaryPo latestSummary(Long sessionId) {
+        return summaryMapper.selectOne(Wrappers.lambdaQuery(ChatSessionSummaryPo.class)
+                .eq(ChatSessionSummaryPo::getSessionId, sessionId)
+                .eq(ChatSessionSummaryPo::getStatus, "DONE")
+                .orderByDesc(ChatSessionSummaryPo::getId)
+                .last("LIMIT 1"));
+    }
+
+    private ConversationSummaryResp toSummaryResp(ChatSessionSummaryPo po) {
+        ConversationSummaryResp resp = new ConversationSummaryResp();
+        resp.setId(po.getId());
+        resp.setSessionId(po.getSessionId());
+        resp.setAgentId(po.getAgentId());
+        resp.setSummary(po.getSummary());
+        resp.setVersion(po.getVersion());
+        resp.setSourceMessageStartId(po.getSourceMessageStartId());
+        resp.setSourceMessageEndId(po.getSourceMessageEndId());
+        resp.setSourceMessageCount(po.getSourceMessageCount());
+        resp.setStatus(po.getStatus());
+        resp.setErrorMessage(po.getErrorMessage());
+        resp.setSummarizedAt(po.getSummarizedAt());
+        resp.setUpdatedAt(po.getUpdatedAt());
+        return resp;
+    }
+
+    private boolean memoryEnabled(AgentDetailResp agent) {
+        return agent != null && Integer.valueOf(1).equals(agent.getMemoryEnabled());
+    }
+
+    private int effectiveSummaryTriggerMessageCount(AgentDetailResp agent) {
+        return agent.getSummaryTriggerMessageCount() == null ? 20 : agent.getSummaryTriggerMessageCount();
+    }
+
+    private int effectiveSummaryMaxTokens(AgentDetailResp agent) {
+        return agent.getSummaryMaxTokens() == null ? 800 : agent.getSummaryMaxTokens();
+    }
+
+    private Long effectiveSummaryModelConfigId(AgentDetailResp agent) {
+        return agent.getSummaryModelConfigId() == null ? agent.getModelConfigId() : agent.getSummaryModelConfigId();
+    }
+
     private void saveRagTrace(String traceId, List<KnowledgeSearchResp> chunks) {
         if (chunks == null || chunks.isEmpty()) {
             return;
@@ -1008,6 +1237,19 @@ public class ConversationServiceImpl implements ConversationService {
      * 加载对话历史，组装成 LLM 输入列表。
      * 取 id < userMsgId 的已完成消息，按时间升序，受 maxContextTurns 滑动窗口限制。
      */
+    private ConversationContext buildConversationContext(String traceId, Long sessionId, Long userMsgId,
+                                                         String currentContent, AgentDetailResp agent) {
+        ChatSessionSummaryPo summary = memoryEnabled(agent) ? latestSummary(sessionId) : null;
+        if (summary != null && StringUtils.hasText(summary.getSummary())) {
+            markSummaryUsed(traceId, summary.getVersion());
+            log.info("conversation summary used traceId={} sessionId={} version={} sourceEndMessageId={}",
+                    traceId, sessionId, summary.getVersion(), summary.getSourceMessageEndId());
+        }
+        List<ChatMessage> messages = buildContextMessages(sessionId, userMsgId, currentContent,
+                agent.getMaxContextTurns());
+        return new ConversationContext(messages, summary);
+    }
+
     private List<ChatMessage> buildContextMessages(Long sessionId, Long userMsgId,
                                                    String currentContent, Integer maxContextTurns) {
         var wrapper = Wrappers.lambdaQuery(ChatMessagePo.class)
@@ -1037,11 +1279,12 @@ public class ConversationServiceImpl implements ConversationService {
         return result;
     }
 
-    private String buildSystemPrompt(String traceId, AgentDetailResp agent, List<ChatMessage> messages) {
+    private String buildSystemPrompt(String traceId, AgentDetailResp agent, List<ChatMessage> messages,
+                                     ChatSessionSummaryPo summary) {
         String systemPrompt = agent.getSystemPrompt() == null ? "" : agent.getSystemPrompt();
         List<Long> knowledgeBaseIds = agent.getKnowledgeBaseIds();
         if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
-            return systemPrompt;
+            return appendConversationSummary(systemPrompt, summary);
         }
 
         String userMessage = "";
@@ -1053,7 +1296,7 @@ public class ConversationServiceImpl implements ConversationService {
             }
         }
         if (userMessage.isBlank()) {
-            return systemPrompt;
+            return appendConversationSummary(systemPrompt, summary);
         }
 
         markRagTriggered(traceId);
@@ -1075,7 +1318,7 @@ public class ConversationServiceImpl implements ConversationService {
         if (chunks.isEmpty()) {
             log.info("rag no hit agentId={} knowledgeBaseIds={} userMessage={}",
                     agent.getId(), knowledgeBaseIds, abbreviate(userMessage, 80));
-            return systemPrompt;
+            return appendConversationSummary(systemPrompt, summary);
         }
         log.info("rag hit agentId={} knowledgeBaseIds={} hits={}",
                 agent.getId(), knowledgeBaseIds, chunks.stream()
@@ -1096,7 +1339,18 @@ public class ConversationServiceImpl implements ConversationService {
                     .append(chunks.get(i).getContent())
                     .append('\n');
         }
-        return builder.toString().trim();
+        return appendConversationSummary(builder.toString().trim(), summary);
+    }
+
+    private String appendConversationSummary(String systemPrompt, ChatSessionSummaryPo summary) {
+        if (summary == null || !StringUtils.hasText(summary.getSummary())) {
+            return systemPrompt;
+        }
+        return (systemPrompt == null ? "" : systemPrompt)
+                + "\n\n【会话摘要 / 记忆】\n"
+                + "以下摘要来自当前会话较早消息，仅用于保持上下文连续。"
+                + "如果摘要与用户当前消息冲突，以当前消息为准。\n"
+                + summary.getSummary();
     }
 
     private static String abbreviate(String text, int maxLength) {
@@ -1142,6 +1396,14 @@ public class ConversationServiceImpl implements ConversationService {
         rag.setTriggered(trace.getRagTriggered() != null && trace.getRagTriggered() == 1);
         rag.setHits(listRagHits(trace.getTraceId()));
         resp.setRag(rag);
+
+        ConversationTraceDetailResp.MemoryTrace memory = new ConversationTraceDetailResp.MemoryTrace();
+        memory.setEnabled(trace.getMemoryEnabled() != null && trace.getMemoryEnabled() == 1);
+        memory.setSummaryUsed(trace.getSummaryUsed() != null && trace.getSummaryUsed() == 1);
+        memory.setSummaryVersion(trace.getSummaryVersion());
+        memory.setSummaryLatencyMs(trace.getSummaryLatencyMs());
+        memory.setSummaryErrorMessage(trace.getSummaryErrorMessage());
+        resp.setMemory(memory);
 
         ConversationTraceDetailResp.McpTrace mcp = new ConversationTraceDetailResp.McpTrace();
         mcp.setTriggered(trace.getMcpTriggered() != null && trace.getMcpTriggered() == 1);
@@ -1238,6 +1500,9 @@ public class ConversationServiceImpl implements ConversationService {
         private static ModelTraceInfo empty() {
             return new ModelTraceInfo(null, null, null, null);
         }
+    }
+
+    private record ConversationContext(List<ChatMessage> messages, ChatSessionSummaryPo summary) {
     }
 
     @SuppressWarnings("unchecked")

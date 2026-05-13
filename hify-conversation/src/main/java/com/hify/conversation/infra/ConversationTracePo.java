@@ -27,6 +27,11 @@ public class ConversationTracePo extends BaseEntity {
     private Long workflowRunId;
     private Integer ragTriggered;
     private Integer mcpTriggered;
+    private Integer memoryEnabled;
+    private Integer summaryUsed;
+    private Integer summaryVersion;
+    private Integer summaryLatencyMs;
+    private String summaryErrorMessage;
     private String status;
     private String errorCode;
     private String errorMessage;

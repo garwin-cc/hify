@@ -5,6 +5,7 @@ import com.hify.conversation.api.SendMessageReq;
 import com.hify.common.web.Result;
 import com.hify.conversation.api.ConversationMessageResp;
 import com.hify.conversation.api.ConversationSessionResp;
+import com.hify.conversation.api.ConversationSummaryResp;
 import com.hify.conversation.api.ConversationTraceDetailResp;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +42,17 @@ public class ConversationController {
     @GetMapping("/messages/{messageId}/trace")
     public Result<ConversationTraceDetailResp> getMessageTrace(@PathVariable Long messageId) {
         return Result.ok(conversationService.getMessageTrace(messageId));
+    }
+
+    @GetMapping("/{sessionId}/summary")
+    public Result<ConversationSummaryResp> getSessionSummary(@PathVariable Long sessionId) {
+        return Result.ok(conversationService.getSessionSummary(sessionId));
+    }
+
+    @DeleteMapping("/{sessionId}/summary")
+    public Result<Void> clearSessionSummary(@PathVariable Long sessionId) {
+        conversationService.clearSessionSummary(sessionId);
+        return Result.ok();
     }
 
     @DeleteMapping("/{sessionId}")

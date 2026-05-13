@@ -61,6 +61,9 @@ public class AgentServiceImpl implements AgentService {
         //   注：ProviderService 管理供应商本身，ModelConfigService 管理具体模型配置，
         //   验证 modelConfigId 应走 ModelConfigService，语义更精确。
         ModelConfigResp modelConfig = requireEnabledModelConfig(req.getModelConfigId());
+        if (req.getSummaryModelConfigId() != null) {
+            requireEnabledModelConfig(req.getSummaryModelConfigId());
+        }
 
         // Step 3: 事务内执行 INSERT agent + 批量 INSERT agent_tool
         AgentPo agentPo = buildAgentPo(req);
@@ -104,6 +107,15 @@ public class AgentServiceImpl implements AgentService {
         if (req.getTemperature()      != null) po.setTemperature(req.getTemperature());
         if (req.getMaxTokens()        != null) po.setMaxTokens(req.getMaxTokens());
         if (req.getMaxContextTurns()  != null) po.setMaxContextTurns(req.getMaxContextTurns());
+        if (req.getMemoryEnabled()    != null) po.setMemoryEnabled(req.getMemoryEnabled());
+        if (req.getSummaryTriggerMessageCount() != null) {
+            po.setSummaryTriggerMessageCount(req.getSummaryTriggerMessageCount());
+        }
+        if (req.getSummaryMaxTokens() != null) po.setSummaryMaxTokens(req.getSummaryMaxTokens());
+        if (req.getSummaryModelConfigId() != null) {
+            requireEnabledModelConfig(req.getSummaryModelConfigId());
+            po.setSummaryModelConfigId(req.getSummaryModelConfigId());
+        }
 
         agentMapper.updateById(po);
 
@@ -310,6 +322,11 @@ public class AgentServiceImpl implements AgentService {
         po.setTemperature(req.getTemperature());
         po.setMaxTokens(req.getMaxTokens());
         po.setMaxContextTurns(req.getMaxContextTurns());
+        po.setMemoryEnabled(req.getMemoryEnabled() == null ? 0 : req.getMemoryEnabled());
+        po.setSummaryTriggerMessageCount(req.getSummaryTriggerMessageCount() == null
+                ? 20 : req.getSummaryTriggerMessageCount());
+        po.setSummaryMaxTokens(req.getSummaryMaxTokens() == null ? 800 : req.getSummaryMaxTokens());
+        po.setSummaryModelConfigId(req.getSummaryModelConfigId());
         po.setEnabled(1);
         return po;
     }
@@ -329,6 +346,10 @@ public class AgentServiceImpl implements AgentService {
         resp.setTemperature(po.getTemperature());
         resp.setMaxTokens(po.getMaxTokens());
         resp.setMaxContextTurns(po.getMaxContextTurns());
+        resp.setMemoryEnabled(po.getMemoryEnabled());
+        resp.setSummaryTriggerMessageCount(po.getSummaryTriggerMessageCount());
+        resp.setSummaryMaxTokens(po.getSummaryMaxTokens());
+        resp.setSummaryModelConfigId(po.getSummaryModelConfigId());
         resp.setToolIds(toolIds);
         resp.setEnabled(po.getEnabled());
         resp.setCreatedAt(po.getCreatedAt());
@@ -347,6 +368,7 @@ public class AgentServiceImpl implements AgentService {
         item.setWorkflowId(po.getWorkflowId());
         item.setKnowledgeBaseIds(po.getKnowledgeBaseIds());
         item.setTemperature(po.getTemperature());
+        item.setMemoryEnabled(po.getMemoryEnabled());
         item.setToolCount(toolCount);
         item.setEnabled(po.getEnabled());
         item.setCreatedAt(po.getCreatedAt());

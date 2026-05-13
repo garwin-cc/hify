@@ -72,6 +72,16 @@
               v-html="renderContent(msg)"
             />
             <span v-else>{{ msg.content }}</span>
+            <div v-if="msg.role === 'assistant' && msg.id" class="message-actions">
+              <el-button
+                text
+                size="small"
+                :icon="InfoFilled"
+                @click="openTrace(msg)"
+              >
+                运行详情
+              </el-button>
+            </div>
           </div>
         </div>
       </div>
@@ -98,24 +108,85 @@
         </div>
       </div>
     </div>
+
+    <el-drawer v-model="traceDrawerVisible" title="运行详情" size="520px">
+      <div v-if="traceLoading" class="trace-empty">加载中...</div>
+      <div v-else-if="traceDetail" class="trace-panel">
+        <section class="trace-section">
+          <h3>基础信息</h3>
+          <dl>
+            <dt>traceId</dt><dd>{{ traceDetail.traceId }}</dd>
+            <dt>状态</dt><dd>{{ traceDetail.status }}</dd>
+            <dt>Agent</dt><dd>{{ traceDetail.agent?.name || '-' }}</dd>
+            <dt>模型</dt><dd>{{ traceDetail.model?.providerName || '-' }} / {{ traceDetail.model?.modelId || '-' }}</dd>
+            <dt>错误</dt><dd>{{ traceDetail.errorMessage || '-' }}</dd>
+          </dl>
+        </section>
+
+        <section class="trace-section">
+          <h3>RAG</h3>
+          <div v-if="!traceDetail.rag?.triggered" class="trace-empty">未触发</div>
+          <div v-else-if="!traceDetail.rag?.hits.length" class="trace-empty">已触发，无命中或检索失败</div>
+          <div v-for="hit in traceDetail.rag?.hits ?? []" :key="`${hit.documentId}-${hit.chunkIndex}`" class="trace-item">
+            <div class="trace-item-title">{{ hit.documentName || hit.documentId || '-' }}</div>
+            <div class="trace-meta">chunk #{{ hit.chunkIndex ?? '-' }} · score {{ formatScore(hit.score) }}</div>
+            <p>{{ hit.contentPreview }}</p>
+          </div>
+        </section>
+
+        <section class="trace-section">
+          <h3>MCP</h3>
+          <div v-if="!traceDetail.mcp?.triggered" class="trace-empty">未触发</div>
+          <div v-for="tool in traceDetail.mcp?.toolCalls ?? []" :key="tool.toolName" class="trace-item">
+            <div class="trace-item-title">{{ tool.toolName }}</div>
+            <div class="trace-meta">
+              {{ tool.success ? '成功' : '失败' }} · {{ tool.elapsedMs ?? '-' }}ms · 参数 {{ tool.argumentKeys?.join(', ') || '-' }}
+            </div>
+            <p v-if="tool.errorMessage">{{ tool.errorMessage }}</p>
+          </div>
+        </section>
+
+        <section class="trace-section">
+          <h3>LLM</h3>
+          <dl>
+            <dt>Provider</dt><dd>{{ traceDetail.llm?.providerName || '-' }}</dd>
+            <dt>modelId</dt><dd>{{ traceDetail.llm?.modelId || '-' }}</dd>
+            <dt>首 token</dt><dd>{{ traceDetail.llm?.firstTokenLatencyMs ?? '-' }}ms</dd>
+            <dt>总耗时</dt><dd>{{ traceDetail.llm?.totalLatencyMs ?? '-' }}ms</dd>
+            <dt>tokens</dt><dd>{{ traceDetail.llm?.inputTokens ?? '-' }} / {{ traceDetail.llm?.outputTokens ?? '-' }}</dd>
+            <dt>错误</dt><dd>{{ traceDetail.llm?.errorMessage || '-' }}</dd>
+          </dl>
+        </section>
+
+        <section class="trace-section">
+          <h3>Workflow</h3>
+          <dl>
+            <dt>触发</dt><dd>{{ traceDetail.workflow?.triggered ? '是' : '否' }}</dd>
+            <dt>workflowId</dt><dd>{{ traceDetail.workflow?.workflowId ?? '-' }}</dd>
+            <dt>runId</dt><dd>{{ traceDetail.workflow?.workflowRunId ?? '-' }}</dd>
+          </dl>
+        </section>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Delete as DeleteIcon, Plus, Promotion } from '@element-plus/icons-vue'
+import { ChatDotRound, Delete as DeleteIcon, InfoFilled, Plus, Promotion } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import {
   deleteConversationSession,
   getAgentOptions,
   getConversationMessages,
+  getConversationTrace,
   getConversationSessions,
   streamMessage,
   loadSessions,
   saveSessions,
 } from '@/api/conversation'
-import type { AgentOption, SessionMeta, DoneEvent } from '@/api/conversation'
+import type { AgentOption, SessionMeta, DoneEvent, ConversationTraceDetail } from '@/api/conversation'
 import { workflowRunEventsUrl, getWorkflowRunDetail } from '@/api/workflow'
 import { subscribeSse } from '@/api/sse'
 import type { WorkflowRunEvent } from '@/api/workflow'
@@ -123,6 +194,8 @@ import type { WorkflowRunEvent } from '@/api/workflow'
 // ── 状态 ──────────────────────────────────────────────────────────────────
 
 interface Message {
+  id?: number
+  traceId?: string
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
@@ -140,6 +213,9 @@ const messages   = ref<Message[]>([])
 const inputText  = ref('')
 const isStreaming = ref(false)
 const messagesEl = ref<HTMLElement | null>(null)
+const traceDrawerVisible = ref(false)
+const traceLoading = ref(false)
+const traceDetail = ref<ConversationTraceDetail | null>(null)
 
 const selectedAgentName = computed(() => {
   return agents.value.find(a => a.id === selectedAgentId.value)?.name ?? 'Gemini'
@@ -234,6 +310,8 @@ async function switchSession(s: SessionMeta) {
     messages.value = (records ?? [])
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => ({
+        id: m.id,
+        traceId: m.traceId,
         role: m.role as 'user' | 'assistant',
         content: m.content ?? '',
         error: m.status === 'ERROR',
@@ -301,6 +379,8 @@ function send() {
       onDone(ev: DoneEvent) {
         // SSE 流结束，等打字机队列耗尽后再标记完成
         typeDoneCb = () => {
+          messages.value[aiIdx].id = ev.messageId
+          messages.value[aiIdx].traceId = ev.traceId
           messages.value[aiIdx].streaming = false
           messages.value[aiIdx].waiting   = false
           isStreaming.value = false
@@ -318,8 +398,10 @@ function send() {
         subscribeWorkflowEvents(ev.workflowRunId, aiIdx)
         scrollBottom()
       },
-      onError(errMsg) {
+      onError(errMsg, ev) {
         stopDrip()
+        if (ev?.messageId) messages.value[aiIdx].id = ev.messageId
+        if (ev?.traceId) messages.value[aiIdx].traceId = ev.traceId
         messages.value[aiIdx].streaming = false
         messages.value[aiIdx].waiting   = false
         messages.value[aiIdx].error     = true
@@ -328,6 +410,18 @@ function send() {
       },
     },
   )
+}
+
+async function openTrace(msg: Message) {
+  if (!msg.id) return
+  traceDrawerVisible.value = true
+  traceLoading.value = true
+  traceDetail.value = null
+  try {
+    traceDetail.value = await getConversationTrace(msg.id)
+  } finally {
+    traceLoading.value = false
+  }
 }
 
 function subscribeWorkflowEvents(runId: number, aiIdx: number) {
@@ -451,6 +545,10 @@ function escapeHtml(text: string): string {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;')
+}
+
+function formatScore(score?: number): string {
+  return typeof score === 'number' ? score.toFixed(4) : '-'
 }
 </script>
 
@@ -595,6 +693,83 @@ function escapeHtml(text: string): string {
 .error-text {
   color: #f56c6c;
   font-size: 13px;
+}
+
+.message-actions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.message-actions :deep(.el-button) {
+  height: 22px;
+  padding: 0;
+  font-size: 12px;
+}
+
+.trace-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.trace-section {
+  border-bottom: 1px solid #ebeef5;
+  padding-bottom: 14px;
+}
+
+.trace-section h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #303133;
+}
+
+.trace-section dl {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.trace-section dt {
+  color: #909399;
+}
+
+.trace-section dd {
+  margin: 0;
+  color: #303133;
+  word-break: break-word;
+}
+
+.trace-item {
+  padding: 10px 0;
+  border-top: 1px solid #f2f3f5;
+}
+
+.trace-item:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.trace-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.trace-meta,
+.trace-empty {
+  font-size: 12px;
+  color: #909399;
+}
+
+.trace-item p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 /* Markdown 内容样式重置 */

@@ -17,6 +17,19 @@ public final class TraceContext {
         return IdGenerator.random().generateTraceId();
     }
 
+    public static String currentTraceId() {
+        return MDC.get(TRACE_ID_KEY);
+    }
+
+    public static String ensureTraceId() {
+        String traceId = currentTraceId();
+        if (traceId == null || traceId.isBlank()) {
+            traceId = generateTraceId();
+            MDC.put(TRACE_ID_KEY, traceId);
+        }
+        return traceId;
+    }
+
     public static Runnable wrap(Runnable task) {
         Map<String, String> capturedContext = MDC.getCopyOfContextMap();
         return () -> {

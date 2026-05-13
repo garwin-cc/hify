@@ -11,11 +11,19 @@ public class ConversationMessageResp {
 
     private Long sessionId;
 
+    private String traceId;
+
     private String role;
 
     private String content;
 
     private String status;
+
+    private String errorCode;
+
+    private String errorMessage;
+
+    private Integer partial;
 
     private LocalDateTime createdAt;
 }

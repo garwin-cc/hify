@@ -5,6 +5,7 @@ import com.hify.conversation.api.SendMessageReq;
 import com.hify.common.web.Result;
 import com.hify.conversation.api.ConversationMessageResp;
 import com.hify.conversation.api.ConversationSessionResp;
+import com.hify.conversation.api.ConversationTraceDetailResp;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -35,6 +36,11 @@ public class ConversationController {
     @GetMapping("/{sessionId}/messages")
     public Result<List<ConversationMessageResp>> listMessages(@PathVariable Long sessionId) {
         return Result.ok(conversationService.listMessages(sessionId));
+    }
+
+    @GetMapping("/messages/{messageId}/trace")
+    public Result<ConversationTraceDetailResp> getMessageTrace(@PathVariable Long messageId) {
+        return Result.ok(conversationService.getMessageTrace(messageId));
     }
 
     @DeleteMapping("/{sessionId}")

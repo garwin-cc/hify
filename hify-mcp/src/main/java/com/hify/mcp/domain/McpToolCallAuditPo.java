@@ -16,6 +16,8 @@ public class McpToolCallAuditPo extends BaseEntity {
 
     private String sourceType;
 
+    private String traceId;
+
     private Long conversationSessionId;
 
     private Long conversationMessageId;

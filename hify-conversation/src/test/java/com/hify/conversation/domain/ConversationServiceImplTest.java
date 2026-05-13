@@ -16,6 +16,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -141,5 +142,17 @@ class ConversationServiceImplTest {
                 .hasMessageContaining("会话不存在");
         verify(messageMapper, never()).delete(any());
         verify(sessionMapper, never()).deleteById(eq(404L));
+    }
+
+    @Test
+    void abbreviateDoesNotExceedRequestedLength() throws Exception {
+        Method abbreviate = ConversationServiceImpl.class.getDeclaredMethod("abbreviate", String.class, int.class);
+        abbreviate.setAccessible(true);
+        String content = "右手第四掌骨骨折".repeat(80);
+
+        String preview = (String) abbreviate.invoke(null, content, 512);
+
+        assertThat(preview).hasSizeLessThanOrEqualTo(512);
+        assertThat(preview).endsWith("...");
     }
 }

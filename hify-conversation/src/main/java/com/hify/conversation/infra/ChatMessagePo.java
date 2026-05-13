@@ -17,6 +17,8 @@ public class ChatMessagePo extends BaseEntity {
 
     private Long sessionId;
 
+    private String traceId;
+
     /** user / assistant / tool */
     private String role;
 
@@ -37,6 +39,16 @@ public class ChatMessagePo extends BaseEntity {
     /** stop / length / tool_calls / error */
     private String finishReason;
 
+    private String errorCode;
+
+    private String errorMessage;
+
+    private String debugError;
+
+    private Integer partial;
+
     /** Time-to-first-token in ms; only set for assistant messages */
     private Integer latencyMs;
+
+    private Integer totalLatencyMs;
 }

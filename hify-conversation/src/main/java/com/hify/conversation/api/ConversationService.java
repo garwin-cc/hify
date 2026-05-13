@@ -11,6 +11,8 @@ public interface ConversationService {
 
     List<ConversationMessageResp> listMessages(Long sessionId);
 
+    ConversationTraceDetailResp getMessageTrace(Long messageId);
+
     void deleteSession(Long sessionId);
 
     /**

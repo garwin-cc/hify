@@ -10,6 +10,7 @@ import java.util.Map;
 public class McpToolCallAuditRecord {
 
     private String sourceType;
+    private String traceId;
     private Long conversationSessionId;
     private Long conversationMessageId;
     private Long workflowRunId;

@@ -1,6 +1,8 @@
 package com.hify.mcp.domain;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.hify.mcp.api.McpToolCallAuditRecord;
+import com.hify.mcp.api.McpToolCallAuditResp;
 import com.hify.mcp.api.McpToolCallAuditService;
 import com.hify.mcp.infra.McpToolCallAuditMapper;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ public class McpToolCallAuditServiceImpl implements McpToolCallAuditService {
         }
         McpToolCallAuditPo po = new McpToolCallAuditPo();
         po.setSourceType(blankToDefault(record.getSourceType(), "UNKNOWN"));
+        po.setTraceId(record.getTraceId());
         po.setConversationSessionId(record.getConversationSessionId());
         po.setConversationMessageId(record.getConversationMessageId());
         po.setWorkflowRunId(record.getWorkflowRunId());
@@ -36,6 +39,30 @@ public class McpToolCallAuditServiceImpl implements McpToolCallAuditService {
         po.setResultSummary(abbreviate(record.getResult()));
         po.setErrorSummary(abbreviate(record.getError()));
         mapper.insert(po);
+    }
+
+    @Override
+    public List<McpToolCallAuditResp> listByTraceId(String traceId) {
+        if (traceId == null || traceId.isBlank()) {
+            return List.of();
+        }
+        return mapper.selectList(Wrappers.lambdaQuery(McpToolCallAuditPo.class)
+                        .eq(McpToolCallAuditPo::getTraceId, traceId)
+                        .orderByAsc(McpToolCallAuditPo::getId))
+                .stream()
+                .map(McpToolCallAuditServiceImpl::toResp)
+                .toList();
+    }
+
+    private static McpToolCallAuditResp toResp(McpToolCallAuditPo po) {
+        McpToolCallAuditResp resp = new McpToolCallAuditResp();
+        resp.setTraceId(po.getTraceId());
+        resp.setToolName(po.getToolName());
+        resp.setArgumentKeys(po.getArgumentKeys());
+        resp.setElapsedMs(po.getElapsedMs());
+        resp.setSuccess(po.getSuccess() != null && po.getSuccess() == 1);
+        resp.setErrorSummary(po.getErrorSummary());
+        return resp;
     }
 
     private static List<String> argumentKeys(McpToolCallAuditRecord record) {

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Hify
+    orgId: 1
+    folder: Hify
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

@@ -11,5 +11,7 @@ public class AppMaintenanceProperties {
 
     private boolean enabled = true;
     private int logRetentionDays = 90;
+    private int runtimeLogRetentionDays = 90;
+    private int auditLogRetentionDays = 180;
     private int jobLogRetentionDays = 30;
 }

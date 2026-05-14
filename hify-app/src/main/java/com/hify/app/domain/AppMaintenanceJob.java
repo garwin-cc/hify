@@ -16,6 +16,7 @@ public class AppMaintenanceJob {
 
     private static final String EXPIRED_SESSION_CLEANUP = "EXPIRED_SESSION_CLEANUP";
     private static final String RUNTIME_LOG_CLEANUP = "RUNTIME_LOG_CLEANUP";
+    private static final String AUDIT_LOG_CLEANUP = "AUDIT_LOG_CLEANUP";
     private static final String JOB_LOG_CLEANUP = "JOB_LOG_CLEANUP";
 
     private final JdbcTemplate jdbcTemplate;
@@ -36,6 +37,7 @@ public class AppMaintenanceJob {
             return;
         }
         cleanupRuntimeLogs();
+        cleanupAuditLogs();
         cleanupJobLogs();
     }
 
@@ -57,7 +59,7 @@ public class AppMaintenanceJob {
 
     public int cleanupRuntimeLogs() {
         return appJobRunLogger.run(RUNTIME_LOG_CLEANUP, () -> {
-            LocalDateTime before = LocalDateTime.now().minusDays(Math.max(1, properties.getLogRetentionDays()));
+            LocalDateTime before = LocalDateTime.now().minusDays(runtimeLogRetentionDays());
             int affected = 0;
             for (String table : runtimeLogTables()) {
                 affected += cleanupTable(table, before);
@@ -65,6 +67,11 @@ public class AppMaintenanceJob {
             log.info("runtime log cleanup affectedRows={}", affected);
             return affected;
         });
+    }
+
+    public int cleanupAuditLogs() {
+        return appJobRunLogger.run(AUDIT_LOG_CLEANUP, () ->
+                cleanupTable("t_audit_log", LocalDateTime.now().minusDays(Math.max(1, properties.getAuditLogRetentionDays()))));
     }
 
     public int cleanupJobLogs() {
@@ -81,13 +88,19 @@ public class AppMaintenanceJob {
 
     private List<String> runtimeLogTables() {
         return List.of(
-                "t_audit_log",
                 "t_conversation_trace",
                 "t_conversation_llm_trace",
                 "t_conversation_rag_trace",
                 "t_mcp_tool_call_audit",
                 "t_llm_call_stat"
         );
+    }
+
+    private int runtimeLogRetentionDays() {
+        if (properties.getRuntimeLogRetentionDays() > 0) {
+            return properties.getRuntimeLogRetentionDays();
+        }
+        return Math.max(1, properties.getLogRetentionDays());
     }
 
     private boolean tableExists(String tableName) {

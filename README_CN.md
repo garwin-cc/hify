@@ -193,6 +193,7 @@ docker compose down -v
 k8s/
 ├── hify-backend.yaml
 ├── hify-frontend.yaml
+├── hify-ingress.yaml
 ├── hify-configmap-template.yaml
 ├── hify-secret-template.yaml
 └── prometheus.yaml
@@ -212,6 +213,8 @@ kubectl apply -f k8s/hify-secret-template.yaml
 kubectl apply -f k8s/hify-configmap-template.yaml
 kubectl apply -f k8s/hify-backend.yaml
 kubectl apply -f k8s/hify-frontend.yaml
+kubectl apply -f k8s/hify-ingress.yaml
+kubectl apply -f k8s/prometheus.yaml
 ```
 
 生产环境建议：
@@ -220,6 +223,7 @@ kubectl apply -f k8s/hify-frontend.yaml
 - 为上传目录配置持久化卷。
 - 为 SSE 入口关闭代理缓冲，并设置较长 read timeout。
 - MySQL、Redis、PostgreSQL 使用托管服务或独立 StatefulSet。
+- 1000 人规模部署、容量规划、备份恢复、慢查询治理和日志保留策略见 `docs/ops/deployment-operations.md`。
 
 ## 数据库
 

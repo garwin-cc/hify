@@ -133,6 +133,8 @@ hify:
   jobs:
     enabled: true
     log-retention-days: 90
+    runtime-log-retention-days: 90
+    audit-log-retention-days: 180
     job-log-retention-days: 30
 
 # ── 日志级别（格式和滚动策略由 logback-spring.xml 管理）────────────────────

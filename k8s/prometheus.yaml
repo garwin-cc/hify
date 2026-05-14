@@ -1,6 +1,173 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: hify-grafana-dashboards-provider
+  labels:
+    app: hify-grafana
+data:
+  dashboard.yml: |
+    apiVersion: 1
+    providers:
+      - name: Hify
+        orgId: 1
+        folder: Hify
+        type: file
+        disableDeletion: true
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hify-grafana-datasource
+  labels:
+    app: hify-grafana
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://hify-prometheus:9090
+        isDefault: true
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hify-grafana-dashboard
+  labels:
+    app: hify-grafana
+data:
+  hify-dashboard.json: |
+    {
+      "title": "Hify Production Overview",
+      "uid": "hify-production-overview",
+      "schemaVersion": 39,
+      "refresh": "15s",
+      "time": {"from": "now-6h", "to": "now"},
+      "panels": [
+        {"id":1,"type":"timeseries","title":"HTTP 请求量","gridPos":{"h":8,"w":8,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(rate(http_server_requests_seconds_count{application=\"hify\"}[5m]))","legendFormat":"requests/s","refId":"A"}]},
+        {"id":2,"type":"timeseries","title":"HTTP 错误率","gridPos":{"h":8,"w":8,"x":8,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(rate(http_server_requests_seconds_count{application=\"hify\",status=~\"5..\"}[5m])) / sum(rate(http_server_requests_seconds_count{application=\"hify\"}[5m]))","legendFormat":"5xx rate","refId":"A"}]},
+        {"id":3,"type":"timeseries","title":"SSE 连接数","gridPos":{"h":8,"w":8,"x":16,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(hify_sse_active_connections)","legendFormat":"active SSE","refId":"A"}]},
+        {"id":4,"type":"timeseries","title":"LLM 调用","gridPos":{"h":8,"w":8,"x":0,"y":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (provider, model, result) (rate(hify_llm_calls_total[5m]))","legendFormat":"{{provider}} / {{model}} / {{result}}","refId":"A"}]},
+        {"id":5,"type":"timeseries","title":"LLM Token","gridPos":{"h":8,"w":8,"x":8,"y":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (provider, model, direction) (rate(hify_llm_tokens_total[5m]))","legendFormat":"{{provider}} / {{model}} / {{direction}}","refId":"A"}]},
+        {"id":6,"type":"timeseries","title":"RAG 检索延迟","gridPos":{"h":8,"w":8,"x":16,"y":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"histogram_quantile(0.95, sum by (le) (rate(hify_rag_retrieval_latency_seconds_bucket[5m]))) * 1000","legendFormat":"p95","refId":"A"}]},
+        {"id":7,"type":"timeseries","title":"MCP 调用","gridPos":{"h":8,"w":8,"x":0,"y":16},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (tool, result) (rate(hify_mcp_tool_calls_total[5m]))","legendFormat":"{{tool}} / {{result}}","refId":"A"}]},
+        {"id":8,"type":"timeseries","title":"Workflow Run","gridPos":{"h":8,"w":8,"x":8,"y":16},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (status) (rate(hify_workflow_runs_total[5m]))","legendFormat":"{{status}}","refId":"A"}]},
+        {"id":9,"type":"timeseries","title":"Hikari 连接池","gridPos":{"h":8,"w":8,"x":16,"y":16},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"hikaricp_connections_active{application=\"hify\"}","legendFormat":"{{pool}} active","refId":"A"},{"expr":"hikaricp_connections_pending{application=\"hify\"}","legendFormat":"{{pool}} pending","refId":"B"}]}
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hify-grafana
+  labels:
+    app: hify-grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hify-grafana
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: hify-grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.1.4
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hify-grafana-secret
+                  key: admin-password
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: datasource
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yml
+              subPath: datasource.yml
+              readOnly: true
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards/dashboard.yml
+              subPath: dashboard.yml
+              readOnly: true
+            - name: dashboard
+              mountPath: /var/lib/grafana/dashboards/hify-dashboard.json
+              subPath: hify-dashboard.json
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: datasource
+          configMap:
+            name: hify-grafana-datasource
+        - name: dashboard-provider
+          configMap:
+            name: hify-grafana-dashboards-provider
+        - name: dashboard
+          configMap:
+            name: hify-grafana-dashboard
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hify-grafana-secret
+  labels:
+    app: hify-grafana
+type: Opaque
+stringData:
+  admin-password: "change-me-grafana"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hify-grafana
+  labels:
+    app: hify-grafana
+spec:
+  type: ClusterIP
+  selector:
+    app: hify-grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: hify-prometheus-config
   labels:
     app: hify-prometheus

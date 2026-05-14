@@ -19,7 +19,8 @@
   - 适合企业内部长期运行。
   - backend 使用 ClusterIP，frontend 可用 NodePort 或 Ingress 暴露。
   - 配置走 ConfigMap，密码和 API Key 走 Secret。
-  - Prometheus 抓取 `/actuator/prometheus`，Grafana 导入 Hify Dashboard。
+- Prometheus 抓取 `/actuator/prometheus`，Grafana 导入 Hify Dashboard。
+- 1000 人规模生产部署以 K8s 为主，Docker Compose 仅保留单机交付、演示和验收能力；详细容量和运维手册见 `docs/ops/deployment-operations.md`。
 
 ### K8s 目标架构
 
@@ -44,7 +45,10 @@ nginx.ingress.kubernetes.io/proxy-buffering: "off"
 nginx.ingress.kubernetes.io/limit-rps: "20"
 ```
 
-**Backend 容器规格**：requests 512Mi/250m，limits 1Gi/1000m，replicas=2
+**Backend 容器规格**：
+
+- 小团队基线：requests 512Mi/250m，limits 1Gi/1000m，replicas=2
+- 1000 人生产基线：requests 1Gi/500m，limits 2Gi/2CPU，HPA 2-8
 
 **JVM 启动参数**：
 
@@ -72,8 +76,11 @@ location /api/ {
 ### 健康检查和可观测性
 
 - `/api/v1/health` 必须检查 MySQL、Redis、pgvector，所有依赖 UP 才返回整体 UP。
+- K8s liveness 使用 `/api/v1/health/liveness`，readiness 使用 `/api/v1/health/readiness`，deep health 只供人工排障。
 - `/actuator/prometheus` 暴露 Micrometer 指标，指标统一使用 `hify_` 前缀。
+- Grafana Dashboard 至少覆盖请求量、错误率、SSE 连接数、LLM token、RAG 延迟、MCP 调用、Workflow run、Hikari 连接池。
 - JSON 日志输出到 stdout，由 K8s 日志采集系统收集。
 - 同一请求链路必须共享 traceId；对话、LLM、MCP、工作流异常都必须带 traceId。
+- 运行日志和审计日志分开治理：运行日志走容器日志系统，审计日志落 `t_audit_log`；保留周期、归档和敏感字段脱敏策略见运维手册。
 
 ---

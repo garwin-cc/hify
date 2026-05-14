@@ -19,6 +19,7 @@ spec:
       labels:
         app: hify-frontend
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: hify-frontend
           image: hify-frontend:latest
@@ -62,11 +63,43 @@ metadata:
   labels:
     app: hify-frontend
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: hify-frontend
   ports:
     - name: http
       port: 80
       targetPort: http
-      nodePort: 30080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hify-frontend
+  labels:
+    app: hify-frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hify-frontend
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: hify-frontend
+  labels:
+    app: hify-frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: hify-frontend

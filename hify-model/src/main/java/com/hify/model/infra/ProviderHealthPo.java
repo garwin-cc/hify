@@ -29,8 +29,21 @@ public class ProviderHealthPo {
 
     private LocalDateTime lastSuccessAt;
 
+    private LocalDateTime lastErrorAt;
+
+    private LocalDateTime lastAlertAt;
+
+    /** OK / OPEN */
+    private String alertStatus;
+
     /** 当前连续失败次数，成功后清零 */
     private Integer failCount;
+
+    /** 累计成功探测次数 */
+    private Integer successCount;
+
+    /** 累计探测次数 */
+    private Integer totalCheckCount;
 
     /** 最近一次探活耗时（ms） */
     private Integer latencyMs;

@@ -13,11 +13,11 @@ public class ProviderAdapterFactory {
     private final OpenAiCompatibleAdapter  openAiCompatibleAdapter;
 
     public ProviderAdapter getAdapter(String type) {
-        return switch (type) {
+        return switch (type == null ? "" : type.toUpperCase()) {
             case "ANTHROPIC"         -> anthropicAdapter;
             case "OLLAMA"            -> ollamaAdapter;
-            case "OPENAI_COMPATIBLE", "ALIBABA" -> openAiCompatibleAdapter;
-            default                  -> openAiAdapter;   // OPENAI, DEEPSEEK, 其他
+            case "OPENAI_COMPATIBLE", "ALIBABA", "DEEPSEEK", "MODEL_GATEWAY" -> openAiCompatibleAdapter;
+            default                  -> openAiAdapter;
         };
     }
 }

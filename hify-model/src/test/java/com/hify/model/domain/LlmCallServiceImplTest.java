@@ -6,6 +6,10 @@ import com.hify.common.resilience.CircuitBreakerService;
 import com.hify.model.api.ChatRequest;
 import com.hify.model.api.ChatResponse;
 import com.hify.model.api.ChatStreamCallback;
+import com.hify.model.api.LlmCallStatRecord;
+import com.hify.model.api.LlmUsageStatsService;
+import com.hify.model.api.ModelDefaultPolicyResp;
+import com.hify.model.api.ModelDefaultPolicyService;
 import com.hify.model.domain.adapter.ProviderAdapter;
 import com.hify.model.domain.adapter.ProviderAdapterFactory;
 import com.hify.model.infra.ModelConfigMapper;
@@ -46,6 +50,10 @@ class LlmCallServiceImplTest {
     private CircuitBreakerService circuitBreakerService;
     @Mock
     private HifyMetrics hifyMetrics;
+    @Mock
+    private ModelDefaultPolicyService modelDefaultPolicyService;
+    @Mock
+    private LlmUsageStatsService llmUsageStatsService;
 
     private LlmCallServiceImpl llmCallService;
 
@@ -62,6 +70,8 @@ class LlmCallServiceImplTest {
                 hifyMetrics,
                 circuitBreakerService,
                 new LlmFallbackProperties(Map.of("OPENAI", "OLLAMA")));
+        llmCallService.setModelDefaultPolicyService(modelDefaultPolicyService);
+        llmCallService.setLlmUsageStatsService(llmUsageStatsService);
     }
 
     @Test
@@ -88,6 +98,42 @@ class LlmCallServiceImplTest {
         assertThat(request.getModelId()).isEqualTo("llama3");
         verify(circuitBreakerService).execute(eq("OPENAI"), any());
         verify(circuitBreakerService).execute(eq("OLLAMA"), any());
+        org.mockito.ArgumentCaptor<LlmCallStatRecord> captor =
+                org.mockito.ArgumentCaptor.forClass(LlmCallStatRecord.class);
+        verify(llmUsageStatsService, org.mockito.Mockito.times(2)).record(captor.capture());
+        assertThat(captor.getAllValues())
+                .extracting(LlmCallStatRecord::isSuccess, LlmCallStatRecord::isFallbackUsed)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(false, false),
+                        org.assertj.core.groups.Tuple.tuple(true, true)
+                );
+    }
+
+    @Test
+    void chatUsesDefaultPolicyFallbackBeforeLegacyProviderTypeFallback() {
+        ModelConfigPo primaryModel = model(10L, 1L, "gpt-4o", "CHAT");
+        ProviderPo primaryProvider = provider(1L, "OPENAI");
+        ModelConfigPo policyModel = model(30L, 3L, "qwen-plus", "CHAT");
+        ProviderPo policyProvider = provider(3L, "ALIBABA");
+        ChatRequest request = ChatRequest.builder().messages(List.of()).build();
+        ChatResponse policyResponse = ChatResponse.builder().content("policy ok").finishReason("stop").build();
+
+        when(modelConfigMapper.selectOne(any())).thenReturn(primaryModel);
+        when(providerMapper.selectOne(any())).thenReturn(primaryProvider, policyProvider);
+        when(modelDefaultPolicyService.resolve(eq("CHAT"), any(), eq("OLLAMA")))
+                .thenReturn(policyResp(30L));
+        when(modelConfigMapper.selectById(30L)).thenReturn(policyModel);
+        when(adapterFactory.getAdapter("OPENAI")).thenReturn(primaryAdapter);
+        when(adapterFactory.getAdapter("ALIBABA")).thenReturn(fallbackAdapter);
+        when(primaryAdapter.chat(eq(primaryProvider), eq(request))).thenThrow(
+                new LlmApiException(LlmApiException.Type.TIMEOUT, "timeout"));
+        when(fallbackAdapter.chat(eq(policyProvider), eq(request))).thenReturn(policyResponse);
+
+        ChatResponse response = llmCallService.chat(10L, request);
+
+        assertThat(response.getContent()).isEqualTo("policy ok");
+        assertThat(request.getModelId()).isEqualTo("qwen-plus");
+        verify(modelConfigMapper, org.mockito.Mockito.never()).selectList(any());
     }
 
     @Test
@@ -149,5 +195,16 @@ class LlmCallServiceImplTest {
         provider.setType(type);
         provider.setEnabled(1);
         return provider;
+    }
+
+    private static ModelDefaultPolicyResp policyResp(Long modelConfigId) {
+        ModelDefaultPolicyResp resp = new ModelDefaultPolicyResp();
+        resp.setScopeType("GLOBAL");
+        resp.setScopeId(0L);
+        resp.setModelType("CHAT");
+        resp.setProviderType("");
+        resp.setModelConfigId(modelConfigId);
+        resp.setEnabled(1);
+        return resp;
     }
 }

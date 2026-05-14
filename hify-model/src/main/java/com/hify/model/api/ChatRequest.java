@@ -36,4 +36,7 @@ public class ChatRequest {
 
     /** 最大输出 token 数，null 时使用模型配置默认值 */
     private Integer maxTokens;
+
+    /** 可选调用上下文，用于默认模型策略、fallback 和成本统计。 */
+    private LlmCallContext context;
 }

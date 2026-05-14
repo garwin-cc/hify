@@ -107,27 +107,44 @@ public class ProviderHealthCheckJob {
             health.setProviderId(providerId);
             health.setStatus("UNKNOWN");
             health.setFailCount(0);
+            health.setSuccessCount(0);
+            health.setTotalCheckCount(0);
+            health.setAlertStatus("OK");
         }
 
         health.setLastCheckAt(now);
         health.setLatencyMs(result.getLatencyMs());
         health.setUpdatedAt(now);
+        health.setTotalCheckCount(nullToZero(health.getTotalCheckCount()) + 1);
 
         if (result.isSuccess()) {
             health.setStatus("UP");
             health.setLastSuccessAt(now);
             health.setFailCount(0);
+            health.setSuccessCount(nullToZero(health.getSuccessCount()) + 1);
+            health.setAlertStatus("OK");
             health.setErrorMessage("");
         } else {
             int failCount = (health.getFailCount() == null ? 0 : health.getFailCount()) + 1;
             health.setFailCount(failCount);
+            health.setLastErrorAt(now);
             health.setErrorMessage(result.getErrorMessage());
             if (failCount >= FAIL_THRESHOLD) {
                 health.setStatus("DOWN");
+                health.setAlertStatus("OPEN");
+                if (health.getLastAlertAt() == null) {
+                    health.setLastAlertAt(now);
+                }
+            } else {
+                health.setStatus("DEGRADED");
             }
         }
 
         providerHealthMapper.upsert(health);
+    }
+
+    private static int nullToZero(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private void evictDetailCache(Long providerId) {

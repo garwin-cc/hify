@@ -366,7 +366,12 @@ public class ProviderServiceImpl implements ProviderService {
         resp.setStatus(po.getStatus());
         resp.setLastCheckAt(po.getLastCheckAt());
         resp.setLastSuccessAt(po.getLastSuccessAt());
+        resp.setLastErrorAt(po.getLastErrorAt());
+        resp.setLastAlertAt(po.getLastAlertAt());
+        resp.setAlertStatus(po.getAlertStatus());
         resp.setFailCount(po.getFailCount());
+        resp.setSuccessCount(po.getSuccessCount());
+        resp.setTotalCheckCount(po.getTotalCheckCount());
         resp.setLatencyMs(po.getLatencyMs());
         resp.setErrorMessage(po.getErrorMessage());
         resp.setUpdatedAt(po.getUpdatedAt());
@@ -381,24 +386,39 @@ public class ProviderServiceImpl implements ProviderService {
             health = new ProviderHealthPo();
             health.setProviderId(providerId);
             health.setFailCount(0);
+            health.setSuccessCount(0);
+            health.setTotalCheckCount(0);
+            health.setAlertStatus("OK");
         }
 
         health.setLastCheckAt(now);
         health.setLatencyMs(result.getLatencyMs());
         health.setUpdatedAt(now);
+        health.setTotalCheckCount(nullToZero(health.getTotalCheckCount()) + 1);
 
         if (result.isSuccess()) {
             health.setStatus("UP");
             health.setLastSuccessAt(now);
             health.setFailCount(0);
+            health.setSuccessCount(nullToZero(health.getSuccessCount()) + 1);
+            health.setAlertStatus("OK");
             health.setErrorMessage("");
         } else {
             health.setStatus("DOWN");
             health.setFailCount(health.getFailCount() == null ? 1 : health.getFailCount() + 1);
+            health.setLastErrorAt(now);
+            health.setAlertStatus("OPEN");
+            if (health.getLastAlertAt() == null) {
+                health.setLastAlertAt(now);
+            }
             health.setErrorMessage(result.getErrorMessage());
         }
 
         providerHealthMapper.upsert(health);
+    }
+
+    private static int nullToZero(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private void syncDiscoveredModels(ProviderPo provider, List<String> modelIds) {

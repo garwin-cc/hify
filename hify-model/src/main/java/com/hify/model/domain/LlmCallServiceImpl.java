@@ -3,12 +3,17 @@ package com.hify.model.domain;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
+import com.hify.common.log.TraceContext;
 import com.hify.common.metrics.HifyMetrics;
 import com.hify.common.resilience.CircuitBreakerService;
 import com.hify.model.api.ChatRequest;
 import com.hify.model.api.ChatResponse;
 import com.hify.model.api.ChatStreamCallback;
 import com.hify.model.api.LlmCallService;
+import com.hify.model.api.LlmCallStatRecord;
+import com.hify.model.api.LlmUsageStatsService;
+import com.hify.model.api.ModelDefaultPolicyResp;
+import com.hify.model.api.ModelDefaultPolicyService;
 import com.hify.model.domain.adapter.ProviderAdapter;
 import com.hify.model.domain.adapter.ProviderAdapterFactory;
 import com.hify.model.infra.ModelConfigMapper;
@@ -17,11 +22,13 @@ import com.hify.model.infra.ProviderMapper;
 import com.hify.model.infra.ProviderPo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @Service
@@ -34,6 +41,18 @@ public class LlmCallServiceImpl implements LlmCallService {
     private final HifyMetrics           hifyMetrics;
     private final CircuitBreakerService circuitBreakerService;
     private final LlmFallbackProperties fallbackProperties;
+    private ModelDefaultPolicyService modelDefaultPolicyService;
+    private LlmUsageStatsService llmUsageStatsService;
+
+    @Autowired(required = false)
+    public void setModelDefaultPolicyService(ModelDefaultPolicyService modelDefaultPolicyService) {
+        this.modelDefaultPolicyService = modelDefaultPolicyService;
+    }
+
+    @Autowired(required = false)
+    public void setLlmUsageStatsService(LlmUsageStatsService llmUsageStatsService) {
+        this.llmUsageStatsService = llmUsageStatsService;
+    }
 
     @Override
     public ChatResponse chat(Long modelConfigId, ChatRequest request) {
@@ -51,10 +70,14 @@ public class LlmCallServiceImpl implements LlmCallService {
                     modelConfigId, config.getModelId(), provider.getType(),
                     response.getFinishReason(), response.getInputTokens(), response.getOutputTokens(),
                     System.currentTimeMillis() - start);
+            recordStat(request, provider, config, "CHAT", response, true, false,
+                    System.currentTimeMillis() - start, null);
             hifyMetrics.recordLlmCall(provider.getType(), config.getModelId(), "success",
                     System.currentTimeMillis() - start);
             return response;
         } catch (Exception e) {
+            recordStat(request, provider, config, "CHAT", null, false, false,
+                    System.currentTimeMillis() - start, e);
             ChatResponse fallbackResponse = tryFallbackChat(provider, request, e);
             if (fallbackResponse != null) {
                 return fallbackResponse;
@@ -77,17 +100,22 @@ public class LlmCallServiceImpl implements LlmCallService {
         long start = System.currentTimeMillis();
         log.info("llm stream start modelConfigId={} model={} provider={}",
                 modelConfigId, config.getModelId(), provider.getType());
+        AtomicReference<ChatResponse> completed = new AtomicReference<>();
         try {
-            streamWithResilience(provider, request, callback);
+            streamWithResilience(provider, request, recordingCallback(callback, completed));
             log.info("llm stream end modelConfigId={} model={} provider={} elapsedMs={}",
                     modelConfigId, config.getModelId(), provider.getType(),
                     System.currentTimeMillis() - start);
+            recordStat(request, provider, config, "STREAM", completed.get(), true, false,
+                    System.currentTimeMillis() - start, null);
             hifyMetrics.recordLlmCall(provider.getType(), config.getModelId(), "success",
                     System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.warn("llm stream failed modelConfigId={} model={} provider={} elapsedMs={} message={}",
                     modelConfigId, config.getModelId(), provider.getType(),
                     System.currentTimeMillis() - start, e.getMessage());
+            recordStat(request, provider, config, "STREAM", completed.get(), false, false,
+                    System.currentTimeMillis() - start, e);
             hifyMetrics.recordLlmCall(provider.getType(), config.getModelId(), "failure",
                     System.currentTimeMillis() - start);
             if (!tryFallbackStream(provider, request, callback, e)) {
@@ -144,7 +172,7 @@ public class LlmCallServiceImpl implements LlmCallService {
     }
 
     private ChatResponse tryFallbackChat(ProviderPo primaryProvider, ChatRequest request, Exception primaryError) {
-        FallbackTarget fallback = resolveFallback(primaryProvider);
+        FallbackTarget fallback = resolveFallback(primaryProvider, request);
         if (fallback == null) {
             return null;
         }
@@ -152,13 +180,23 @@ public class LlmCallServiceImpl implements LlmCallService {
         ProviderAdapter fallbackAdapter = adapterFactory.getAdapter(fallback.provider().getType());
         log.warn("llm chat fallback primaryProvider={} fallbackProvider={} message={}",
                 primaryProvider.getType(), fallback.provider().getType(), primaryError.getMessage());
-        return circuitBreakerService.execute(fallback.provider().getType(),
-                () -> fallbackAdapter.chat(fallback.provider(), request));
+        long start = System.currentTimeMillis();
+        try {
+            ChatResponse response = circuitBreakerService.execute(fallback.provider().getType(),
+                    () -> fallbackAdapter.chat(fallback.provider(), request));
+            recordStat(request, fallback.provider(), fallback.modelConfig(), "CHAT", response, true, true,
+                    System.currentTimeMillis() - start, null);
+            return response;
+        } catch (Exception e) {
+            recordStat(request, fallback.provider(), fallback.modelConfig(), "CHAT", null, false, true,
+                    System.currentTimeMillis() - start, e);
+            throw e;
+        }
     }
 
     private boolean tryFallbackStream(ProviderPo primaryProvider, ChatRequest request, ChatStreamCallback callback,
                                       Exception primaryError) {
-        FallbackTarget fallback = resolveFallback(primaryProvider);
+        FallbackTarget fallback = resolveFallback(primaryProvider, request);
         if (fallback == null) {
             return false;
         }
@@ -166,10 +204,20 @@ public class LlmCallServiceImpl implements LlmCallService {
         ProviderAdapter fallbackAdapter = adapterFactory.getAdapter(fallback.provider().getType());
         log.warn("llm stream fallback primaryProvider={} fallbackProvider={} message={}",
                 primaryProvider.getType(), fallback.provider().getType(), primaryError.getMessage());
-        circuitBreakerService.execute(fallback.provider().getType(), () -> {
-            fallbackAdapter.streamChat(fallback.provider(), request, callback);
-            return Boolean.TRUE;
-        });
+        AtomicReference<ChatResponse> completed = new AtomicReference<>();
+        long start = System.currentTimeMillis();
+        try {
+            circuitBreakerService.execute(fallback.provider().getType(), () -> {
+                fallbackAdapter.streamChat(fallback.provider(), request, recordingCallback(callback, completed));
+                return Boolean.TRUE;
+            });
+            recordStat(request, fallback.provider(), fallback.modelConfig(), "STREAM", completed.get(), true, true,
+                    System.currentTimeMillis() - start, null);
+        } catch (Exception e) {
+            recordStat(request, fallback.provider(), fallback.modelConfig(), "STREAM", completed.get(), false, true,
+                    System.currentTimeMillis() - start, e);
+            throw e;
+        }
         return true;
     }
 
@@ -196,8 +244,12 @@ public class LlmCallServiceImpl implements LlmCallService {
         });
     }
 
-    private FallbackTarget resolveFallback(ProviderPo primaryProvider) {
+    private FallbackTarget resolveFallback(ProviderPo primaryProvider, ChatRequest request) {
         String fallbackType = fallbackProperties.fallbackType(primaryProvider.getType());
+        FallbackTarget policyTarget = resolvePolicyFallback(primaryProvider, request, fallbackType);
+        if (policyTarget != null) {
+            return policyTarget;
+        }
         if (fallbackType == null || fallbackType.isBlank()
                 || fallbackType.equalsIgnoreCase(primaryProvider.getType())) {
             return null;
@@ -216,6 +268,83 @@ public class LlmCallServiceImpl implements LlmCallService {
             }
         }
         return null;
+    }
+
+    private FallbackTarget resolvePolicyFallback(ProviderPo primaryProvider, ChatRequest request, String fallbackType) {
+        if (modelDefaultPolicyService == null) {
+            return null;
+        }
+        ModelDefaultPolicyResp policy = modelDefaultPolicyService.resolve("CHAT",
+                request == null ? null : request.getContext(), fallbackType);
+        if (policy == null || policy.getModelConfigId() == null) {
+            return null;
+        }
+        ModelConfigPo modelConfig = modelConfigMapper.selectById(policy.getModelConfigId());
+        if (modelConfig == null || !Integer.valueOf(1).equals(modelConfig.getEnabled())) {
+            return null;
+        }
+        ProviderPo provider = requireProvider(modelConfig.getProviderId());
+        if (provider.getId().equals(primaryProvider.getId())) {
+            return null;
+        }
+        return new FallbackTarget(modelConfig, provider);
+    }
+
+    private ChatStreamCallback recordingCallback(ChatStreamCallback callback, AtomicReference<ChatResponse> completed) {
+        return new ChatStreamCallback() {
+            @Override
+            public void onToken(String token) {
+                callback.onToken(token);
+            }
+
+            @Override
+            public void onComplete(ChatResponse response) {
+                completed.set(response);
+                callback.onComplete(response);
+            }
+
+            @Override
+            public void onError(com.hify.common.http.LlmApiException e) {
+                callback.onError(e);
+            }
+        };
+    }
+
+    private void recordStat(ChatRequest request, ProviderPo provider, ModelConfigPo config, String callType,
+                            ChatResponse response, boolean success, boolean fallbackUsed,
+                            long elapsedMs, Exception error) {
+        if (llmUsageStatsService == null) {
+            return;
+        }
+        llmUsageStatsService.record(LlmCallStatRecord.builder()
+                .traceId(TraceContext.ensureTraceId())
+                .context(request == null ? null : request.getContext())
+                .providerId(provider.getId())
+                .providerType(provider.getType())
+                .modelConfigId(config.getId())
+                .modelId(config.getModelId())
+                .callType(callType)
+                .success(success)
+                .fallbackUsed(fallbackUsed)
+                .inputTokens(response == null ? 0 : response.getInputTokens())
+                .outputTokens(response == null ? 0 : response.getOutputTokens())
+                .latencyMs((int) Math.min(Integer.MAX_VALUE, elapsedMs))
+                .errorCode(errorCode(error))
+                .errorMessage(error == null ? "" : error.getMessage())
+                .build());
+    }
+
+    private static String errorCode(Exception error) {
+        if (error == null) {
+            return "";
+        }
+        if (error instanceof BizException bizException) {
+            return bizException.getErrorCode().name();
+        }
+        if (error instanceof com.hify.common.http.LlmApiException llmApiException) {
+            return llmApiException.getType().name();
+        }
+        return error.getClass().getSimpleName();
     }
 
     private record FallbackTarget(ModelConfigPo modelConfig, ProviderPo provider) {

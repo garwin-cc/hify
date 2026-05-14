@@ -19,15 +19,22 @@ public interface ProviderHealthMapper extends BaseMapper<ProviderHealthPo> {
     @Insert("""
             INSERT INTO t_provider_health
                 (provider_id, status, last_check_at, last_success_at,
-                 fail_count, latency_ms, error_message, updated_at)
+                 last_error_at, last_alert_at, alert_status, fail_count,
+                 success_count, total_check_count, latency_ms, error_message, updated_at)
             VALUES
                 (#{h.providerId}, #{h.status}, #{h.lastCheckAt}, #{h.lastSuccessAt},
-                 #{h.failCount}, #{h.latencyMs}, #{h.errorMessage}, #{h.updatedAt})
+                 #{h.lastErrorAt}, #{h.lastAlertAt}, #{h.alertStatus}, #{h.failCount},
+                 #{h.successCount}, #{h.totalCheckCount}, #{h.latencyMs}, #{h.errorMessage}, #{h.updatedAt})
             ON DUPLICATE KEY UPDATE
                 status          = VALUES(status),
                 last_check_at   = VALUES(last_check_at),
                 last_success_at = VALUES(last_success_at),
+                last_error_at   = VALUES(last_error_at),
+                last_alert_at   = VALUES(last_alert_at),
+                alert_status    = VALUES(alert_status),
                 fail_count      = VALUES(fail_count),
+                success_count   = VALUES(success_count),
+                total_check_count = VALUES(total_check_count),
                 latency_ms      = VALUES(latency_ms),
                 error_message   = VALUES(error_message),
                 updated_at      = VALUES(updated_at)

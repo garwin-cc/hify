@@ -61,4 +61,43 @@ public class AgentController {
     public PageResult<AgentListItemResp> listPage(AgentQuery query) {
         return agentService.listPage(query);
     }
+
+    @GetMapping("/{id}/versions")
+    public Result<List<AgentVersionResp>> listVersions(@PathVariable Long id) {
+        return Result.ok(agentService.listVersions(id));
+    }
+
+    @PostMapping("/{id}/versions/test")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<AgentVersionResp> publishTestVersion(@PathVariable Long id,
+                                                       @Valid @RequestBody AgentPublishReq req) {
+        return Result.ok(agentService.publishTestVersion(id, req));
+    }
+
+    @PostMapping("/{id}/versions/publish")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<AgentVersionResp> publishVersion(@PathVariable Long id,
+                                                   @Valid @RequestBody AgentPublishReq req) {
+        return Result.ok(agentService.publishVersion(id, req));
+    }
+
+    @PostMapping("/{id}/versions/{versionNo}/rollback")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<AgentDetailResp> rollbackVersion(@PathVariable Long id,
+                                                   @PathVariable Integer versionNo,
+                                                   @RequestBody(required = false) AgentRollbackReq req) {
+        return Result.ok(agentService.rollbackVersion(id, versionNo, req));
+    }
+
+    @PostMapping("/{id}/apps")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<AgentAppResp> createApp(@PathVariable Long id,
+                                          @Valid @RequestBody AgentAppReq req) {
+        return Result.ok(agentService.createApp(id, req));
+    }
+
+    @GetMapping("/{id}/apps")
+    public Result<List<AgentAppResp>> listApps(@PathVariable Long id) {
+        return Result.ok(agentService.listApps(id));
+    }
 }

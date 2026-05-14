@@ -16,6 +16,10 @@ public class CreateAgentReq {
     @Size(max = 500, message = "描述不超过 500 个字符")
     private String description = "";
 
+    private Long workspaceId;
+
+    private Long projectId;
+
     @NotBlank(message = "系统提示词不能为空")
     private String systemPrompt;
 
@@ -53,4 +57,8 @@ public class CreateAgentReq {
 
     /** 绑定的 MCP 工具 ID 列表，顺序即为 sort_order */
     private List<Long> toolIds;
+
+    @Min(value = 0, message = "maxToolRounds 最小为 0")
+    @Max(value = 5, message = "maxToolRounds 不超过 5")
+    private Integer maxToolRounds;
 }

@@ -15,6 +15,10 @@ public class UpdateAgentReq {
     @Size(max = 500, message = "描述不超过 500 个字符")
     private String description;
 
+    private Long workspaceId;
+
+    private Long projectId;
+
     private String systemPrompt;
 
     private Long modelConfigId;
@@ -54,4 +58,8 @@ public class UpdateAgentReq {
 
     /** null 表示不修改工具绑定；空列表表示清空所有工具 */
     private List<Long> toolIds;
+
+    @Min(value = 0, message = "maxToolRounds 最小为 0")
+    @Max(value = 5, message = "maxToolRounds 不超过 5")
+    private Integer maxToolRounds;
 }

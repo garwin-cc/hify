@@ -385,6 +385,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private KnowledgeBaseResp toKnowledgeBaseResp(KnowledgeBasePo po) {
         KnowledgeBaseResp resp = new KnowledgeBaseResp();
         resp.setId(po.getId());
+        resp.setWorkspaceId(po.getWorkspaceId());
+        resp.setProjectId(po.getProjectId());
         resp.setName(po.getName());
         resp.setDescription(po.getDescription());
         resp.setEmbeddingModelConfigId(po.getEmbeddingModelConfigId());

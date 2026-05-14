@@ -207,12 +207,12 @@ public class McpServiceImpl implements McpService {
         List<McpToolPo> tools = requireExistingTools(toolIds);
         if (tools.isEmpty()) return List.of();
 
-        ensureToolServersEnabled(tools);
+        Map<Long, McpServerPo> serverMap = ensureToolServersEnabled(tools);
         Map<Long, McpToolPo> toolMap = tools.stream().collect(Collectors.toMap(McpToolPo::getId, tool -> tool));
         return toolIds.stream()
                 .map(toolMap::get)
                 .filter(tool -> tool != null)
-                .map(McpServiceImpl::toToolResp)
+                .map(tool -> toToolResp(tool, serverMap.get(tool.getMcpServerId())))
                 .toList();
     }
 
@@ -233,11 +233,12 @@ public class McpServiceImpl implements McpService {
         return tools;
     }
 
-    private void ensureToolServersEnabled(List<McpToolPo> tools) {
+    private Map<Long, McpServerPo> ensureToolServersEnabled(List<McpToolPo> tools) {
         Set<Long> serverIds = tools.stream().map(McpToolPo::getMcpServerId).collect(Collectors.toCollection(HashSet::new));
-        Set<Long> enabledServerIds = mcpServerMapper.selectList(new LambdaQueryWrapper<McpServerPo>()
+        List<McpServerPo> servers = mcpServerMapper.selectList(new LambdaQueryWrapper<McpServerPo>()
                         .in(McpServerPo::getId, serverIds)
-                        .eq(McpServerPo::getEnabled, 1))
+                        .eq(McpServerPo::getEnabled, 1));
+        Set<Long> enabledServerIds = servers
                 .stream()
                 .map(McpServerPo::getId)
                 .collect(Collectors.toSet());
@@ -249,6 +250,7 @@ public class McpServiceImpl implements McpService {
         if (!disabledToolIds.isEmpty()) {
             throw new BizException(ErrorCode.PARAM_ERROR, "MCP 工具所属 Server 未启用: " + disabledToolIds);
         }
+        return servers.stream().collect(Collectors.toMap(McpServerPo::getId, server -> server));
     }
 
     private McpServerPo findOrThrow(Long id) {
@@ -407,12 +409,21 @@ public class McpServiceImpl implements McpService {
     }
 
     private static McpToolResp toToolResp(McpToolPo po) {
+        return toToolResp(po, null);
+    }
+
+    private static McpToolResp toToolResp(McpToolPo po, McpServerPo server) {
         McpToolResp resp = new McpToolResp();
         resp.setId(po.getId());
         resp.setMcpServerId(po.getMcpServerId());
+        resp.setWorkspaceId(server == null ? null : server.getWorkspaceId());
+        resp.setProjectId(server == null ? null : server.getProjectId());
         resp.setName(po.getName());
         resp.setDescription(po.getDescription());
         resp.setInputSchema(po.getInputSchema());
+        resp.setDangerous(po.getDangerous());
+        resp.setPermissionLevel(po.getPermissionLevel());
+        resp.setSchemaValidationEnabled(po.getSchemaValidationEnabled());
         resp.setCreatedAt(po.getCreatedAt());
         return resp;
     }

@@ -22,4 +22,10 @@ public class McpToolPo extends BaseEntity {
 
     @TableField(typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> inputSchema;
+
+    private Integer dangerous;
+
+    private String permissionLevel;
+
+    private Integer schemaValidationEnabled;
 }

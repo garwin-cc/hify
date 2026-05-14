@@ -18,6 +18,10 @@ public class ConversationTracePo extends BaseEntity {
     private Long assistantMessageId;
     private Long agentId;
     private String agentName;
+    private Long agentVersionId;
+    private Integer agentVersionNo;
+    private String agentSystemPrompt;
+    private Integer maxToolRounds;
     private Long modelConfigId;
     private Long providerId;
     private String providerName;

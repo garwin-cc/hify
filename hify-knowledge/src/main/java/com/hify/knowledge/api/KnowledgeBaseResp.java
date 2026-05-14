@@ -9,6 +9,10 @@ public class KnowledgeBaseResp {
 
     private Long id;
 
+    private Long workspaceId;
+
+    private Long projectId;
+
     private String name;
 
     private String description;

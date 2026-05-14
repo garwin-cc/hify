@@ -11,6 +11,8 @@ import java.util.List;
 public class AgentDetailResp {
 
     private Long id;
+    private Long workspaceId;
+    private Long projectId;
     private String name;
     private String description;
     private String systemPrompt;
@@ -26,6 +28,10 @@ public class AgentDetailResp {
     private Integer summaryMaxTokens;
     private Long summaryModelConfigId;
     private List<Long> toolIds;
+    private Integer draftVersionNo;
+    private Long publishedVersionId;
+    private String publishStatus;
+    private Integer maxToolRounds;
     private Integer enabled;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

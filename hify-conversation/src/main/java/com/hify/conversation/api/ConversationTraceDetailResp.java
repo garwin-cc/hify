@@ -27,6 +27,10 @@ public class ConversationTraceDetailResp {
     public static class AgentTrace {
         private Long id;
         private String name;
+        private Long versionId;
+        private Integer versionNo;
+        private String systemPrompt;
+        private Integer maxToolRounds;
     }
 
     @Data
@@ -98,6 +102,7 @@ public class ConversationTraceDetailResp {
         private Integer outputTokens;
         private Integer firstTokenLatencyMs;
         private Integer totalLatencyMs;
+        private Object requestSummary;
         private String status;
         private String errorCode;
         private String errorMessage;

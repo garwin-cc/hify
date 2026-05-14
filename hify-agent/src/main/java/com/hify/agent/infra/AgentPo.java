@@ -61,6 +61,14 @@ public class AgentPo extends BaseEntity {
 
     private Integer enabled;
 
+    private Integer draftVersionNo;
+
+    private Long publishedVersionId;
+
+    private String publishStatus;
+
+    private Integer maxToolRounds;
+
     /** 乐观锁版本号，防止并发覆写 */
     @Version
     private Integer version;

@@ -66,6 +66,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -107,6 +108,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final McpToolCallAuditService mcpToolCallAuditService;
     private final ObjectMapper      objectMapper;
     private final HifyMetrics       hifyMetrics;
+    private final ToolArgumentSchemaValidator toolArgumentSchemaValidator = new ToolArgumentSchemaValidator();
 
     @Qualifier("llmExecutor")
     private final ThreadPoolExecutor llmExecutor;
@@ -354,6 +356,7 @@ public class ConversationServiceImpl implements ConversationService {
                     .temperature(agent.getTemperature())
                     .maxTokens(agent.getMaxTokens())
                     .build();
+            updateLlmRequestSummary(llmTraceId.get(), request);
 
             llmCallService.streamChat(agent.getModelConfigId(), request, new ChatStreamCallback() {
 
@@ -490,6 +493,7 @@ public class ConversationServiceImpl implements ConversationService {
                 .temperature(agent.getTemperature())
                 .maxTokens(agent.getMaxTokens())
                 .build();
+        updateLlmRequestSummary(llmTraceId, secondRequest);
 
         try {
             llmCallService.streamChat(agent.getModelConfigId(), secondRequest, new ChatStreamCallback() {
@@ -508,7 +512,7 @@ public class ConversationServiceImpl implements ConversationService {
                     ChatResponse nextToolResponse = isToolCallResponse(response)
                             ? response
                             : inlineToolCallResponse(response, fullContent.toString());
-                    if (toolRound < MAX_TOOL_ROUNDS && isToolCallResponse(nextToolResponse)) {
+                    if (toolRound < maxToolRounds(agent) && isToolCallResponse(nextToolResponse)) {
                         streamAfterToolCalls(emitter, cancelled, traceId, llmTraceId, firstTokenRecorded,
                                 agent, session, assistantMsgId,
                                 contextMessages, secondRequest, nextToolResponse, toolMap,
@@ -675,6 +679,12 @@ public class ConversationServiceImpl implements ConversationService {
         Map<String, Object> arguments = Map.of();
         try {
             arguments = parseToolArguments(toolCall.getFunctionArguments());
+            if (Integer.valueOf(1).equals(tool.getSchemaValidationEnabled())) {
+                String validationError = toolArgumentSchemaValidator.validate(tool.getInputSchema(), arguments);
+                if (validationError != null) {
+                    throw new BizException(ErrorCode.PARAM_ERROR, validationError);
+                }
+            }
             log.info("mcp tool call start toolId={} serverId={} name={} argumentKeys={}",
                     tool.getId(), tool.getMcpServerId(), tool.getName(), arguments.keySet());
             String result = mcpClientService.callTool(tool.getMcpServerId(), tool.getName(), arguments);
@@ -692,6 +702,14 @@ public class ConversationServiceImpl implements ConversationService {
                     tool, arguments, System.currentTimeMillis() - start, false, null, e.getMessage());
             return "工具调用失败: " + e.getMessage();
         }
+    }
+
+    private static int maxToolRounds(AgentDetailResp agent) {
+        Integer value = agent == null ? null : agent.getMaxToolRounds();
+        if (value == null) {
+            return MAX_TOOL_ROUNDS;
+        }
+        return Math.max(0, Math.min(5, value));
     }
 
     private void recordToolAudit(String traceId, String sourceType, Long sessionId, Long messageId,
@@ -800,6 +818,10 @@ public class ConversationServiceImpl implements ConversationService {
             po.setAssistantMessageId(assistantMsgId);
             po.setAgentId(agent.getId());
             po.setAgentName(agent.getName());
+            po.setAgentVersionId(agent.getPublishedVersionId());
+            po.setAgentVersionNo(agent.getDraftVersionNo());
+            po.setAgentSystemPrompt(agent.getSystemPrompt());
+            po.setMaxToolRounds(maxToolRounds(agent));
             po.setModelConfigId(agent.getModelConfigId());
             po.setProviderId(model.providerId());
             po.setProviderName(model.providerName());
@@ -835,6 +857,25 @@ public class ConversationServiceImpl implements ConversationService {
         } catch (Exception e) {
             log.warn("llm trace create failed traceId={} message={}", traceId, e.getMessage());
             return null;
+        }
+    }
+
+    private void updateLlmRequestSummary(Long llmTraceId, ChatRequest request) {
+        if (llmTraceId == null || request == null) {
+            return;
+        }
+        try {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("systemPromptLength", request.getSystemPrompt() == null ? 0 : request.getSystemPrompt().length());
+            summary.put("messageCount", request.getMessages() == null ? 0 : request.getMessages().size());
+            summary.put("toolCount", request.getTools() == null ? 0 : request.getTools().size());
+            summary.put("temperature", request.getTemperature());
+            summary.put("maxTokens", request.getMaxTokens());
+            conversationLlmTraceMapper.update(null, Wrappers.lambdaUpdate(ConversationLlmTracePo.class)
+                    .eq(ConversationLlmTracePo::getId, llmTraceId)
+                    .set(ConversationLlmTracePo::getRequestSummary, summary));
+        } catch (Exception e) {
+            log.warn("llm request summary update failed llmTraceId={} message={}", llmTraceId, e.getMessage());
         }
     }
 
@@ -1379,6 +1420,10 @@ public class ConversationServiceImpl implements ConversationService {
         ConversationTraceDetailResp.AgentTrace agent = new ConversationTraceDetailResp.AgentTrace();
         agent.setId(trace.getAgentId());
         agent.setName(trace.getAgentName());
+        agent.setVersionId(trace.getAgentVersionId());
+        agent.setVersionNo(trace.getAgentVersionNo());
+        agent.setSystemPrompt(trace.getAgentSystemPrompt());
+        agent.setMaxToolRounds(trace.getMaxToolRounds());
         resp.setAgent(agent);
 
         ConversationTraceDetailResp.ModelTrace model = new ConversationTraceDetailResp.ModelTrace();
@@ -1470,6 +1515,7 @@ public class ConversationServiceImpl implements ConversationService {
         llm.setOutputTokens(po.getOutputTokens());
         llm.setFirstTokenLatencyMs(po.getFirstTokenLatencyMs());
         llm.setTotalLatencyMs(po.getTotalLatencyMs());
+        llm.setRequestSummary(po.getRequestSummary());
         llm.setStatus(po.getStatus());
         llm.setErrorCode(po.getErrorCode());
         llm.setErrorMessage(po.getErrorMessage());

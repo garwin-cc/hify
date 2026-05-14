@@ -12,11 +12,21 @@ public class McpToolResp {
 
     private Long mcpServerId;
 
+    private Long workspaceId;
+
+    private Long projectId;
+
     private String name;
 
     private String description;
 
     private Map<String, Object> inputSchema;
+
+    private Integer dangerous;
+
+    private String permissionLevel;
+
+    private Integer schemaValidationEnabled;
 
     private LocalDateTime createdAt;
 }

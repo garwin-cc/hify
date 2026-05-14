@@ -10,6 +10,8 @@ import java.util.List;
 public class AgentListItemResp {
 
     private Long id;
+    private Long workspaceId;
+    private Long projectId;
     private String name;
     private String description;
     private Long modelConfigId;
@@ -20,6 +22,9 @@ public class AgentListItemResp {
     private BigDecimal temperature;
     private Integer memoryEnabled;
     private Integer toolCount;
+    private Long publishedVersionId;
+    private String publishStatus;
+    private Integer maxToolRounds;
     private Integer enabled;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

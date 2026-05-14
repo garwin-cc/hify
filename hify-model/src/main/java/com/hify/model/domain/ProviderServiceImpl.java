@@ -3,8 +3,13 @@ package com.hify.model.domain;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hify.auth.api.AuditLogRecord;
+import com.hify.auth.api.AuditLogService;
+import com.hify.auth.api.AuthService;
+import com.hify.auth.api.CurrentUser;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
+import com.hify.common.log.TraceContext;
 import com.hify.common.util.PageHelper;
 import com.hify.common.web.PageResult;
 import com.hify.model.api.*;
@@ -22,6 +27,7 @@ import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -46,6 +52,18 @@ public class ProviderServiceImpl implements ProviderService {
     private final ModelConfigMapper      modelConfigMapper;
     private final ProviderHealthMapper   providerHealthMapper;
     private final ProviderAdapterFactory providerAdapterFactory;
+    private AuditLogService auditLogService;
+    private AuthService authService;
+
+    @Autowired(required = false)
+    public void setAuditLogService(AuditLogService auditLogService) {
+        this.auditLogService = auditLogService;
+    }
+
+    @Autowired(required = false)
+    public void setAuthService(AuthService authService) {
+        this.authService = authService;
+    }
 
     // ── 列表 ──────────────────────────────────────────────────────────
 
@@ -128,6 +146,7 @@ public class ProviderServiceImpl implements ProviderService {
         po.setSortOrder(req.getSortOrder() != null ? req.getSortOrder() : 0);
         providerMapper.insert(po);
         log.info("created provider id={} name={} type={}", po.getId(), po.getName(), po.getType());
+        recordAudit("PROVIDER_CREATE", po, null, providerAudit(po), true, null);
         return toResp(po);
     }
 
@@ -138,6 +157,7 @@ public class ProviderServiceImpl implements ProviderService {
     @CacheEvict(cacheNames = "provider-cache", allEntries = true)
     public ProviderResp update(Long id, UpdateProviderReq req) {
         ProviderPo po = findOrThrow(id);
+        Map<String, Object> before = providerAudit(po);
 
         if (req.getName() != null && !req.getName().equals(po.getName())) {
             checkNameUnique(req.getName(), id);
@@ -153,6 +173,7 @@ public class ProviderServiceImpl implements ProviderService {
 
         providerMapper.updateById(po);
         log.info("updated provider id={}", id);
+        recordAudit("PROVIDER_UPDATE", po, before, providerAudit(po), true, null);
         return toResp(po);
     }
 
@@ -162,9 +183,11 @@ public class ProviderServiceImpl implements ProviderService {
     @Transactional
     @CacheEvict(cacheNames = "provider-cache", allEntries = true)
     public void delete(Long id) {
-        findOrThrow(id);
+        ProviderPo po = findOrThrow(id);
+        Map<String, Object> before = providerAudit(po);
         providerMapper.deleteById(id);
         log.info("deleted provider id={}", id);
+        recordAudit("PROVIDER_DELETE", po, before, Map.of(), true, null);
     }
 
     // ── 启用 / 禁用切换 ───────────────────────────────────────────────
@@ -177,6 +200,7 @@ public class ProviderServiceImpl implements ProviderService {
         po.setEnabled(po.getEnabled() == 1 ? 0 : 1);
         providerMapper.updateById(po);
         log.info("toggled provider id={} enabled={}", id, po.getEnabled());
+        recordAudit("PROVIDER_TOGGLE", po, null, providerAudit(po), true, null);
         return toResp(po);
     }
 
@@ -194,6 +218,10 @@ public class ProviderServiceImpl implements ProviderService {
         }
         log.info("connectivity test provider id={} type={} success={} latency={}ms",
                 providerId, po.getType(), result.isSuccess(), result.getLatencyMs());
+        recordAudit("PROVIDER_TEST", po, null,
+                Map.of("success", result.isSuccess(), "latencyMs", result.getLatencyMs(),
+                        "modelCount", result.getModelCount() == null ? 0 : result.getModelCount()),
+                result.isSuccess(), result.getErrorMessage());
         return result;
     }
 
@@ -238,6 +266,49 @@ public class ProviderServiceImpl implements ProviderService {
             config.put("apiKey", apiKey);
         }
         return config;
+    }
+
+    private Map<String, Object> providerAudit(ProviderPo po) {
+        Map<String, Object> value = new HashMap<>();
+        value.put("id", po.getId());
+        value.put("name", po.getName());
+        value.put("type", po.getType());
+        value.put("baseUrl", po.getBaseUrl());
+        value.put("enabled", po.getEnabled());
+        value.put("sortOrder", po.getSortOrder());
+        return value;
+    }
+
+    private void recordAudit(String action, ProviderPo provider, Map<String, Object> before,
+                             Map<String, Object> after, boolean success, String errorMessage) {
+        if (auditLogService == null) {
+            return;
+        }
+        CurrentUser user = currentUser();
+        auditLogService.record(AuditLogRecord.builder()
+                .traceId(TraceContext.ensureTraceId())
+                .actorUserId(user == null ? null : user.getId())
+                .actorUsername(user == null ? "" : user.getUsername())
+                .action(action)
+                .resourceType("PROVIDER")
+                .resourceId(provider == null ? null : provider.getId())
+                .resourceName(provider == null ? "" : provider.getName())
+                .success(success)
+                .errorMessage(errorMessage)
+                .before(before)
+                .after(after)
+                .build());
+    }
+
+    private CurrentUser currentUser() {
+        if (authService == null) {
+            return null;
+        }
+        try {
+            return authService.getCurrentUser();
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static ProviderResp toResp(ProviderPo po) {

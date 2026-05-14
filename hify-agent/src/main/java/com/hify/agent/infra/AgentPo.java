@@ -16,6 +16,10 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = false)
 public class AgentPo extends BaseEntity {
 
+    private Long workspaceId;
+
+    private Long projectId;
+
     private String name;
 
     private String description;

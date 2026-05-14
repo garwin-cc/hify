@@ -1,0 +1,15 @@
+package com.hify.auth.api;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+public @interface RequireProjectPermission {
+
+    String projectIdParam() default "projectId";
+
+    PermissionAction action();
+}

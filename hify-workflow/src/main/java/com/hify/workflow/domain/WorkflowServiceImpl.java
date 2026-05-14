@@ -5,6 +5,10 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hify.auth.api.AuditLogRecord;
+import com.hify.auth.api.AuditLogService;
+import com.hify.auth.api.AuthService;
+import com.hify.auth.api.CurrentUser;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.log.TraceContext;
@@ -39,6 +43,7 @@ import com.hify.workflow.infra.WorkflowVersionMapper;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -72,8 +77,20 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final WorkflowRunEventService workflowRunEventService;
     private final WorkflowReviewService workflowReviewService;
     private final ObjectMapper objectMapper;
+    private AuditLogService auditLogService;
+    private AuthService authService;
     @Resource(name = "llmExecutor")
     private ThreadPoolExecutor llmExecutor;
+
+    @Autowired(required = false)
+    public void setAuditLogService(AuditLogService auditLogService) {
+        this.auditLogService = auditLogService;
+    }
+
+    @Autowired(required = false)
+    public void setAuthService(AuthService authService) {
+        this.authService = authService;
+    }
 
     @Override
     @Transactional
@@ -89,6 +106,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         insertNodesAndEdges(workflow.getId(), req.getNodes(), req.getEdges());
         saveVersionSnapshot(workflow.getId(), "创建工作流");
         log.info("created workflow id={} name={}", workflow.getId(), workflow.getName());
+        recordWorkflowAudit("WORKFLOW_CREATE", workflow, null, workflowAudit(workflow), true, null);
         return getDetail(workflow.getId());
     }
 
@@ -122,6 +140,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     public WorkflowDetailResp update(Long id, UpdateWorkflowReq req) {
         validateDefinition(req);
         WorkflowPo workflow = findWorkflowOrThrow(id);
+        Map<String, Object> before = workflowAudit(workflow);
         workflow.setName(req.getName());
         workflow.setDescription(req.getDescription() == null ? "" : req.getDescription());
         workflow.setEnabled(req.getEnabled() == null ? 1 : normalizeEnabled(req.getEnabled()));
@@ -135,19 +154,22 @@ public class WorkflowServiceImpl implements WorkflowService {
         insertNodesAndEdges(id, req.getNodes(), req.getEdges());
         saveVersionSnapshot(id, "更新工作流");
         log.info("updated workflow id={}", id);
+        recordWorkflowAudit("WORKFLOW_UPDATE", workflow, before, workflowAudit(workflow), true, null);
         return getDetail(id);
     }
 
     @Override
     @Transactional
     public void delete(Long id) {
-        findWorkflowOrThrow(id);
+        WorkflowPo workflow = findWorkflowOrThrow(id);
+        Map<String, Object> before = workflowAudit(workflow);
         workflowMapper.deleteById(id);
         nodeMapper.delete(Wrappers.lambdaQuery(WorkflowNodePo.class)
                 .eq(WorkflowNodePo::getWorkflowId, id));
         edgeMapper.delete(Wrappers.lambdaQuery(WorkflowEdgePo.class)
                 .eq(WorkflowEdgePo::getWorkflowId, id));
         log.info("deleted workflow id={}", id);
+        recordWorkflowAudit("WORKFLOW_DELETE", workflow, before, Map.of(), true, null);
     }
 
     @Override
@@ -240,7 +262,10 @@ public class WorkflowServiceImpl implements WorkflowService {
         req.setStartNodeKey(snapshot.getStartNodeKey());
         req.setNodes(snapshot.getNodes());
         req.setEdges(snapshot.getEdges());
-        return update(workflowId, req);
+        WorkflowDetailResp restored = update(workflowId, req);
+        recordWorkflowAudit("WORKFLOW_RESTORE_VERSION", findWorkflowOrThrow(workflowId), null,
+                Map.of("versionNo", versionNo), true, null);
+        return restored;
     }
 
     @Override
@@ -301,6 +326,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         mergeReviewResult(run, task);
         workflowRunEventService.publishNodeEvent(run.getId(), "REVIEW_SUBMITTED", task.getNodeKey(), task.getReviewAction(),
                 Map.of("action", task.getReviewAction(), "comment", task.getReviewComment() == null ? "" : task.getReviewComment()));
+        recordReviewAudit(run, task);
 
         if ("REJECT".equalsIgnoreCase(task.getReviewAction())) {
             markReviewNodeCanceled(run, task);
@@ -608,6 +634,66 @@ public class WorkflowServiceImpl implements WorkflowService {
         } catch (Exception e) {
             log.warn("failed to parse workflow context snapshot: {}", e.getMessage());
             return new java.util.LinkedHashMap<>();
+        }
+    }
+
+    private Map<String, Object> workflowAudit(WorkflowPo workflow) {
+        if (workflow == null) {
+            return Map.of();
+        }
+        Map<String, Object> value = new java.util.LinkedHashMap<>();
+        value.put("id", workflow.getId());
+        value.put("workspaceId", workflow.getWorkspaceId());
+        value.put("projectId", workflow.getProjectId());
+        value.put("name", workflow.getName());
+        value.put("description", workflow.getDescription());
+        value.put("enabled", workflow.getEnabled());
+        value.put("startNodeKey", workflow.getStartNodeKey());
+        return value;
+    }
+
+    private void recordWorkflowAudit(String action, WorkflowPo workflow, Map<String, Object> before,
+                                     Map<String, Object> after, boolean success, String errorMessage) {
+        if (auditLogService == null) {
+            return;
+        }
+        CurrentUser user = currentUser();
+        auditLogService.record(AuditLogRecord.builder()
+                .traceId(TraceContext.ensureTraceId())
+                .actorUserId(user == null ? null : user.getId())
+                .actorUsername(user == null ? "" : user.getUsername())
+                .workspaceId(workflow == null ? null : workflow.getWorkspaceId())
+                .projectId(workflow == null ? null : workflow.getProjectId())
+                .action(action)
+                .resourceType("WORKFLOW")
+                .resourceId(workflow == null ? null : workflow.getId())
+                .resourceName(workflow == null ? "" : workflow.getName())
+                .success(success)
+                .errorMessage(errorMessage)
+                .before(before)
+                .after(after)
+                .build());
+    }
+
+    private void recordReviewAudit(WorkflowRunPo run, WorkflowReviewTaskPo task) {
+        WorkflowPo workflow = workflowMapper.selectById(run.getWorkflowId());
+        Map<String, Object> after = new java.util.LinkedHashMap<>();
+        after.put("runId", run.getId());
+        after.put("nodeKey", task.getNodeKey());
+        after.put("action", task.getReviewAction());
+        after.put("comment", task.getReviewComment() == null ? "" : task.getReviewComment());
+        after.put("reviewedBy", task.getReviewedBy() == null ? "" : task.getReviewedBy());
+        recordWorkflowAudit("WORKFLOW_REVIEW_SUBMIT", workflow, null, after, true, null);
+    }
+
+    private CurrentUser currentUser() {
+        if (authService == null) {
+            return null;
+        }
+        try {
+            return authService.getCurrentUser();
+        } catch (Exception ignored) {
+            return null;
         }
     }
 

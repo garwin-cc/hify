@@ -10,6 +10,10 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = false)
 public class KnowledgeBasePo extends BaseEntity {
 
+    private Long workspaceId;
+
+    private Long projectId;
+
     private String name;
 
     private String description;

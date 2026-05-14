@@ -9,6 +9,8 @@ import lombok.EqualsAndHashCode;
 @TableName("t_mcp_server")
 @EqualsAndHashCode(callSuper = false)
 public class McpServerPo extends BaseEntity {
+    private Long workspaceId;
+    private Long projectId;
     private String name;
     private String description;
     private String endpoint;

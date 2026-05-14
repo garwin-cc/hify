@@ -3,8 +3,13 @@ package com.hify.mcp.domain;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hify.auth.api.AuditLogRecord;
+import com.hify.auth.api.AuditLogService;
+import com.hify.auth.api.AuthService;
+import com.hify.auth.api.CurrentUser;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
+import com.hify.common.log.TraceContext;
 import com.hify.common.util.PageHelper;
 import com.hify.common.web.PageResult;
 import com.hify.mcp.api.*;
@@ -14,6 +19,7 @@ import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +39,18 @@ public class McpServiceImpl implements McpService {
     private final McpToolMapper       mcpToolMapper;
     private final McpSdkClientFactory mcpSdkClientFactory;
     private final McpRawHttpClient    mcpRawHttpClient;
+    private AuditLogService auditLogService;
+    private AuthService authService;
+
+    @Autowired(required = false)
+    public void setAuditLogService(AuditLogService auditLogService) {
+        this.auditLogService = auditLogService;
+    }
+
+    @Autowired(required = false)
+    public void setAuthService(AuthService authService) {
+        this.authService = authService;
+    }
 
     @Override
     public PageResult<McpServerListItemResp> list(McpServerQuery query) {
@@ -83,6 +101,7 @@ public class McpServiceImpl implements McpService {
         po.setEnabled(req.getEnabled() != null ? req.getEnabled() : 1);
         mcpServerMapper.insert(po);
         log.info("created mcp server id={} name={}", po.getId(), po.getName());
+        recordAudit("MCP_CREATE", po, null, mcpAudit(po), true, null);
         return toResp(po);
     }
 
@@ -90,6 +109,7 @@ public class McpServiceImpl implements McpService {
     @Transactional
     public McpServerResp update(Long id, UpdateMcpServerReq req) {
         McpServerPo po = findOrThrow(id);
+        Map<String, Object> before = mcpAudit(po);
 
         if (req.getName() != null && !req.getName().equals(po.getName())) {
             checkNameUnique(req.getName(), id);
@@ -101,13 +121,15 @@ public class McpServiceImpl implements McpService {
 
         mcpServerMapper.updateById(po);
         log.info("updated mcp server id={}", id);
+        recordAudit("MCP_UPDATE", po, before, mcpAudit(po), true, null);
         return toResp(po);
     }
 
     @Override
     @Transactional
     public void delete(Long id) {
-        findOrThrow(id);
+        McpServerPo po = findOrThrow(id);
+        Map<String, Object> before = mcpAudit(po);
         long bindingCount = mcpServerMapper.countAgentBindings(id);
         if (bindingCount > 0) {
             throw new BizException(ErrorCode.CONFLICT, "已有 Agent 绑定该 MCP Server，不能删除");
@@ -115,6 +137,7 @@ public class McpServiceImpl implements McpService {
         mcpToolMapper.delete(new LambdaQueryWrapper<McpToolPo>().eq(McpToolPo::getMcpServerId, id));
         mcpServerMapper.deleteById(id);
         log.info("deleted mcp server id={}", id);
+        recordAudit("MCP_DELETE", po, before, Map.of(), true, null);
     }
 
     @Override
@@ -134,6 +157,10 @@ public class McpServiceImpl implements McpService {
         } finally {
             result.setLatencyMs(System.currentTimeMillis() - start);
         }
+        recordAudit("MCP_TEST", po, null,
+                Map.of("success", result.isSuccess(), "latencyMs", result.getLatencyMs(),
+                        "toolCount", result.getTools() == null ? 0 : result.getTools().size()),
+                result.isSuccess(), result.getMessage());
         return result;
     }
 
@@ -305,6 +332,53 @@ public class McpServiceImpl implements McpService {
 
     private static String normalizeEndpoint(String endpoint) {
         return endpoint == null ? "" : endpoint.replaceAll("\\s+", "");
+    }
+
+    private Map<String, Object> mcpAudit(McpServerPo po) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("id", po.getId());
+        value.put("workspaceId", po.getWorkspaceId());
+        value.put("projectId", po.getProjectId());
+        value.put("name", po.getName());
+        value.put("description", po.getDescription());
+        value.put("endpoint", po.getEndpoint());
+        value.put("authType", po.getAuthType());
+        value.put("enabled", po.getEnabled());
+        return value;
+    }
+
+    private void recordAudit(String action, McpServerPo server, Map<String, Object> before,
+                             Map<String, Object> after, boolean success, String errorMessage) {
+        if (auditLogService == null) {
+            return;
+        }
+        CurrentUser user = currentUser();
+        auditLogService.record(AuditLogRecord.builder()
+                .traceId(TraceContext.ensureTraceId())
+                .actorUserId(user == null ? null : user.getId())
+                .actorUsername(user == null ? "" : user.getUsername())
+                .workspaceId(server == null ? null : server.getWorkspaceId())
+                .projectId(server == null ? null : server.getProjectId())
+                .action(action)
+                .resourceType("MCP_SERVER")
+                .resourceId(server == null ? null : server.getId())
+                .resourceName(server == null ? "" : server.getName())
+                .success(success)
+                .errorMessage(errorMessage)
+                .before(before)
+                .after(after)
+                .build());
+    }
+
+    private CurrentUser currentUser() {
+        if (authService == null) {
+            return null;
+        }
+        try {
+            return authService.getCurrentUser();
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static McpServerResp toResp(McpServerPo po) {

@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    { path: '/', redirect: '/providers' },
+    { path: '/', redirect: '/conversation' },
     {
       path: '/login',
       name: 'Login',
@@ -15,6 +15,7 @@ const router = createRouter({
       path: '/providers',
       name: 'Providers',
       component: () => import('@/views/provider/ProviderList.vue'),
+      meta: { roles: ['ADMIN'] },
     },
     {
       path: '/agents',

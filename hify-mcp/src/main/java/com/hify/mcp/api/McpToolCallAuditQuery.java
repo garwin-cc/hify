@@ -3,24 +3,24 @@ package com.hify.mcp.api;
 import lombok.Data;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Data
-public class McpToolCallAuditResp {
+public class McpToolCallAuditQuery {
 
-    private Long id;
-    private String traceId;
     private Long projectId;
     private Long agentId;
+    private Long appId;
     private Long userId;
     private Long workflowId;
     private Long workflowRunId;
     private Long mcpServerId;
     private String toolName;
     private String status;
-    private List<String> argumentKeys;
-    private Long elapsedMs;
-    private Boolean success;
-    private String errorSummary;
-    private LocalDateTime createdAt;
+    private String traceId;
+    private Long minElapsedMs;
+    private Long maxElapsedMs;
+    private LocalDateTime createdAtStart;
+    private LocalDateTime createdAtEnd;
+    private int page = 1;
+    private int size = 20;
 }

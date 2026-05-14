@@ -39,6 +39,7 @@ public class McpServiceImpl implements McpService {
     private final McpToolMapper       mcpToolMapper;
     private final McpSdkClientFactory mcpSdkClientFactory;
     private final McpRawHttpClient    mcpRawHttpClient;
+    private final McpEndpointGuard    mcpEndpointGuard;
     private AuditLogService auditLogService;
     private AuthService authService;
 
@@ -58,6 +59,8 @@ public class McpServiceImpl implements McpService {
         LambdaQueryWrapper<McpServerPo> wrapper = new LambdaQueryWrapper<McpServerPo>()
                 .like(query.getName() != null && !query.getName().isBlank(), McpServerPo::getName, query.getName())
                 .eq(query.getEnabled() != null, McpServerPo::getEnabled, query.getEnabled())
+                .eq(query.getProjectId() != null, McpServerPo::getProjectId, query.getProjectId())
+                .eq(query.getVisibility() != null && !query.getVisibility().isBlank(), McpServerPo::getVisibility, query.getVisibility())
                 .orderByDesc(McpServerPo::getCreatedAt)
                 .orderByDesc(McpServerPo::getId);
         IPage<McpServerPo> page = mcpServerMapper.selectPage(pageParam, wrapper);
@@ -93,12 +96,23 @@ public class McpServiceImpl implements McpService {
         checkNameUnique(req.getName(), null);
 
         McpServerPo po = new McpServerPo();
+        mcpEndpointGuard.validate(req.getEndpoint());
+        po.setWorkspaceId(req.getWorkspaceId() == null ? 1L : req.getWorkspaceId());
+        po.setProjectId(req.getProjectId() == null ? 1L : req.getProjectId());
         po.setName(req.getName());
         po.setDescription(req.getDescription() != null ? req.getDescription() : "");
         po.setEndpoint(normalizeEndpoint(req.getEndpoint()));
         po.setAuthType("NONE");
         po.setAuthConfig("{}");
         po.setEnabled(req.getEnabled() != null ? req.getEnabled() : 1);
+        po.setVisibility(normalizeVisibility(req.getVisibility()));
+        po.setShareScope(normalizeShareScope(req.getShareScope()));
+        po.setSecretId(req.getSecretId());
+        po.setConnectTimeoutMs(req.getConnectTimeoutMs() == null ? 3000 : req.getConnectTimeoutMs());
+        po.setReadTimeoutMs(req.getReadTimeoutMs() == null ? 30000 : req.getReadTimeoutMs());
+        po.setRetryTimes(req.getRetryTimes() == null ? 0 : Math.max(0, req.getRetryTimes()));
+        po.setRetryIntervalMs(req.getRetryIntervalMs() == null ? 300 : Math.max(0, req.getRetryIntervalMs()));
+        po.setFallbackStrategy(normalizeFallback(req.getFallbackStrategy()));
         mcpServerMapper.insert(po);
         log.info("created mcp server id={} name={}", po.getId(), po.getName());
         recordAudit("MCP_CREATE", po, null, mcpAudit(po), true, null);
@@ -116,8 +130,21 @@ public class McpServiceImpl implements McpService {
             po.setName(req.getName());
         }
         if (req.getDescription() != null) po.setDescription(req.getDescription());
-        if (req.getEndpoint() != null) po.setEndpoint(normalizeEndpoint(req.getEndpoint()));
+        if (req.getEndpoint() != null) {
+            mcpEndpointGuard.validate(req.getEndpoint());
+            po.setEndpoint(normalizeEndpoint(req.getEndpoint()));
+        }
         if (req.getEnabled() != null) po.setEnabled(req.getEnabled());
+        if (req.getWorkspaceId() != null) po.setWorkspaceId(req.getWorkspaceId());
+        if (req.getProjectId() != null) po.setProjectId(req.getProjectId());
+        if (req.getVisibility() != null) po.setVisibility(normalizeVisibility(req.getVisibility()));
+        if (req.getShareScope() != null) po.setShareScope(normalizeShareScope(req.getShareScope()));
+        if (req.getSecretId() != null) po.setSecretId(req.getSecretId());
+        if (req.getConnectTimeoutMs() != null) po.setConnectTimeoutMs(req.getConnectTimeoutMs());
+        if (req.getReadTimeoutMs() != null) po.setReadTimeoutMs(req.getReadTimeoutMs());
+        if (req.getRetryTimes() != null) po.setRetryTimes(Math.max(0, req.getRetryTimes()));
+        if (req.getRetryIntervalMs() != null) po.setRetryIntervalMs(Math.max(0, req.getRetryIntervalMs()));
+        if (req.getFallbackStrategy() != null) po.setFallbackStrategy(normalizeFallback(req.getFallbackStrategy()));
 
         mcpServerMapper.updateById(po);
         log.info("updated mcp server id={}", id);
@@ -144,6 +171,7 @@ public class McpServiceImpl implements McpService {
     @Transactional
     public McpConnectivityTestResult test(Long id) {
         McpServerPo po = findOrThrow(id);
+        mcpEndpointGuard.validate(po.getEndpoint());
         long start = System.currentTimeMillis();
         McpConnectivityTestResult result = new McpConnectivityTestResult();
         try {
@@ -306,9 +334,13 @@ public class McpServiceImpl implements McpService {
     private static McpToolPo toToolPo(Long serverId, McpSchema.Tool tool) {
         McpToolPo po = new McpToolPo();
         po.setMcpServerId(serverId);
+        po.setToolType("MCP");
         po.setName(tool.name());
         po.setDescription(tool.description() != null ? tool.description() : "");
         po.setInputSchema(toInputSchemaMap(tool.inputSchema()));
+        po.setDangerous(0);
+        po.setPermissionLevel("RUN");
+        po.setSchemaValidationEnabled(1);
         return po;
     }
 
@@ -346,6 +378,8 @@ public class McpServiceImpl implements McpService {
         value.put("endpoint", po.getEndpoint());
         value.put("authType", po.getAuthType());
         value.put("enabled", po.getEnabled());
+        value.put("visibility", po.getVisibility());
+        value.put("shareScope", po.getShareScope());
         return value;
     }
 
@@ -386,10 +420,20 @@ public class McpServiceImpl implements McpService {
     private static McpServerResp toResp(McpServerPo po) {
         McpServerResp resp = new McpServerResp();
         resp.setId(po.getId());
+        resp.setWorkspaceId(po.getWorkspaceId());
+        resp.setProjectId(po.getProjectId());
         resp.setName(po.getName());
         resp.setDescription(po.getDescription());
         resp.setEndpoint(po.getEndpoint());
         resp.setEnabled(po.getEnabled());
+        resp.setVisibility(po.getVisibility());
+        resp.setShareScope(po.getShareScope());
+        resp.setSecretId(po.getSecretId());
+        resp.setConnectTimeoutMs(po.getConnectTimeoutMs());
+        resp.setReadTimeoutMs(po.getReadTimeoutMs());
+        resp.setRetryTimes(po.getRetryTimes());
+        resp.setRetryIntervalMs(po.getRetryIntervalMs());
+        resp.setFallbackStrategy(po.getFallbackStrategy());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
@@ -398,6 +442,8 @@ public class McpServiceImpl implements McpService {
     private static McpServerListItemResp toListItemResp(McpServerPo po, Integer toolCount) {
         McpServerListItemResp resp = new McpServerListItemResp();
         resp.setId(po.getId());
+        resp.setWorkspaceId(po.getWorkspaceId());
+        resp.setProjectId(po.getProjectId());
         resp.setName(po.getName());
         resp.setDescription(po.getDescription());
         resp.setEndpoint(po.getEndpoint());
@@ -416,6 +462,8 @@ public class McpServiceImpl implements McpService {
         McpToolResp resp = new McpToolResp();
         resp.setId(po.getId());
         resp.setMcpServerId(po.getMcpServerId());
+        resp.setToolType(po.getToolType());
+        resp.setOpenapiToolId(po.getOpenapiToolId());
         resp.setWorkspaceId(server == null ? null : server.getWorkspaceId());
         resp.setProjectId(server == null ? null : server.getProjectId());
         resp.setName(po.getName());
@@ -424,7 +472,25 @@ public class McpServiceImpl implements McpService {
         resp.setDangerous(po.getDangerous());
         resp.setPermissionLevel(po.getPermissionLevel());
         resp.setSchemaValidationEnabled(po.getSchemaValidationEnabled());
+        resp.setTimeoutMs(po.getTimeoutMs());
+        resp.setRetryTimes(po.getRetryTimes());
+        resp.setFallbackStrategy(po.getFallbackStrategy());
         resp.setCreatedAt(po.getCreatedAt());
         return resp;
+    }
+
+    private static String normalizeVisibility(String value) {
+        String visibility = value == null ? "PROJECT" : value.trim().toUpperCase();
+        return List.of("PROJECT", "WORKSPACE", "PUBLIC").contains(visibility) ? visibility : "PROJECT";
+    }
+
+    private static String normalizeShareScope(String value) {
+        String scope = value == null ? "PRIVATE" : value.trim().toUpperCase();
+        return List.of("PRIVATE", "SHARED").contains(scope) ? scope : "PRIVATE";
+    }
+
+    private static String normalizeFallback(String value) {
+        String strategy = value == null ? "FAIL_FAST" : value.trim().toUpperCase();
+        return List.of("FAIL_FAST", "RETURN_ERROR_MESSAGE").contains(strategy) ? strategy : "FAIL_FAST";
     }
 }

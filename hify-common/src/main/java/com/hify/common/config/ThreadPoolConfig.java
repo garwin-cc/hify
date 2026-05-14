@@ -68,6 +68,23 @@ public class ThreadPoolConfig {
         );
     }
 
+    /**
+     * MCP 工具调用线程池：外部工具可能慢或不可控，需要和 SSE、Workflow 执行线程隔离。
+     */
+    @Bean
+    @Qualifier("mcpExecutor")
+    public ThreadPoolExecutor mcpExecutor() {
+        return new ThreadPoolExecutor(
+                8, 32, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(80),
+                new ThreadFactoryBuilder()
+                        .setNameFormat("mcp-%d")
+                        .setDaemon(true)
+                        .build(),
+                new ThreadPoolExecutor.AbortPolicy()
+        );
+    }
+
     @Bean("knowledgeTaskQueue")
     public TaskQueue knowledgeTaskQueue(@Qualifier("knowledgeExecutor") ThreadPoolExecutor executor) {
         return new InMemoryTaskQueue(executor, 20);

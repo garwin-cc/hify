@@ -17,4 +17,12 @@ public class McpServerPo extends BaseEntity {
     private String authType;
     private String authConfig;
     private Integer enabled;
+    private String visibility;
+    private String shareScope;
+    private Long secretId;
+    private Integer connectTimeoutMs;
+    private Integer readTimeoutMs;
+    private Integer retryTimes;
+    private Integer retryIntervalMs;
+    private String fallbackStrategy;
 }

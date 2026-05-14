@@ -18,17 +18,39 @@ public class McpToolCallAuditPo extends BaseEntity {
 
     private String traceId;
 
+    private Long workspaceId;
+
+    private Long projectId;
+
+    private Long agentId;
+
+    private Long appId;
+
+    private Long apiKeyId;
+
+    private Long userId;
+
     private Long conversationSessionId;
 
     private Long conversationMessageId;
 
     private Long workflowRunId;
 
+    private Long workflowId;
+
     private String workflowNodeKey;
 
     private Long mcpServerId;
 
     private String toolName;
+
+    private String status;
+
+    private Integer retryCount;
+
+    private Integer timeoutMs;
+
+    private String sourceId;
 
     @TableField(typeHandler = JacksonTypeHandler.class)
     private List<String> argumentKeys;

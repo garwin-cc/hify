@@ -7,5 +7,7 @@ public interface McpClientService {
 
     String callTool(Long mcpServerId, String toolName, Map<String, Object> arguments);
 
+    String callTool(McpToolCallRequest request);
+
     List<String> listTools(Long mcpServerId);
 }

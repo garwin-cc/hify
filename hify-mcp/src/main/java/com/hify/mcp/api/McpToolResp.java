@@ -12,6 +12,10 @@ public class McpToolResp {
 
     private Long mcpServerId;
 
+    private String toolType;
+
+    private Long openapiToolId;
+
     private Long workspaceId;
 
     private Long projectId;
@@ -27,6 +31,12 @@ public class McpToolResp {
     private String permissionLevel;
 
     private Integer schemaValidationEnabled;
+
+    private Integer timeoutMs;
+
+    private Integer retryTimes;
+
+    private String fallbackStrategy;
 
     private LocalDateTime createdAt;
 }

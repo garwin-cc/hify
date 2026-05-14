@@ -5,25 +5,16 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-public class McpServerListItemResp {
+public class OpenApiSourceResp {
 
     private Long id;
-
     private Long workspaceId;
-
     private Long projectId;
-
     private String name;
-
     private String description;
-
-    private String endpoint;
-
+    private String baseUrl;
+    private Long secretId;
     private Integer enabled;
-
-    private Integer toolCount;
-
+    private String status;
     private LocalDateTime createdAt;
-
-    private LocalDateTime updatedAt;
 }

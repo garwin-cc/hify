@@ -16,6 +16,10 @@ public class McpToolPo extends BaseEntity {
 
     private Long mcpServerId;
 
+    private String toolType;
+
+    private Long openapiToolId;
+
     private String name;
 
     private String description;
@@ -28,4 +32,10 @@ public class McpToolPo extends BaseEntity {
     private String permissionLevel;
 
     private Integer schemaValidationEnabled;
+
+    private Integer timeoutMs;
+
+    private Integer retryTimes;
+
+    private String fallbackStrategy;
 }

@@ -8,25 +8,25 @@ import lombok.EqualsAndHashCode;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("t_workflow_version")
+@TableName("t_workflow_publish")
 @EqualsAndHashCode(callSuper = false)
-public class WorkflowVersionPo extends BaseEntity {
+public class WorkflowPublishPo extends BaseEntity {
 
     private Long workflowId;
 
-    private Integer versionNo;
+    private Long workflowVersionId;
 
-    private String snapshotJson;
+    private String publishType;
 
-    private String changeSummary;
+    private String publishStatus;
 
-    private String versionStatus;
+    private String endpointKey;
 
-    private Long parentVersionId;
+    private String toolKey;
+
+    private String displayName;
 
     private Integer grayPercent;
-
-    private String checksum;
 
     private Long publishedBy;
 

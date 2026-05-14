@@ -29,11 +29,20 @@ import com.hify.workflow.api.WorkflowNodeDebugResp;
 import com.hify.workflow.api.WorkflowNodeCallTraceResp;
 import com.hify.workflow.api.WorkflowNodeRunResp;
 import com.hify.workflow.api.WorkflowNodeDto;
+import com.hify.workflow.api.WorkflowPublishReq;
+import com.hify.workflow.api.WorkflowPublishResp;
 import com.hify.workflow.api.WorkflowQuery;
+import com.hify.workflow.api.WorkflowReviewQuery;
 import com.hify.workflow.api.WorkflowRunReq;
+import com.hify.workflow.api.WorkflowRunQuery;
 import com.hify.workflow.api.WorkflowRunResp;
 import com.hify.workflow.api.WorkflowService;
 import com.hify.workflow.api.WorkflowReviewTaskResp;
+import com.hify.workflow.api.WorkflowRollbackReq;
+import com.hify.workflow.api.WorkflowTriggerReq;
+import com.hify.workflow.api.WorkflowTriggerResp;
+import com.hify.workflow.api.WorkflowVariableResp;
+import com.hify.workflow.api.WorkflowVersionDiffResp;
 import com.hify.workflow.api.WorkflowVersionResp;
 import com.hify.workflow.domain.config.NodeConfigParser;
 import com.hify.workflow.engine.WorkflowEngine;
@@ -85,6 +94,10 @@ public class WorkflowServiceImpl implements WorkflowService {
     private AuditLogService auditLogService;
     private AuthService authService;
     private TaskQueue workflowTaskQueue;
+    private WorkflowPublishService workflowPublishService;
+    private WorkflowVersionDiffService workflowVersionDiffService;
+    private WorkflowVariableService workflowVariableService;
+    private WorkflowTriggerService workflowTriggerService;
     @Resource(name = "llmExecutor")
     private ThreadPoolExecutor llmExecutor;
 
@@ -103,10 +116,31 @@ public class WorkflowServiceImpl implements WorkflowService {
         this.workflowTaskQueue = workflowTaskQueue;
     }
 
+    @Autowired(required = false)
+    public void setWorkflowPublishService(WorkflowPublishService workflowPublishService) {
+        this.workflowPublishService = workflowPublishService;
+    }
+
+    @Autowired(required = false)
+    public void setWorkflowVersionDiffService(WorkflowVersionDiffService workflowVersionDiffService) {
+        this.workflowVersionDiffService = workflowVersionDiffService;
+    }
+
+    @Autowired(required = false)
+    public void setWorkflowVariableService(WorkflowVariableService workflowVariableService) {
+        this.workflowVariableService = workflowVariableService;
+    }
+
+    @Autowired(required = false)
+    public void setWorkflowTriggerService(WorkflowTriggerService workflowTriggerService) {
+        this.workflowTriggerService = workflowTriggerService;
+    }
+
     @Override
     @Transactional
     public WorkflowDetailResp create(CreateWorkflowReq req) {
         validateDefinition(req);
+        validateCodeTaskSafety(req.getNodes(), req.getEdges());
         WorkflowPo workflow = new WorkflowPo();
         workflow.setName(req.getName());
         workflow.setDescription(req.getDescription() == null ? "" : req.getDescription());
@@ -150,6 +184,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Transactional
     public WorkflowDetailResp update(Long id, UpdateWorkflowReq req) {
         validateDefinition(req);
+        validateCodeTaskSafety(req.getNodes(), req.getEdges());
         WorkflowPo workflow = findWorkflowOrThrow(id);
         Map<String, Object> before = workflowAudit(workflow);
         workflow.setName(req.getName());
@@ -197,6 +232,11 @@ public class WorkflowServiceImpl implements WorkflowService {
     }
 
     private WorkflowRunResp startAsyncRun(Long id, String userMessage, Long rerunFromRunId) {
+        return startAsyncRun(id, userMessage, rerunFromRunId, "MANUAL", null, null, "MANUAL");
+    }
+
+    private WorkflowRunResp startAsyncRun(Long id, String userMessage, Long rerunFromRunId,
+                                          String triggerType, Long triggerId, Long publishId, String source) {
         WorkflowRunPo run = workflowEngine.createWorkflowRun(
                 id,
                 userMessage,
@@ -204,8 +244,12 @@ public class WorkflowServiceImpl implements WorkflowService {
                 LocalDateTime.now().plusSeconds(300));
         if (rerunFromRunId != null) {
             run.setRerunFromRunId(rerunFromRunId);
-            workflowRunMapper.updateById(run);
         }
+        run.setTriggerType(triggerType);
+        run.setTriggerId(triggerId);
+        run.setPublishId(publishId);
+        run.setSource(StringUtils.hasText(source) ? source : "MANUAL");
+        workflowRunMapper.updateById(run);
         try {
             Runnable task = () -> executeAsyncWorkflowRun(run.getId(), id, userMessage);
             if (workflowTaskQueue != null) {
@@ -276,6 +320,13 @@ public class WorkflowServiceImpl implements WorkflowService {
     }
 
     @Override
+    public WorkflowVersionDiffResp diffVersions(Long workflowId, Integer leftVersionNo, Integer rightVersionNo) {
+        findWorkflowOrThrow(workflowId);
+        requireService(workflowVersionDiffService, "工作流版本差异服务不可用");
+        return workflowVersionDiffService.diff(workflowId, leftVersionNo, rightVersionNo);
+    }
+
+    @Override
     @Transactional
     public WorkflowDetailResp restoreVersion(Long workflowId, Integer versionNo) {
         findWorkflowOrThrow(workflowId);
@@ -295,6 +346,85 @@ public class WorkflowServiceImpl implements WorkflowService {
     }
 
     @Override
+    @Transactional
+    public WorkflowDetailResp rollbackVersion(Long workflowId, Integer versionNo, WorkflowRollbackReq req) {
+        WorkflowPo workflow = findWorkflowOrThrow(workflowId);
+        WorkflowVersionPo version = findVersionOrThrow(workflowId, versionNo);
+        WorkflowDetailResp restored = restoreVersion(workflowId, versionNo);
+        WorkflowVersionPo latest = workflowVersionMapper.selectOne(Wrappers.lambdaQuery(WorkflowVersionPo.class)
+                .eq(WorkflowVersionPo::getWorkflowId, workflowId)
+                .orderByDesc(WorkflowVersionPo::getVersionNo)
+                .orderByDesc(WorkflowVersionPo::getId)
+                .last("LIMIT 1"));
+        if (latest != null) {
+            latest.setParentVersionId(version.getId());
+            latest.setChangeSummary(StringUtils.hasText(req == null ? null : req.getChangeSummary())
+                    ? req.getChangeSummary()
+                    : "回滚到 v" + versionNo);
+            workflowVersionMapper.updateById(latest);
+        }
+        if (req != null && Boolean.TRUE.equals(req.getPublish())) {
+            WorkflowPublishReq publishReq = new WorkflowPublishReq();
+            publishReq.setVersionNo(latest == null ? null : latest.getVersionNo());
+            publishReq.setPublishType(StringUtils.hasText(req.getPublishType()) ? req.getPublishType() : "API_ENDPOINT");
+            publishReq.setDisplayName(workflow.getName());
+            publish(workflowId, publishReq);
+        }
+        recordWorkflowAudit("WORKFLOW_ROLLBACK_VERSION", workflow, null,
+                Map.of("versionNo", versionNo), true, null);
+        return restored;
+    }
+
+    @Override
+    public WorkflowPublishResp publish(Long workflowId, WorkflowPublishReq req) {
+        findWorkflowOrThrow(workflowId);
+        validateCodeTaskSafety(getDetail(workflowId));
+        requireService(workflowPublishService, "工作流发布服务不可用");
+        WorkflowPublishResp resp = workflowPublishService.publish(workflowId, req);
+        recordWorkflowAudit("WORKFLOW_PUBLISH", findWorkflowOrThrow(workflowId), null,
+                Map.of("publishType", resp.getPublishType(), "versionId", resp.getWorkflowVersionId()), true, null);
+        return resp;
+    }
+
+    @Override
+    public List<WorkflowPublishResp> listPublishes(Long workflowId) {
+        findWorkflowOrThrow(workflowId);
+        requireService(workflowPublishService, "工作流发布服务不可用");
+        return workflowPublishService.list(workflowId);
+    }
+
+    @Override
+    public WorkflowTriggerResp createTrigger(Long workflowId, WorkflowTriggerReq req) {
+        findWorkflowOrThrow(workflowId);
+        requireService(workflowTriggerService, "工作流触发器服务不可用");
+        return workflowTriggerService.create(workflowId, req);
+    }
+
+    @Override
+    public List<WorkflowTriggerResp> listTriggers(Long workflowId) {
+        findWorkflowOrThrow(workflowId);
+        requireService(workflowTriggerService, "工作流触发器服务不可用");
+        return workflowTriggerService.list(workflowId);
+    }
+
+    @Override
+    public WorkflowRunResp triggerWebhook(String triggerKey, WorkflowRunReq req) {
+        requireService(workflowTriggerService, "工作流触发器服务不可用");
+        WorkflowTriggerPo trigger = workflowTriggerService.findWebhook(triggerKey);
+        WorkflowRunResp run = startAsyncRun(trigger.getWorkflowId(), req.getUserMessage(), null,
+                "WEBHOOK", trigger.getId(), null, "WEBHOOK");
+        workflowTriggerService.markFired(trigger, run.getId());
+        return run;
+    }
+
+    @Override
+    public List<WorkflowVariableResp> listVariables(Long workflowId) {
+        findWorkflowOrThrow(workflowId);
+        requireService(workflowVariableService, "工作流变量服务不可用");
+        return workflowVariableService.listVariables(workflowId);
+    }
+
+    @Override
     public WorkflowRunResp getRunDetail(Long runId) {
         WorkflowRunPo run = workflowRunMapper.selectById(runId);
         if (run == null) {
@@ -305,6 +435,24 @@ public class WorkflowServiceImpl implements WorkflowService {
                         .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
                         .orderByAsc(WorkflowNodeRunPo::getId));
         return toRunResp(run, nodeRuns);
+    }
+
+    @Override
+    public PageResult<WorkflowRunResp> listRuns(WorkflowRunQuery query) {
+        int pageNo = query.getPage() <= 0 ? 1 : query.getPage();
+        int pageSize = query.getSize() <= 0 ? 20 : query.getSize();
+        Page<WorkflowRunPo> page = PageHelper.toPage(pageNo, pageSize);
+        return PageHelper.toPageResult(workflowRunMapper.selectPage(page,
+                Wrappers.lambdaQuery(WorkflowRunPo.class)
+                        .eq(query.getWorkflowId() != null, WorkflowRunPo::getWorkflowId, query.getWorkflowId())
+                        .eq(StringUtils.hasText(query.getStatus()), WorkflowRunPo::getStatus, query.getStatus())
+                        .eq(StringUtils.hasText(query.getTraceId()), WorkflowRunPo::getTraceId, query.getTraceId())
+                        .eq(StringUtils.hasText(query.getRunMode()), WorkflowRunPo::getRunMode, query.getRunMode())
+                        .eq(StringUtils.hasText(query.getSource()), WorkflowRunPo::getSource, query.getSource())
+                        .ge(query.getCreatedAtStart() != null, WorkflowRunPo::getCreatedAt, query.getCreatedAtStart())
+                        .le(query.getCreatedAtEnd() != null, WorkflowRunPo::getCreatedAt, query.getCreatedAtEnd())
+                        .orderByDesc(WorkflowRunPo::getCreatedAt)
+                        .orderByDesc(WorkflowRunPo::getId)), run -> toRunResp(run, List.of()));
     }
 
     @Override
@@ -336,6 +484,11 @@ public class WorkflowServiceImpl implements WorkflowService {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
         }
         return workflowReviewService.getWaitingReview(runId);
+    }
+
+    @Override
+    public PageResult<WorkflowReviewTaskResp> listReviewTasks(WorkflowReviewQuery query) {
+        return workflowReviewService.listTasks(query);
     }
 
     @Override
@@ -423,6 +576,9 @@ public class WorkflowServiceImpl implements WorkflowService {
         version.setVersionNo(latest == null ? 1 : latest.getVersionNo() + 1);
         version.setChangeSummary(changeSummary == null ? "" : changeSummary);
         version.setSnapshotJson(toJson(detail));
+        version.setVersionStatus("DRAFT");
+        version.setGrayPercent(0);
+        version.setChecksum(workflowVersionDiffService == null ? "" : workflowVersionDiffService.checksum(version.getSnapshotJson()));
         workflowVersionMapper.insert(version);
     }
 
@@ -432,6 +588,12 @@ public class WorkflowServiceImpl implements WorkflowService {
         resp.setWorkflowId(po.getWorkflowId());
         resp.setVersionNo(po.getVersionNo());
         resp.setChangeSummary(po.getChangeSummary());
+        resp.setVersionStatus(po.getVersionStatus());
+        resp.setParentVersionId(po.getParentVersionId());
+        resp.setGrayPercent(po.getGrayPercent());
+        resp.setChecksum(po.getChecksum());
+        resp.setPublishedBy(po.getPublishedBy());
+        resp.setPublishedAt(po.getPublishedAt());
         resp.setSnapshotJson(parseJsonNode(po.getSnapshotJson()));
         resp.setCreatedAt(po.getCreatedAt());
         return resp;
@@ -554,6 +716,10 @@ public class WorkflowServiceImpl implements WorkflowService {
         resp.setCurrentNodeKey(po.getCurrentNodeKey());
         resp.setTimeoutAt(po.getTimeoutAt());
         resp.setRunMode(po.getRunMode());
+        resp.setTriggerType(po.getTriggerType());
+        resp.setTriggerId(po.getTriggerId());
+        resp.setPublishId(po.getPublishId());
+        resp.setSource(po.getSource());
         resp.setElapsedMs(po.getElapsedMs());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setFinishedAt(po.getFinishedAt());
@@ -763,6 +929,10 @@ public class WorkflowServiceImpl implements WorkflowService {
         resp.setNodeKey(po.getNodeKey());
         resp.setNodeType(po.getNodeType());
         resp.setStatus(po.getStatus());
+        resp.setAttemptNo(po.getAttemptNo());
+        resp.setMaxAttempts(po.getMaxAttempts());
+        resp.setTimeoutSeconds(po.getTimeoutSeconds());
+        resp.setFailureStrategy(po.getFailureStrategy());
         resp.setInputSnapshot(parseOutputs(po.getInputSnapshot()));
         resp.setOutputs(parseOutputs(po.getOutputs()));
         resp.setError(po.getError());
@@ -832,6 +1002,62 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (!missing.isEmpty()) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
                     "连线引用了不存在的节点: " + String.join(",", missing));
+        }
+    }
+
+    private static void validateCodeTaskSafety(WorkflowDetailResp detail) {
+        validateCodeTaskSafety(detail.getNodes(), detail.getEdges());
+    }
+
+    private static void validateCodeTaskSafety(List<WorkflowNodeDto> nodes, List<WorkflowEdgeDto> edges) {
+        Map<String, WorkflowNodeDto> nodeMap = nodes.stream()
+                .collect(java.util.stream.Collectors.toMap(WorkflowNodeDto::getNodeKey, node -> node));
+        Map<String, List<WorkflowEdgeDto>> edgeMap = (edges == null ? List.<WorkflowEdgeDto>of() : edges).stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        WorkflowEdgeDto::getSourceNodeKey,
+                        java.util.LinkedHashMap::new,
+                        java.util.stream.Collectors.toList()));
+        for (WorkflowNodeDto node : nodes) {
+            if (!"CODE_TASK".equalsIgnoreCase(node.getNodeType())) {
+                continue;
+            }
+            JsonNode config = node.getConfig();
+            String executor = config == null ? "" : config.path("executor").asText("");
+            if (StringUtils.hasText(executor) && !"MCP".equalsIgnoreCase(executor)) {
+                throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                        "CODE_TASK 只允许通过 MCP Code Worker 执行: " + node.getNodeKey());
+            }
+            boolean approvalRequired = config != null && config.path("approvalRequired").asBoolean(false);
+            if (approvalRequired && !hasDownstreamHumanReview(node.getNodeKey(), nodeMap, edgeMap, new HashSet<>())) {
+                throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                        "需要审批的 CODE_TASK 后必须连接 HUMAN_REVIEW: " + node.getNodeKey());
+            }
+        }
+    }
+
+    private static boolean hasDownstreamHumanReview(String nodeKey, Map<String, WorkflowNodeDto> nodeMap,
+                                                    Map<String, List<WorkflowEdgeDto>> edgeMap, Set<String> visited) {
+        if (!visited.add(nodeKey)) {
+            return false;
+        }
+        for (WorkflowEdgeDto edge : edgeMap.getOrDefault(nodeKey, List.of())) {
+            WorkflowNodeDto target = nodeMap.get(edge.getTargetNodeKey());
+            if (target == null) {
+                continue;
+            }
+            if ("HUMAN_REVIEW".equalsIgnoreCase(target.getNodeType())) {
+                return true;
+            }
+            if (hasDownstreamHumanReview(target.getNodeKey(), nodeMap, edgeMap, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static <T> void requireService(T service, String message) {
+        if (service == null) {
+            throw new BizException(ErrorCode.INTERNAL_ERROR, message);
         }
     }
 

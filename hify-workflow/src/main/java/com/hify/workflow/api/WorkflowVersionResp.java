@@ -16,6 +16,18 @@ public class WorkflowVersionResp {
 
     private String changeSummary;
 
+    private String versionStatus;
+
+    private Long parentVersionId;
+
+    private Integer grayPercent;
+
+    private String checksum;
+
+    private Long publishedBy;
+
+    private LocalDateTime publishedAt;
+
     private JsonNode snapshotJson;
 
     private LocalDateTime createdAt;

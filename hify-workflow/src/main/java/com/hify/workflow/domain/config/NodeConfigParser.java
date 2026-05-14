@@ -19,18 +19,19 @@ public class NodeConfigParser {
         JsonNode safeConfig = config == null || config.isNull()
                 ? objectMapper.createObjectNode()
                 : config;
+        JsonNode businessConfig = businessConfig(safeConfig);
         try {
             return switch (WorkflowNodeType.parse(nodeType)) {
-                case START -> objectMapper.treeToValue(safeConfig, EmptyNodeConfig.class);
-                case END -> objectMapper.treeToValue(safeConfig, EndNodeConfig.class);
-                case LLM -> objectMapper.treeToValue(safeConfig, LlmNodeConfig.class);
-                case TOOL -> objectMapper.treeToValue(safeConfig, ToolNodeConfig.class);
-                case CONDITION -> objectMapper.treeToValue(safeConfig, ConditionNodeConfig.class);
-                case API_CALL -> objectMapper.treeToValue(safeConfig, ApiCallNodeConfig.class);
-                case KNOWLEDGE -> objectMapper.treeToValue(safeConfig, KnowledgeNodeConfig.class);
-                case HUMAN_REVIEW -> objectMapper.treeToValue(safeConfig, HumanReviewNodeConfig.class);
-                case CODE_TASK -> objectMapper.treeToValue(safeConfig, CodeTaskNodeConfig.class);
-                case REPLY -> objectMapper.treeToValue(safeConfig, ReplyNodeConfig.class);
+                case START -> objectMapper.treeToValue(businessConfig, EmptyNodeConfig.class);
+                case END -> objectMapper.treeToValue(businessConfig, EndNodeConfig.class);
+                case LLM -> objectMapper.treeToValue(businessConfig, LlmNodeConfig.class);
+                case TOOL -> objectMapper.treeToValue(businessConfig, ToolNodeConfig.class);
+                case CONDITION -> objectMapper.treeToValue(businessConfig, ConditionNodeConfig.class);
+                case API_CALL -> objectMapper.treeToValue(businessConfig, ApiCallNodeConfig.class);
+                case KNOWLEDGE -> objectMapper.treeToValue(businessConfig, KnowledgeNodeConfig.class);
+                case HUMAN_REVIEW -> objectMapper.treeToValue(businessConfig, HumanReviewNodeConfig.class);
+                case CODE_TASK -> objectMapper.treeToValue(businessConfig, CodeTaskNodeConfig.class);
+                case REPLY -> objectMapper.treeToValue(businessConfig, ReplyNodeConfig.class);
             };
         } catch (JsonProcessingException | IllegalArgumentException e) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
@@ -39,9 +40,12 @@ public class NodeConfigParser {
     }
 
     public String validateAndSerialize(String nodeType, JsonNode config) {
-        NodeConfig parsed = parse(nodeType, config);
+        JsonNode safeConfig = config == null || config.isNull()
+                ? objectMapper.createObjectNode()
+                : config;
+        parse(nodeType, safeConfig);
         try {
-            return objectMapper.writeValueAsString(parsed);
+            return objectMapper.writeValueAsString(safeConfig);
         } catch (JsonProcessingException e) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "节点配置序列化失败", e);
         }
@@ -56,7 +60,7 @@ public class NodeConfigParser {
     }
 
     public NodeConfigDef parseExecutionConfig(String nodeType, String configJson) {
-        JsonNode safeConfig = deserialize(configJson);
+        JsonNode safeConfig = businessConfig(deserialize(configJson));
         try {
             return switch (WorkflowNodeType.parse(nodeType)) {
                 case START -> objectMapper.treeToValue(safeConfig,
@@ -82,5 +86,14 @@ public class NodeConfigParser {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
                     "节点执行配置格式不正确: type=" + nodeType, e);
         }
+    }
+
+    private JsonNode businessConfig(JsonNode config) {
+        if (config == null || config.isNull() || !config.isObject() || !config.has("runtime")) {
+            return config == null || config.isNull() ? objectMapper.createObjectNode() : config;
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode copy = config.deepCopy();
+        copy.remove("runtime");
+        return copy;
     }
 }

@@ -2,9 +2,12 @@ package com.hify.workflow.web;
 
 import com.hify.auth.api.RequireRole;
 import com.hify.auth.api.UserRole;
+import com.hify.common.web.PageResult;
 import com.hify.common.web.Result;
 import com.hify.workflow.api.SubmitWorkflowReviewReq;
+import com.hify.workflow.api.WorkflowReviewQuery;
 import com.hify.workflow.api.WorkflowRunResp;
+import com.hify.workflow.api.WorkflowRunQuery;
 import com.hify.workflow.api.WorkflowService;
 import com.hify.workflow.api.WorkflowReviewTaskResp;
 import jakarta.validation.Valid;
@@ -25,6 +28,11 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class WorkflowRunController {
 
     private final WorkflowService workflowService;
+
+    @GetMapping
+    public PageResult<WorkflowRunResp> listRuns(WorkflowRunQuery query) {
+        return workflowService.listRuns(query);
+    }
 
     @GetMapping("/{runId}")
     public Result<WorkflowRunResp> getRunDetail(@PathVariable Long runId) {
@@ -54,6 +62,11 @@ public class WorkflowRunController {
     public Result<WorkflowRunResp> submitReview(@PathVariable Long runId,
                                                 @Valid @RequestBody SubmitWorkflowReviewReq req) {
         return Result.ok(workflowService.submitReview(runId, req));
+    }
+
+    @GetMapping("/reviews")
+    public PageResult<WorkflowReviewTaskResp> listReviewTasks(WorkflowReviewQuery query) {
+        return workflowService.listReviewTasks(query);
     }
 
     private Integer resolveAfter(Integer after, String lastEventId) {

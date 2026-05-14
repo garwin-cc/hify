@@ -10,10 +10,17 @@ import com.hify.workflow.api.WorkflowDetailResp;
 import com.hify.workflow.api.WorkflowListItemResp;
 import com.hify.workflow.api.WorkflowNodeDebugReq;
 import com.hify.workflow.api.WorkflowNodeDebugResp;
+import com.hify.workflow.api.WorkflowPublishReq;
+import com.hify.workflow.api.WorkflowPublishResp;
 import com.hify.workflow.api.WorkflowQuery;
+import com.hify.workflow.api.WorkflowRollbackReq;
 import com.hify.workflow.api.WorkflowRunReq;
 import com.hify.workflow.api.WorkflowRunResp;
 import com.hify.workflow.api.WorkflowService;
+import com.hify.workflow.api.WorkflowTriggerReq;
+import com.hify.workflow.api.WorkflowTriggerResp;
+import com.hify.workflow.api.WorkflowVariableResp;
+import com.hify.workflow.api.WorkflowVersionDiffResp;
 import com.hify.workflow.api.WorkflowVersionResp;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -101,11 +108,55 @@ public class WorkflowController {
         return Result.ok(workflowService.getVersion(id, versionNo));
     }
 
+    @GetMapping("/{id}/versions/{leftVersionNo}/diff/{rightVersionNo}")
+    public Result<WorkflowVersionDiffResp> diffVersions(@PathVariable Long id,
+                                                        @PathVariable Integer leftVersionNo,
+                                                        @PathVariable Integer rightVersionNo) {
+        return Result.ok(workflowService.diffVersions(id, leftVersionNo, rightVersionNo));
+    }
+
     @PostMapping("/{id}/versions/{versionNo}/restore")
     @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<WorkflowDetailResp> restoreVersion(@PathVariable Long id,
                                                      @PathVariable Integer versionNo) {
         return Result.ok(workflowService.restoreVersion(id, versionNo));
+    }
+
+    @PostMapping("/{id}/versions/{versionNo}/rollback")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<WorkflowDetailResp> rollbackVersion(@PathVariable Long id,
+                                                      @PathVariable Integer versionNo,
+                                                      @RequestBody(required = false) WorkflowRollbackReq req) {
+        return Result.ok(workflowService.rollbackVersion(id, versionNo, req == null ? new WorkflowRollbackReq() : req));
+    }
+
+    @PostMapping("/{id}/publish")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<WorkflowPublishResp> publish(@PathVariable Long id,
+                                               @Valid @RequestBody WorkflowPublishReq req) {
+        return Result.ok(workflowService.publish(id, req));
+    }
+
+    @GetMapping("/{id}/publishes")
+    public Result<List<WorkflowPublishResp>> listPublishes(@PathVariable Long id) {
+        return Result.ok(workflowService.listPublishes(id));
+    }
+
+    @PostMapping("/{id}/triggers")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<WorkflowTriggerResp> createTrigger(@PathVariable Long id,
+                                                     @Valid @RequestBody WorkflowTriggerReq req) {
+        return Result.ok(workflowService.createTrigger(id, req));
+    }
+
+    @GetMapping("/{id}/triggers")
+    public Result<List<WorkflowTriggerResp>> listTriggers(@PathVariable Long id) {
+        return Result.ok(workflowService.listTriggers(id));
+    }
+
+    @GetMapping("/{id}/variables")
+    public Result<List<WorkflowVariableResp>> listVariables(@PathVariable Long id) {
+        return Result.ok(workflowService.listVariables(id));
     }
 
 }

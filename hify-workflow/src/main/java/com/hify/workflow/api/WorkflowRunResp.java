@@ -32,6 +32,14 @@ public class WorkflowRunResp {
 
     private String runMode;
 
+    private String triggerType;
+
+    private Long triggerId;
+
+    private Long publishId;
+
+    private String source;
+
     private Integer elapsedMs;
 
     private LocalDateTime createdAt;

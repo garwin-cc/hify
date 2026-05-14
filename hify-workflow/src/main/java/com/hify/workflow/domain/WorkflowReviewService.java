@@ -1,11 +1,15 @@
 package com.hify.workflow.domain;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
+import com.hify.common.util.PageHelper;
+import com.hify.common.web.PageResult;
 import com.hify.workflow.api.SubmitWorkflowReviewReq;
+import com.hify.workflow.api.WorkflowReviewQuery;
 import com.hify.workflow.api.WorkflowReviewTaskResp;
 import com.hify.workflow.infra.WorkflowReviewTaskMapper;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +58,20 @@ public class WorkflowReviewService implements WorkflowReviewHandler {
         return toResp(po);
     }
 
+    public PageResult<WorkflowReviewTaskResp> listTasks(WorkflowReviewQuery query) {
+        Page<WorkflowReviewTaskPo> page = PageHelper.toPage(query.getPage(), query.getSize());
+        LocalDateTime now = LocalDateTime.now();
+        return PageHelper.toPageResult(workflowReviewTaskMapper.selectPage(page,
+                Wrappers.lambdaQuery(WorkflowReviewTaskPo.class)
+                        .eq(query.getAssigneeUserId() != null, WorkflowReviewTaskPo::getAssigneeUserId, query.getAssigneeUserId())
+                        .eq(StringUtils.hasText(query.getAssigneeUsername()), WorkflowReviewTaskPo::getAssigneeUsername, query.getAssigneeUsername())
+                        .eq(StringUtils.hasText(query.getStatus()), WorkflowReviewTaskPo::getStatus, query.getStatus())
+                        .le(query.getDueBefore() != null, WorkflowReviewTaskPo::getDueAt, query.getDueBefore())
+                        .le(Boolean.TRUE.equals(query.getExpiredOnly()), WorkflowReviewTaskPo::getDueAt, now)
+                        .orderByAsc(WorkflowReviewTaskPo::getDueAt)
+                        .orderByDesc(WorkflowReviewTaskPo::getCreatedAt)), this::toResp);
+    }
+
     public WorkflowReviewTaskPo submitReview(Long workflowRunId, SubmitWorkflowReviewReq req) {
         WorkflowReviewTaskPo po = workflowReviewTaskMapper.selectOne(Wrappers.lambdaQuery(WorkflowReviewTaskPo.class)
                 .eq(WorkflowReviewTaskPo::getWorkflowRunId, workflowRunId)
@@ -89,6 +107,16 @@ public class WorkflowReviewService implements WorkflowReviewHandler {
         resp.setActions(parseActions(po.getActionsJson()));
         resp.setAllowEdit(po.getAllowEdit() != null && po.getAllowEdit() == 1);
         resp.setOutputVariable(po.getOutputVariable());
+        resp.setAssigneeUserId(po.getAssigneeUserId());
+        resp.setAssigneeUsername(po.getAssigneeUsername());
+        resp.setDueAt(po.getDueAt());
+        resp.setTimeoutAction(po.getTimeoutAction());
+        resp.setNotifiedAt(po.getNotifiedAt());
+        resp.setExpiredAt(po.getExpiredAt());
+        resp.setReviewAction(po.getReviewAction());
+        resp.setReviewComment(po.getReviewComment());
+        resp.setReviewedBy(po.getReviewedBy());
+        resp.setReviewedAt(po.getReviewedAt());
         return resp;
     }
 

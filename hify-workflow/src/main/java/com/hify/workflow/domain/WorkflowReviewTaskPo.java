@@ -28,6 +28,18 @@ public class WorkflowReviewTaskPo extends BaseEntity {
 
     private String outputVariable;
 
+    private Long assigneeUserId;
+
+    private String assigneeUsername;
+
+    private LocalDateTime dueAt;
+
+    private String timeoutAction;
+
+    private LocalDateTime notifiedAt;
+
+    private LocalDateTime expiredAt;
+
     private String reviewAction;
 
     private String reviewComment;

@@ -34,6 +34,14 @@ public class WorkflowRunPo extends BaseEntity {
 
     private String runMode;
 
+    private String triggerType;
+
+    private Long triggerId;
+
+    private Long publishId;
+
+    private String source;
+
     private String contextSnapshot;
 
     private Integer elapsedMs;

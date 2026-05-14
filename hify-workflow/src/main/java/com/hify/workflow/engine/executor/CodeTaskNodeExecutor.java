@@ -22,14 +22,22 @@ public class CodeTaskNodeExecutor extends AbstractNodeExecutor implements NodeEx
         if (!StringUtils.hasText(codeConfig.task())) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "CODE_TASK 缺少任务描述");
         }
+        if (StringUtils.hasText(codeConfig.executor()) && !"MCP".equalsIgnoreCase(codeConfig.executor())) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "CODE_TASK 只允许通过 MCP Code Worker 执行");
+        }
         long startedAt = System.currentTimeMillis();
         CodeTaskResult result = runnerRegistry.get(codeConfig.executor()).run(node, codeConfig, ctx);
         ctx.recordCall(new WorkflowCallTrace(
                 "CODE_TASK",
                 codeConfig.executor() == null ? "MCP" : codeConfig.executor(),
                 java.util.Map.of("executor", codeConfig.executor() == null ? "MCP" : codeConfig.executor(),
-                        "toolName", codeConfig.toolName() == null ? "" : codeConfig.toolName()),
-                java.util.Map.of("status", result.status(), "changedFiles", result.changedFiles()),
+                        "toolName", codeConfig.toolName() == null ? "" : codeConfig.toolName(),
+                        "sandboxRequired", Boolean.TRUE.equals(codeConfig.sandboxRequired()),
+                        "approvalRequired", Boolean.TRUE.equals(codeConfig.approvalRequired()),
+                        "diffAuditRequired", Boolean.TRUE.equals(codeConfig.diffAuditRequired())),
+                java.util.Map.of("status", result.status(),
+                        "changedFiles", result.changedFiles(),
+                        "hasDiff", StringUtils.hasText(result.diff())),
                 result.error() == null || result.error().isBlank() ? "SUCCESS" : "FAILED",
                 result.error(),
                 elapsed(startedAt)));

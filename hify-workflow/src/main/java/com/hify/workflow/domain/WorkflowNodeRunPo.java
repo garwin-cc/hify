@@ -20,6 +20,14 @@ public class WorkflowNodeRunPo extends BaseEntity {
 
     private String status;
 
+    private Integer attemptNo;
+
+    private Integer maxAttempts;
+
+    private Integer timeoutSeconds;
+
+    private String failureStrategy;
+
     private String inputSnapshot;
 
     private LocalDateTime startedAt;

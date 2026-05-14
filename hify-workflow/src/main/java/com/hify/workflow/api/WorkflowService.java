@@ -24,11 +24,15 @@ public interface WorkflowService {
 
     WorkflowRunResp getRunDetail(Long runId);
 
+    PageResult<WorkflowRunResp> listRuns(WorkflowRunQuery query);
+
     WorkflowRunResp rerunRun(Long runId);
 
     SseEmitter streamRunEvents(Long runId, Integer afterEventSeq);
 
     WorkflowReviewTaskResp getReviewTask(Long runId);
+
+    PageResult<WorkflowReviewTaskResp> listReviewTasks(WorkflowReviewQuery query);
 
     WorkflowRunResp submitReview(Long runId, SubmitWorkflowReviewReq req);
 
@@ -40,5 +44,21 @@ public interface WorkflowService {
 
     WorkflowVersionResp getVersion(Long workflowId, Integer versionNo);
 
+    WorkflowVersionDiffResp diffVersions(Long workflowId, Integer leftVersionNo, Integer rightVersionNo);
+
     WorkflowDetailResp restoreVersion(Long workflowId, Integer versionNo);
+
+    WorkflowDetailResp rollbackVersion(Long workflowId, Integer versionNo, WorkflowRollbackReq req);
+
+    WorkflowPublishResp publish(Long workflowId, WorkflowPublishReq req);
+
+    List<WorkflowPublishResp> listPublishes(Long workflowId);
+
+    WorkflowTriggerResp createTrigger(Long workflowId, WorkflowTriggerReq req);
+
+    List<WorkflowTriggerResp> listTriggers(Long workflowId);
+
+    WorkflowRunResp triggerWebhook(String triggerKey, WorkflowRunReq req);
+
+    List<WorkflowVariableResp> listVariables(Long workflowId);
 }

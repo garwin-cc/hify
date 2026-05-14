@@ -419,6 +419,75 @@ class WorkflowEngineTest {
         });
     }
 
+    @Test
+    void retriesNodeWhenRuntimePolicyAllowsRetry() {
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\",\"runtime\":{\"retryTimes\":1}}"),
+                node("end", "END", "{\"outputVariable\":\"llm.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "end", null, 0)
+        ));
+        FlakyLlmExecutor flakyExecutor = new FlakyLlmExecutor();
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(flakyExecutor, new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                versionMapper,
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
+
+        String output = engine.execute(10L, "hello");
+
+        assertThat(output).isEqualTo("answer: hello");
+        assertThat(flakyExecutor.calls).isEqualTo(2);
+        assertThat(updatedNodeRuns).anySatisfy(run -> {
+            assertThat(run.getNodeKey()).isEqualTo("llm");
+            assertThat(run.getMaxAttempts()).isEqualTo(2);
+            assertThat(run.getAttemptNo()).isEqualTo(2);
+        });
+    }
+
+    @Test
+    void routesToErrorBranchWhenRuntimePolicyUsesErrorBranch() {
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\",\"runtime\":{\"onFailure\":\"ERROR_BRANCH\"}}"),
+                node("fallback", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"fallback.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "fallback", "ERROR", 0),
+                edge("fallback", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new FailingOnceThenNormalExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                versionMapper,
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
+
+        String output = engine.execute(10L, "hello");
+
+        assertThat(output).isEqualTo("answer: hello");
+        assertThat(updatedRuns).anySatisfy(run -> {
+            assertThat(run.getStatus()).isEqualTo("SUCCESS");
+            assertThat(run.getOutput()).isEqualTo("answer: hello");
+        });
+    }
+
     private static WorkflowNodePo node(String key, String type, String config) {
         WorkflowNodePo po = new WorkflowNodePo();
         po.setWorkflowId(10L);
@@ -531,6 +600,43 @@ class WorkflowEngineTest {
                     "工作流节点执行失败: nodeKey=llm type=LLM，原因: LLM 请求超时: https://example.test",
                     new LlmApiException(LlmApiException.Type.TIMEOUT,
                             "LLM 请求超时: https://example.test"));
+        }
+
+        @Override
+        public String nodeType() {
+            return "LLM";
+        }
+    }
+
+    private static class FlakyLlmExecutor implements NodeExecutor {
+
+        private int calls;
+
+        @Override
+        public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
+            calls++;
+            if (calls == 1) {
+                throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED, "temporary boom");
+            }
+            LlmNodeConfig llmConfig = (LlmNodeConfig) config;
+            ctx.set(node.nodeKey(), llmConfig.outputVariable(), "answer: " + ctx.get("start", "userMessage"));
+        }
+
+        @Override
+        public String nodeType() {
+            return "LLM";
+        }
+    }
+
+    private static class FailingOnceThenNormalExecutor implements NodeExecutor {
+
+        @Override
+        public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
+            if ("llm".equals(node.nodeKey())) {
+                throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED, "boom");
+            }
+            LlmNodeConfig llmConfig = (LlmNodeConfig) config;
+            ctx.set(node.nodeKey(), llmConfig.outputVariable(), "answer: " + ctx.get("start", "userMessage"));
         }
 
         @Override

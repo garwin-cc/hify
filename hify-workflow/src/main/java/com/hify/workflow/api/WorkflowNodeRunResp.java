@@ -18,6 +18,14 @@ public class WorkflowNodeRunResp {
 
     private String status;
 
+    private Integer attemptNo;
+
+    private Integer maxAttempts;
+
+    private Integer timeoutSeconds;
+
+    private String failureStrategy;
+
     private Map<String, Object> inputSnapshot;
 
     private Map<String, Object> outputs;

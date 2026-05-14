@@ -1,7 +1,11 @@
 package com.hify.workflow.domain;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hify.common.exception.BizException;
+import com.hify.workflow.api.CreateWorkflowReq;
 import com.hify.workflow.api.SubmitWorkflowReviewReq;
+import com.hify.workflow.api.WorkflowEdgeDto;
+import com.hify.workflow.api.WorkflowNodeDto;
 import com.hify.workflow.api.WorkflowRunResp;
 import com.hify.workflow.engine.WorkflowEngine;
 import com.hify.workflow.infra.WorkflowEdgeMapper;
@@ -23,8 +27,44 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WorkflowServiceImplTest {
+
+    @Test
+    void rejectsApprovalRequiredCodeTaskWithoutHumanReview() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        CreateWorkflowReq req = new CreateWorkflowReq();
+        req.setName("code workflow");
+        req.setStartNodeKey("start");
+        req.setNodes(List.of(
+                node("start", "START", "{}"),
+                node("code", "CODE_TASK", "{\"task\":\"改代码\",\"executor\":\"MCP\",\"approvalRequired\":true}"),
+                node("end", "END", "{\"outputVariable\":\"code.result\"}")
+        ));
+        req.setEdges(List.of(
+                edge("start", "code"),
+                edge("code", "end")
+        ));
+
+        WorkflowServiceImpl service = new WorkflowServiceImpl(
+                mapper(WorkflowMapper.class, method -> null),
+                mapper(WorkflowNodeMapper.class, method -> null),
+                mapper(WorkflowEdgeMapper.class, method -> null),
+                mapper(WorkflowRunMapper.class, method -> null),
+                mapper(WorkflowNodeRunMapper.class, method -> null),
+                null,
+                mapper(WorkflowVersionMapper.class, method -> null),
+                new NodeConfigParser(objectMapper),
+                null,
+                noopEventService(),
+                new WorkflowReviewService(null, objectMapper),
+                objectMapper);
+
+        assertThatThrownBy(() -> service.create(req))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("需要审批的 CODE_TASK 后必须连接 HUMAN_REVIEW");
+    }
 
     @Test
     void rerunsFailedWorkflowRunWithOriginalInputAndSourceRunId() {
@@ -190,6 +230,22 @@ class WorkflowServiceImplTest {
             public void publishNodeEvent(Long workflowRunId, String eventType, String nodeKey, String status, java.util.Map<String, Object> payload) {
             }
         };
+    }
+
+    private static WorkflowNodeDto node(String key, String type, String configJson) throws Exception {
+        WorkflowNodeDto node = new WorkflowNodeDto();
+        node.setNodeKey(key);
+        node.setNodeType(type);
+        node.setName(key);
+        node.setConfig(new ObjectMapper().readTree(configJson));
+        return node;
+    }
+
+    private static WorkflowEdgeDto edge(String source, String target) {
+        WorkflowEdgeDto edge = new WorkflowEdgeDto();
+        edge.setSourceNodeKey(source);
+        edge.setTargetNodeKey(target);
+        return edge;
     }
 
     private static <T> T mapper(Class<T> type, Function<String, Invocation> behavior) {

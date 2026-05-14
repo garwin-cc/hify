@@ -144,7 +144,8 @@ public class WorkflowEngine {
                     throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "目标节点不存在: " + currentKey);
                 }
                 updateWorkflowRunCurrentNode(workflowRun, currentKey);
-                WorkflowNodeRunPo nodeRun = createNodeRun(workflowRun.getId(), current);
+                NodeRuntimePolicy runtimePolicy = NodeRuntimePolicy.fromJson(objectMapper, current.getConfig());
+                WorkflowNodeRunPo nodeRun = createNodeRun(workflowRun.getId(), current, runtimePolicy);
                 captureNodeInput(nodeRun, ctx);
                 ctx.bindCurrentNodeRun(nodeRun.getId(), current.getNodeKey(), current.getNodeType(), workflowCallTraceSink);
                 long nodeStartedAt = System.currentTimeMillis();
@@ -165,8 +166,7 @@ public class WorkflowEngine {
                         return null;
                     }
                     if (!"START".equalsIgnoreCase(current.getNodeType())) {
-                        NodeConfigDef config = nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
-                        nodeExecutorRegistry.get(current.getNodeType()).execute(toEngineNode(current), config, ctx);
+                        executeNodeWithPolicy(current, ctx, runtimePolicy, nodeRun);
                     }
                     checkTimeout(workflowRun);
                     updateNodeRunSuccess(nodeRun, ctx, nodeStartedAt);
@@ -177,6 +177,15 @@ public class WorkflowEngine {
                     updateNodeRunFailed(nodeRun, e, nodeStartedAt);
                     workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_FAILED", currentKey, STATUS_FAILED,
                             Map.of("nodeType", current.getNodeType(), "error", shortError(e), "elapsedMs", elapsed(nodeStartedAt)));
+                    String failureNext = handleFailureStrategy(workflowRun, current, edgeMap, ctx, nodeRun, runtimePolicy, e, nodeStartedAt);
+                    if ("HUMAN_REVIEW".equals(runtimePolicy.onFailure())) {
+                        ctx.clearCurrentNodeRun();
+                        return null;
+                    }
+                    if (failureNext != null || "CONTINUE".equals(runtimePolicy.onFailure())) {
+                        currentKey = failureNext;
+                        continue;
+                    }
                     throw e;
                 } finally {
                     ctx.clearCurrentNodeRun();
@@ -270,6 +279,15 @@ public class WorkflowEngine {
                 .orElseGet(() -> edges.isEmpty() ? null : edges.get(0).getTargetNodeKey());
     }
 
+    private String errorNext(WorkflowNodePo current, Map<String, List<WorkflowEdgePo>> edgeMap) {
+        return edgeMap.getOrDefault(current.getNodeKey(), List.of()).stream()
+                .filter(edge -> "ERROR".equalsIgnoreCase(edge.getEdgeType())
+                        || "ERROR".equalsIgnoreCase(edge.getConditionExpression()))
+                .findFirst()
+                .map(WorkflowEdgePo::getTargetNodeKey)
+                .orElse(null);
+    }
+
     private String conditionOutputVariable(WorkflowNodePo current) {
         NodeConfigDef config = nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
         ConditionNodeConfig conditionConfig = (ConditionNodeConfig) config;
@@ -302,6 +320,80 @@ public class WorkflowEngine {
 
     private WorkflowNode toEngineNode(WorkflowNodePo po) {
         return new WorkflowNode(po.getNodeKey(), po.getNodeType(), po.getName());
+    }
+
+    private void executeNodeWithPolicy(WorkflowNodePo current, ExecutionContext ctx, NodeRuntimePolicy policy,
+                                       WorkflowNodeRunPo nodeRun) {
+        Exception lastException = null;
+        int maxAttempts = policy.maxAttempts();
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            nodeRun.setAttemptNo(attempt);
+            try {
+                NodeConfigDef config = nodeConfigParser.parseExecutionConfig(current.getNodeType(), current.getConfig());
+                long attemptStartedAt = System.currentTimeMillis();
+                nodeExecutorRegistry.get(current.getNodeType()).execute(toEngineNode(current), config, ctx);
+                if (policy.timeoutSeconds() != null && elapsed(attemptStartedAt) > policy.timeoutSeconds() * 1000) {
+                    throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED,
+                            "节点执行超时: " + current.getNodeKey());
+                }
+                return;
+            } catch (Exception e) {
+                lastException = e;
+                if (attempt >= maxAttempts) {
+                    break;
+                }
+                sleepBeforeRetry(policy.retryIntervalMs());
+            }
+        }
+        if (lastException instanceof BizException bizException) {
+            throw bizException;
+        }
+        throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED, "节点执行失败: " + current.getNodeKey(), lastException);
+    }
+
+    private String handleFailureStrategy(WorkflowRunPo workflowRun, WorkflowNodePo current,
+                                         Map<String, List<WorkflowEdgePo>> edgeMap, ExecutionContext ctx,
+                                         WorkflowNodeRunPo nodeRun, NodeRuntimePolicy policy,
+                                         Exception exception, long nodeStartedAt) {
+        ctx.set(current.getNodeKey(), "error", shortError(exception));
+        if ("CONTINUE".equals(policy.onFailure())) {
+            return findNext(current, edgeMap, ctx);
+        }
+        if ("ERROR_BRANCH".equals(policy.onFailure())) {
+            String target = errorNext(current, edgeMap);
+            if (StringUtils.hasText(target)) {
+                return target;
+            }
+            return null;
+        }
+        if ("HUMAN_REVIEW".equals(policy.onFailure())) {
+            workflowReviewHandler.createWaitingReview(
+                    workflowRun.getId(),
+                    current.getNodeKey(),
+                    current.getName() + " 失败处理",
+                    shortError(exception),
+                    List.of("APPROVE", "REJECT"),
+                    true,
+                    "failureReview");
+            updateNodeRunWaiting(nodeRun, ctx, nodeStartedAt);
+            updateWorkflowRunWaiting(workflowRun, current.getNodeKey(), ctx);
+            workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "FAILURE_REVIEW_WAITING", current.getNodeKey(), STATUS_WAITING,
+                    Map.of("error", shortError(exception)));
+            return null;
+        }
+        return null;
+    }
+
+    private void sleepBeforeRetry(int retryIntervalMs) {
+        if (retryIntervalMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(retryIntervalMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED, "节点重试等待被中断", e);
+        }
     }
 
     private void handleHumanReview(WorkflowRunPo workflowRun, WorkflowNodePo current, ExecutionContext ctx,
@@ -384,12 +476,16 @@ public class WorkflowEngine {
         }
     }
 
-    private WorkflowNodeRunPo createNodeRun(Long workflowRunId, WorkflowNodePo node) {
+    private WorkflowNodeRunPo createNodeRun(Long workflowRunId, WorkflowNodePo node, NodeRuntimePolicy policy) {
         WorkflowNodeRunPo po = new WorkflowNodeRunPo();
         po.setWorkflowRunId(workflowRunId);
         po.setNodeKey(node.getNodeKey());
         po.setNodeType(node.getNodeType());
         po.setStatus(STATUS_RUNNING);
+        po.setAttemptNo(1);
+        po.setMaxAttempts(policy.maxAttempts());
+        po.setTimeoutSeconds(policy.timeoutSeconds());
+        po.setFailureStrategy(policy.onFailure());
         po.setStartedAt(LocalDateTime.now());
         try {
             workflowNodeRunMapper.insert(po);

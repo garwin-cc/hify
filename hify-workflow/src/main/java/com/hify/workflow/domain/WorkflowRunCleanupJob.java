@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.hify.workflow.infra.WorkflowRunMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -19,8 +20,14 @@ public class WorkflowRunCleanupJob {
     private final WorkflowRunMapper workflowRunMapper;
     private final WorkflowRunEventService workflowRunEventService;
 
+    @Value("${hify.workflow.cleanup-enabled:true}")
+    private boolean cleanupEnabled;
+
     @EventListener(ApplicationReadyEvent.class)
     public void markStaleRunningRunsFailed() {
+        if (!cleanupEnabled) {
+            return;
+        }
         try {
             List<WorkflowRunPo> staleRuns = workflowRunMapper.selectList(
                     Wrappers.lambdaQuery(WorkflowRunPo.class)

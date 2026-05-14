@@ -119,6 +119,21 @@ hify:
     embedding-batch-size: 32
     max-chunks-per-document: 50000
     max-split-steps: 100000
+  init:
+    default-provider:
+      enabled: ${HIFY_INIT_DEFAULT_PROVIDER_ENABLED:false}
+      name: ${HIFY_INIT_DEFAULT_PROVIDER_NAME:Default Provider}
+      type: ${HIFY_INIT_DEFAULT_PROVIDER_TYPE:OPENAI}
+      base-url: ${HIFY_INIT_DEFAULT_PROVIDER_BASE_URL:}
+      api-key: ${HIFY_INIT_DEFAULT_PROVIDER_API_KEY:}
+      chat-model-name: ${HIFY_INIT_DEFAULT_CHAT_MODEL_NAME:Default Chat Model}
+      chat-model-id: ${HIFY_INIT_DEFAULT_CHAT_MODEL_ID:}
+      embedding-model-name: ${HIFY_INIT_DEFAULT_EMBEDDING_MODEL_NAME:Default Embedding Model}
+      embedding-model-id: ${HIFY_INIT_DEFAULT_EMBEDDING_MODEL_ID:}
+  jobs:
+    enabled: true
+    log-retention-days: 90
+    job-log-retention-days: 30
 
 # ── 日志级别（格式和滚动策略由 logback-spring.xml 管理）────────────────────
 logging:

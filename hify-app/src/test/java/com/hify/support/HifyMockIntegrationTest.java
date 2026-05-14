@@ -1,5 +1,8 @@
 package com.hify.support;
 
+import com.hify.common.ratelimit.RateLimitResult;
+import com.hify.common.ratelimit.RateLimitRule;
+import com.hify.common.ratelimit.RateLimitService;
 import com.hify.knowledge.domain.KnowledgeChunk;
 import com.hify.knowledge.domain.KnowledgeSearchHit;
 import com.hify.knowledge.domain.KnowledgeVectorRepository;
@@ -15,7 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc
 @ActiveProfiles("mock")
 @Transactional
@@ -54,6 +57,17 @@ public abstract class HifyMockIntegrationTest {
 
                 @Override
                 public void deleteByDocumentId(Long documentId) {
+                }
+            };
+        }
+
+        @Bean
+        @Primary
+        RateLimitService rateLimitService() {
+            return new RateLimitService() {
+                @Override
+                public RateLimitResult check(RateLimitRule rule) {
+                    return RateLimitResult.allowed(Long.MAX_VALUE);
                 }
             };
         }

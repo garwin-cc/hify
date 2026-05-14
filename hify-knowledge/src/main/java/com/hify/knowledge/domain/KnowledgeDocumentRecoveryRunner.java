@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.hify.knowledge.infra.KnowledgeDocumentMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
@@ -20,8 +21,14 @@ public class KnowledgeDocumentRecoveryRunner implements ApplicationRunner {
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeServiceImpl knowledgeService;
 
+    @Value("${hify.knowledge.recovery-enabled:true}")
+    private boolean recoveryEnabled;
+
     @Override
     public void run(ApplicationArguments args) {
+        if (!recoveryEnabled) {
+            return;
+        }
         int updated = documentMapper.update(null, Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
                 .eq(KnowledgeDocumentPo::getParseStatus, "PROCESSING")
                 .lt(KnowledgeDocumentPo::getUpdatedAt, LocalDateTime.now().minusHours(STALE_PROCESSING_HOURS))

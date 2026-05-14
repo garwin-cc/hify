@@ -2,8 +2,10 @@ package com.hify.common.config;
 
 import com.hify.common.cache.CacheNames;
 import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -21,6 +23,7 @@ public class CacheConfig {
     private static final String KEY_PREFIX = "hify:";
 
     @Bean
+    @Profile("!mock")
     public RedisCacheManager cacheManager(RedisConnectionFactory factory,
                                           GenericJackson2JsonRedisSerializer jsonSerializer) {
         RedisCacheConfiguration defaults = defaultConfig(Duration.ofMinutes(30), jsonSerializer);
@@ -41,6 +44,22 @@ public class CacheConfig {
                 .cacheDefaults(defaults)
                 .withInitialCacheConfigurations(cacheConfigs)
                 .build();
+    }
+
+    @Bean
+    @Profile("mock")
+    public ConcurrentMapCacheManager mockCacheManager() {
+        return new ConcurrentMapCacheManager(
+                CacheNames.PROVIDER,
+                CacheNames.MODEL,
+                CacheNames.AGENT_DETAIL,
+                CacheNames.AGENT_LIST,
+                CacheNames.SESSION,
+                CacheNames.MCP_TOOL,
+                CacheNames.WORKFLOW,
+                CacheNames.KNOWLEDGE_CONFIG,
+                CacheNames.PERMISSION
+        );
     }
 
     private RedisCacheConfiguration defaultConfig(Duration ttl,

@@ -17,4 +17,12 @@ public class CreateKnowledgeBaseReq {
 
     @NotNull(message = "请选择向量模型")
     private Long embeddingModelConfigId;
+
+    private Long workspaceId;
+
+    private Long projectId;
+
+    private String visibility;
+
+    private String shareScope;
 }

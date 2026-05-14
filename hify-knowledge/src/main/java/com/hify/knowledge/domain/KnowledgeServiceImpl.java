@@ -17,6 +17,7 @@ import com.hify.common.web.PageResult;
 import com.hify.knowledge.api.*;
 import com.hify.knowledge.infra.KnowledgeBaseMapper;
 import com.hify.knowledge.infra.KnowledgeDocumentMapper;
+import com.hify.knowledge.infra.KnowledgeTaskMapper;
 import com.hify.knowledge.infra.RagRetrievalTraceMapper;
 import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.ModelConfigResp;
@@ -103,9 +104,25 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final String ERROR_QUEUE_FULL = "QUEUE_FULL";
     private static final String ERROR_CANCELED_BY_USER = "CANCELED_BY_USER";
     private static final String ERROR_INTERNAL = "INTERNAL_ERROR";
+    private static final String TASK_STATUS_PENDING = "PENDING";
+    private static final String TASK_STATUS_RUNNING = "RUNNING";
+    private static final String TASK_STATUS_DONE = "DONE";
+    private static final String TASK_STATUS_FAILED = "FAILED";
+    private static final String TASK_STATUS_CANCELED = "CANCELED";
+    private static final String TASK_TYPE_DOCUMENT_PROCESS = "DOCUMENT_PROCESS";
+    private static final String TASK_TYPE_REBUILD_INDEX = "REBUILD_INDEX";
+    private static final String TASK_TYPE_REVECTORIZE = "REVECTORIZE";
+    private static final String TARGET_DOCUMENT = "DOCUMENT";
+    private static final String TARGET_KNOWLEDGE_BASE = "KNOWLEDGE_BASE";
+    private static final String VISIBILITY_PROJECT = "PROJECT";
+    private static final String VISIBILITY_WORKSPACE = "WORKSPACE";
+    private static final String VISIBILITY_PUBLIC = "PUBLIC";
+    private static final double HYBRID_VECTOR_WEIGHT = 0.7D;
+    private static final double HYBRID_KEYWORD_WEIGHT = 0.3D;
 
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeDocumentMapper documentMapper;
+    private final KnowledgeTaskMapper taskMapper;
     private final KnowledgeVectorRepository vectorRepository;
     private final ObjectMapper objectMapper;
     private final @Qualifier("knowledgeExecutor") ThreadPoolExecutor asyncExecutor;
@@ -142,6 +159,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public KnowledgeBaseResp createKnowledgeBase(CreateKnowledgeBaseReq req) {
         requireEnabledEmbeddingModel(req.getEmbeddingModelConfigId());
         KnowledgeBasePo po = new KnowledgeBasePo();
+        po.setWorkspaceId(req.getWorkspaceId() == null ? 1L : req.getWorkspaceId());
+        po.setProjectId(req.getProjectId() == null ? 1L : req.getProjectId());
+        po.setVisibility(normalizeVisibility(req.getVisibility()));
+        po.setShareScope(normalizeVisibility(req.getShareScope()));
         po.setName(req.getName());
         po.setDescription(req.getDescription() == null ? "" : req.getDescription());
         po.setEmbeddingModelConfigId(req.getEmbeddingModelConfigId());
@@ -194,6 +215,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (req.getDescription() != null) {
             po.setDescription(req.getDescription());
         }
+        if (req.getWorkspaceId() != null) {
+            po.setWorkspaceId(req.getWorkspaceId());
+        }
+        if (req.getProjectId() != null) {
+            po.setProjectId(req.getProjectId());
+        }
+        if (req.getVisibility() != null) {
+            po.setVisibility(normalizeVisibility(req.getVisibility()));
+        }
+        if (req.getShareScope() != null) {
+            po.setShareScope(normalizeVisibility(req.getShareScope()));
+        }
         if (req.getEmbeddingModelConfigId() != null
                 && !req.getEmbeddingModelConfigId().equals(po.getEmbeddingModelConfigId())) {
             if (po.getDocumentCount() != null && po.getDocumentCount() > 0) {
@@ -224,7 +257,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public Long uploadDocument(Long knowledgeBaseId, MultipartFile file) {
-        findKnowledgeBaseOrThrow(knowledgeBaseId);
+        KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(knowledgeBaseId);
         validateUploadFile(file);
 
         String originalFilename = file.getOriginalFilename();
@@ -237,6 +270,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         document.setFileKey(filePath.toString());
         document.setFileType(fileType);
         document.setFileSize(file.getSize());
+        document.setDepartment("");
+        document.setDocumentType(fileType);
+        document.setTagsJson("[]");
+        document.setPermissionScope(effectiveShareScope(knowledgeBase));
         document.setParseStatus("PENDING");
         document.setProcessStage("SAVED");
         document.setProcessProgress(0);
@@ -248,13 +285,20 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         document.setRetryable(0);
         document.setCancelRequested(0);
         document.setRetryCount(0);
+        document.setTaskStatus(TASK_STATUS_PENDING);
+        document.setProgressMessage("文档已保存，等待处理");
+        document.setLastProcessedChunkIndex(0);
         documentMapper.insert(document);
+        KnowledgeTaskPo task = createTask(knowledgeBaseId, document.getId(), TASK_TYPE_DOCUMENT_PROCESS,
+                TARGET_DOCUMENT, document.getId(), "UPLOAD");
+        document.setProcessingTaskId(task.getId());
+        documentMapper.updateById(document);
 
         knowledgeBaseMapper.update(null, Wrappers.lambdaUpdate(KnowledgeBasePo.class)
                 .eq(KnowledgeBasePo::getId, knowledgeBaseId)
                 .setSql("document_count = document_count + 1"));
 
-        submitAfterCommit(document.getId());
+        submitAfterCommit(task.getId(), document.getId());
         log.info("uploaded knowledge document id={} kbId={} name={}",
                 document.getId(), knowledgeBaseId, originalFilename);
         return document.getId();
@@ -330,8 +374,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         document.setFinishedAt(null);
         document.setRetryCount(safeChunkCount(document.getRetryCount()) + 1);
         document.setLastRetryAt(LocalDateTime.now());
+        document.setTaskStatus(TASK_STATUS_PENDING);
+        document.setProgressMessage("文档已重试，等待处理");
+        document.setLastProcessedChunkIndex(0);
+        KnowledgeTaskPo task = createTask(document.getKnowledgeBaseId(), id, TASK_TYPE_DOCUMENT_PROCESS,
+                TARGET_DOCUMENT, id, "RETRY");
+        document.setProcessingTaskId(task.getId());
         documentMapper.updateById(document);
-        submitAfterCommit(id);
+        submitAfterCommit(task.getId(), id);
         log.info("retry knowledge document id={} kbId={}", id, document.getKnowledgeBaseId());
     }
 
@@ -352,7 +402,88 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 .eq(KnowledgeDocumentPo::getId, id)
                 .eq(KnowledgeDocumentPo::getParseStatus, STATUS_PROCESSING)
                 .set(KnowledgeDocumentPo::getCancelRequested, 1));
+        if (document.getProcessingTaskId() != null) {
+            taskMapper.update(null, Wrappers.lambdaUpdate(KnowledgeTaskPo.class)
+                    .eq(KnowledgeTaskPo::getId, document.getProcessingTaskId())
+                    .set(KnowledgeTaskPo::getCancelRequested, 1)
+                    .set(KnowledgeTaskPo::getProgressMessage, "用户请求取消"));
+        }
         log.info("requested cancel knowledge document id={}", id);
+    }
+
+    @Override
+    @Transactional
+    public Long revectorizeDocument(Long id, KnowledgeRebuildReq req) {
+        KnowledgeDocumentPo document = findDocumentOrThrow(id);
+        KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(document.getKnowledgeBaseId());
+        applyRebuildOptions(knowledgeBase, req);
+        resetDocumentForProcessing(document, "文档重向量化已排队");
+        vectorRepository.deleteByDocumentId(id);
+        KnowledgeTaskPo task = createTask(document.getKnowledgeBaseId(), id, TASK_TYPE_REVECTORIZE,
+                TARGET_DOCUMENT, id, normalizeReason(req, "DOCUMENT_UPDATED"));
+        document.setProcessingTaskId(task.getId());
+        documentMapper.updateById(document);
+        submitAfterCommit(task.getId(), id);
+        log.info("revectorize knowledge document id={} taskId={}", id, task.getId());
+        return task.getId();
+    }
+
+    @Override
+    @Transactional
+    public Long rebuildKnowledgeBaseIndex(Long id, KnowledgeRebuildReq req) {
+        KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(id);
+        applyRebuildOptions(knowledgeBase, req);
+        KnowledgeTaskPo rootTask = createTask(id, null, TASK_TYPE_REBUILD_INDEX, TARGET_KNOWLEDGE_BASE,
+                id, normalizeReason(req, "MANUAL_REBUILD"));
+        List<KnowledgeDocumentPo> documents = documentMapper.selectList(Wrappers.lambdaQuery(KnowledgeDocumentPo.class)
+                .eq(KnowledgeDocumentPo::getKnowledgeBaseId, id));
+        knowledgeBaseMapper.update(null, Wrappers.lambdaUpdate(KnowledgeBasePo.class)
+                .eq(KnowledgeBasePo::getId, id)
+                .set(KnowledgeBasePo::getChunkCount, 0));
+        for (KnowledgeDocumentPo document : documents) {
+            resetDocumentForProcessing(document, "知识库重建索引已排队");
+            vectorRepository.deleteByDocumentId(document.getId());
+            KnowledgeTaskPo documentTask = createTask(id, document.getId(), TASK_TYPE_DOCUMENT_PROCESS,
+                    TARGET_DOCUMENT, document.getId(), rootTask.getReason());
+            document.setProcessingTaskId(documentTask.getId());
+            documentMapper.updateById(document);
+            submitAfterCommit(documentTask.getId(), document.getId());
+        }
+        markTaskDone(rootTask.getId(), "已为 " + documents.size() + " 个文档创建重建任务");
+        log.info("rebuild knowledge base id={} rootTaskId={} documentCount={}", id, rootTask.getId(), documents.size());
+        return rootTask.getId();
+    }
+
+    @Override
+    public List<KnowledgeTaskResp> listProcessingTasks(Long knowledgeBaseId, Long documentId) {
+        return taskMapper.selectList(Wrappers.lambdaQuery(KnowledgeTaskPo.class)
+                        .eq(knowledgeBaseId != null, KnowledgeTaskPo::getKnowledgeBaseId, knowledgeBaseId)
+                        .eq(documentId != null, KnowledgeTaskPo::getDocumentId, documentId)
+                        .orderByDesc(KnowledgeTaskPo::getCreatedAt)
+                        .last("LIMIT 100"))
+                .stream()
+                .map(this::toTaskResp)
+                .toList();
+    }
+
+    @Override
+    public void recoverProcessingTasks() {
+        List<KnowledgeTaskPo> tasks = taskMapper.selectList(Wrappers.lambdaQuery(KnowledgeTaskPo.class)
+                .in(KnowledgeTaskPo::getStatus, List.of(TASK_STATUS_PENDING, TASK_STATUS_RUNNING))
+                .eq(KnowledgeTaskPo::getTargetType, TARGET_DOCUMENT)
+                .orderByAsc(KnowledgeTaskPo::getCreatedAt)
+                .last("LIMIT 200"));
+        for (KnowledgeTaskPo task : tasks) {
+            if (task.getDocumentId() != null) {
+                task.setStatus(TASK_STATUS_PENDING);
+                task.setProgressMessage("服务恢复后重新排队");
+                taskMapper.updateById(task);
+                enqueueDocumentProcessing(task.getId(), task.getDocumentId());
+            }
+        }
+        if (!tasks.isEmpty()) {
+            log.warn("requeued knowledge processing tasks count={}", tasks.size());
+        }
     }
 
     @Override
@@ -387,6 +518,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setId(po.getId());
         resp.setWorkspaceId(po.getWorkspaceId());
         resp.setProjectId(po.getProjectId());
+        resp.setVisibility(effectiveVisibility(po));
+        resp.setShareScope(effectiveShareScope(po));
         resp.setName(po.getName());
         resp.setDescription(po.getDescription());
         resp.setEmbeddingModelConfigId(po.getEmbeddingModelConfigId());
@@ -428,6 +561,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setName(po.getName());
         resp.setFileType(po.getFileType());
         resp.setFileSize(po.getFileSize());
+        resp.setDepartment(po.getDepartment());
+        resp.setDocumentType(po.getDocumentType());
+        resp.setTags(fromJsonList(po.getTagsJson(), String.class));
+        resp.setPermissionScope(po.getPermissionScope());
         resp.setStatus(po.getParseStatus());
         resp.setProcessStage(po.getProcessStage());
         resp.setProcessProgress(po.getProcessProgress());
@@ -439,6 +576,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setRetryable(po.getRetryable());
         resp.setCancelRequested(po.getCancelRequested());
         resp.setRetryCount(po.getRetryCount());
+        resp.setProcessingTaskId(po.getProcessingTaskId());
+        resp.setTaskStatus(po.getTaskStatus());
+        resp.setProgressMessage(po.getProgressMessage());
+        resp.setParseLatencyMs(po.getParseLatencyMs());
+        resp.setChunkLatencyMs(po.getChunkLatencyMs());
+        resp.setEmbeddingLatencyMs(po.getEmbeddingLatencyMs());
+        resp.setVectorSaveLatencyMs(po.getVectorSaveLatencyMs());
+        resp.setLastProcessedChunkIndex(po.getLastProcessedChunkIndex());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
@@ -453,6 +598,32 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setContent(chunk.getContent());
         resp.setMetadata(fromJson(chunk.getMetadataJson()));
         resp.setCreatedAt(chunk.getCreatedAt());
+        return resp;
+    }
+
+    private KnowledgeTaskResp toTaskResp(KnowledgeTaskPo po) {
+        KnowledgeTaskResp resp = new KnowledgeTaskResp();
+        resp.setId(po.getId());
+        resp.setKnowledgeBaseId(po.getKnowledgeBaseId());
+        resp.setDocumentId(po.getDocumentId());
+        resp.setTaskType(po.getTaskType());
+        resp.setTargetType(po.getTargetType());
+        resp.setTargetId(po.getTargetId());
+        resp.setReason(po.getReason());
+        resp.setStatus(po.getStatus());
+        resp.setProcessStage(po.getProcessStage());
+        resp.setProcessProgress(po.getProcessProgress());
+        resp.setProgressMessage(po.getProgressMessage());
+        resp.setAttempt(po.getAttempt());
+        resp.setMaxAttempt(po.getMaxAttempt());
+        resp.setLastProcessedChunkIndex(po.getLastProcessedChunkIndex());
+        resp.setCancelRequested(po.getCancelRequested());
+        resp.setErrorCode(po.getErrorCode());
+        resp.setErrorMessage(po.getErrorMessage());
+        resp.setStartedAt(po.getStartedAt());
+        resp.setFinishedAt(po.getFinishedAt());
+        resp.setCreatedAt(po.getCreatedAt());
+        resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
     }
 
@@ -487,10 +658,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             throw new BizException(ErrorCode.PARAM_ERROR, "查询文本或查询向量不能为空");
         }
 
-        Map<Long, KnowledgeBasePo> knowledgeBaseMap = req.getQueryEmbedding() == null || req.getQueryEmbedding().isEmpty()
-                ? loadEnabledKnowledgeBases(knowledgeBaseIds)
-                : Map.of();
         boolean hasQueryEmbedding = req.getQueryEmbedding() != null && !req.getQueryEmbedding().isEmpty();
+        Map<Long, KnowledgeBasePo> knowledgeBaseMap = hasQueryEmbedding && req.getProjectId() == null
+                ? Map.of()
+                : loadEnabledKnowledgeBases(knowledgeBaseIds);
+        List<Long> searchableKnowledgeBaseIds = knowledgeBaseMap.isEmpty()
+                ? knowledgeBaseIds
+                : filterKnowledgeBaseIdsByProject(knowledgeBaseMap, req.getProjectId());
+        if (searchableKnowledgeBaseIds.isEmpty()) {
+            return List.of();
+        }
         if (knowledgeBaseMap.isEmpty() && !hasQueryEmbedding) {
             return List.of();
         }
@@ -502,18 +679,30 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         req.setCandidateTopK(options.candidateTopK());
         req.setScoreThreshold(options.scoreThreshold());
         req.setRetrievalMode(options.retrievalMode());
+        KnowledgeSearchFilter filter = buildSearchFilter(req);
         List<KnowledgeSearchHit> hits = new ArrayList<>();
         if (hasQueryEmbedding) {
-            hits.addAll(vectorRepository.search(knowledgeBaseIds, req.getQueryEmbedding(), options.candidateTopK()));
+            hits.addAll(vectorRepository.search(searchableKnowledgeBaseIds, req.getQueryEmbedding(), options.candidateTopK(), filter));
         } else {
             Map<Long, List<Long>> grouped = knowledgeBaseMap.values().stream()
+                    .filter(kb -> searchableKnowledgeBaseIds.contains(kb.getId()))
                     .filter(kb -> kb.getEmbeddingModelConfigId() != null)
                     .collect(Collectors.groupingBy(KnowledgeBasePo::getEmbeddingModelConfigId,
                             Collectors.mapping(KnowledgeBasePo::getId, Collectors.toList())));
             for (Map.Entry<Long, List<Long>> entry : grouped.entrySet()) {
                 List<Double> embedding = embeddingService.embed(entry.getKey(), List.of(req.getQueryText())).get(0);
-                hits.addAll(vectorRepository.search(entry.getValue(), embedding, options.candidateTopK()));
+                hits.addAll(vectorRepository.search(entry.getValue(), embedding, options.candidateTopK(), filter));
             }
+        }
+        if ("HYBRID".equalsIgnoreCase(options.retrievalMode()) && StringUtils.hasText(req.getQueryText())) {
+            hits = mergeHybridHits(hits, vectorRepository.keywordSearch(searchableKnowledgeBaseIds, req.getQueryText(),
+                    options.candidateTopK(), filter));
+        } else {
+            hits.forEach(hit -> {
+                if (hit.getVectorScore() == null) {
+                    hit.setVectorScore(hit.getScore());
+                }
+            });
         }
 
         List<KnowledgeSearchResp> responses = hits.stream()
@@ -540,7 +729,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setContent(hit.getContent());
         resp.setScore(hit.getScore());
         resp.setFinalScore(hit.getScore());
-        resp.setVectorScore(hit.getScore());
+        resp.setVectorScore(hit.getVectorScore() == null ? hit.getScore() : hit.getVectorScore());
+        resp.setKeywordScore(hit.getKeywordScore());
         Map<String, Object> metadata = fromJson(hit.getMetadataJson());
         Object documentName = metadata.get("documentName");
         resp.setDocumentName(documentName == null ? null : String.valueOf(documentName));
@@ -585,6 +775,86 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             }
         }
         return result;
+    }
+
+    private List<Long> filterKnowledgeBaseIdsByProject(Map<Long, KnowledgeBasePo> knowledgeBaseMap, Long projectId) {
+        if (knowledgeBaseMap == null || knowledgeBaseMap.isEmpty()) {
+            return List.of();
+        }
+        if (projectId == null) {
+            return new ArrayList<>(knowledgeBaseMap.keySet());
+        }
+        return knowledgeBaseMap.values().stream()
+                .filter(kb -> canProjectSearchKnowledgeBase(kb, projectId))
+                .map(KnowledgeBasePo::getId)
+                .toList();
+    }
+
+    private boolean canProjectSearchKnowledgeBase(KnowledgeBasePo knowledgeBase, Long projectId) {
+        if (knowledgeBase.getProjectId() == null || knowledgeBase.getProjectId().equals(projectId)) {
+            return true;
+        }
+        String visibility = effectiveVisibility(knowledgeBase);
+        return VISIBILITY_WORKSPACE.equals(visibility) || VISIBILITY_PUBLIC.equals(visibility);
+    }
+
+    private KnowledgeSearchFilter buildSearchFilter(KnowledgeSearchReq req) {
+        return KnowledgeSearchFilter.builder()
+                .department(blankToNull(req.getDepartment()))
+                .documentType(blankToNull(req.getDocumentType()))
+                .tags(req.getTags() == null ? List.of() : req.getTags().stream()
+                        .filter(StringUtils::hasText)
+                        .toList())
+                .createdAtStart(req.getCreatedAtStart())
+                .createdAtEnd(req.getCreatedAtEnd())
+                .projectId(req.getProjectId())
+                .permissionScope(blankToNull(req.getPermissionScope()))
+                .build();
+    }
+
+    private List<KnowledgeSearchHit> mergeHybridHits(List<KnowledgeSearchHit> vectorHits,
+                                                     List<KnowledgeSearchHit> keywordHits) {
+        Map<Long, KnowledgeSearchHit> merged = new HashMap<>();
+        for (KnowledgeSearchHit hit : vectorHits == null ? List.<KnowledgeSearchHit>of() : vectorHits) {
+            KnowledgeSearchHit copy = copyHit(hit);
+            copy.setVectorScore(hit.getVectorScore() == null ? hit.getScore() : hit.getVectorScore());
+            copy.setScore(scoreHybrid(copy.getVectorScore(), null));
+            merged.put(copy.getId(), copy);
+        }
+        for (KnowledgeSearchHit hit : keywordHits == null ? List.<KnowledgeSearchHit>of() : keywordHits) {
+            KnowledgeSearchHit current = merged.get(hit.getId());
+            if (current == null) {
+                KnowledgeSearchHit copy = copyHit(hit);
+                copy.setKeywordScore(hit.getKeywordScore() == null ? hit.getScore() : hit.getKeywordScore());
+                copy.setScore(scoreHybrid(null, copy.getKeywordScore()));
+                merged.put(copy.getId(), copy);
+            } else {
+                current.setKeywordScore(hit.getKeywordScore() == null ? hit.getScore() : hit.getKeywordScore());
+                current.setScore(scoreHybrid(current.getVectorScore(), current.getKeywordScore()));
+            }
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private static KnowledgeSearchHit copyHit(KnowledgeSearchHit source) {
+        KnowledgeSearchHit copy = new KnowledgeSearchHit();
+        copy.setId(source.getId());
+        copy.setKnowledgeBaseId(source.getKnowledgeBaseId());
+        copy.setDocumentId(source.getDocumentId());
+        copy.setChunkIndex(source.getChunkIndex());
+        copy.setContent(source.getContent());
+        copy.setTokenCount(source.getTokenCount());
+        copy.setMetadataJson(source.getMetadataJson());
+        copy.setCreatedAt(source.getCreatedAt());
+        copy.setScore(source.getScore());
+        copy.setVectorScore(source.getVectorScore());
+        copy.setKeywordScore(source.getKeywordScore());
+        return copy;
+    }
+
+    private static double scoreHybrid(Double vectorScore, Double keywordScore) {
+        return Math.max(0D, vectorScore == null ? 0D : vectorScore) * HYBRID_VECTOR_WEIGHT
+                + Math.max(0D, keywordScore == null ? 0D : keywordScore) * HYBRID_KEYWORD_WEIGHT;
     }
 
     private RetrievalOptions resolveOptions(KnowledgeSearchReq req, KnowledgeBasePo fallbackKnowledgeBase) {
@@ -643,6 +913,28 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
 
+    private Map<String, Object> documentMetadata(KnowledgeDocumentPo document, Integer chunkIndex) {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("documentId", document.getId());
+        metadata.put("documentName", document.getName());
+        metadata.put("fileType", document.getFileType());
+        metadata.put("department", blankToEmpty(document.getDepartment()));
+        metadata.put("documentType", StringUtils.hasText(document.getDocumentType())
+                ? document.getDocumentType()
+                : document.getFileType());
+        metadata.put("tags", fromJsonList(document.getTagsJson(), String.class));
+        metadata.put("permissionScope", StringUtils.hasText(document.getPermissionScope())
+                ? document.getPermissionScope()
+                : "PROJECT");
+        KnowledgeBasePo knowledgeBase = knowledgeBaseMapper.selectById(document.getKnowledgeBaseId());
+        metadata.put("projectId", knowledgeBase == null ? null : knowledgeBase.getProjectId());
+        metadata.put("workspaceId", knowledgeBase == null ? null : knowledgeBase.getWorkspaceId());
+        if (chunkIndex != null) {
+            metadata.put("chunkIndex", chunkIndex);
+        }
+        return metadata;
+    }
+
     private Map<String, Object> fromJson(String json) {
         if (json == null || json.isBlank()) {
             return Collections.emptyMap();
@@ -691,10 +983,38 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         po.setRerankTopN(DEFAULT_CANDIDATE_TOP_K);
     }
 
+    private void applyRebuildOptions(KnowledgeBasePo knowledgeBase, KnowledgeRebuildReq req) {
+        if (req == null) {
+            return;
+        }
+        boolean changed = false;
+        if (req.getEmbeddingModelConfigId() != null
+                && !req.getEmbeddingModelConfigId().equals(knowledgeBase.getEmbeddingModelConfigId())) {
+            requireEnabledEmbeddingModel(req.getEmbeddingModelConfigId());
+            knowledgeBase.setEmbeddingModelConfigId(req.getEmbeddingModelConfigId());
+            changed = true;
+        }
+        if (req.getChunkSize() != null) {
+            knowledgeBase.setChunkSize(req.getChunkSize());
+            changed = true;
+        }
+        if (req.getChunkOverlap() != null) {
+            knowledgeBase.setChunkOverlap(req.getChunkOverlap());
+            changed = true;
+        }
+        if (knowledgeBase.getChunkOverlap() != null && knowledgeBase.getChunkSize() != null
+                && knowledgeBase.getChunkOverlap() >= knowledgeBase.getChunkSize()) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "chunkOverlap 必须小于 chunkSize");
+        }
+        if (changed) {
+            knowledgeBaseMapper.updateById(knowledgeBase);
+        }
+    }
+
     private void applyRetrievalConfig(KnowledgeBasePo po, UpdateKnowledgeRetrievalConfigReq req) {
         if (StringUtils.hasText(req.getRetrievalMode())) {
-            if (!"VECTOR".equals(req.getRetrievalMode())) {
-                throw new BizException(ErrorCode.PARAM_ERROR, "阶段 2.1 仅支持 VECTOR 检索模式");
+            if (!List.of("VECTOR", "HYBRID").contains(req.getRetrievalMode())) {
+                throw new BizException(ErrorCode.PARAM_ERROR, "检索模式仅支持 VECTOR / HYBRID");
             }
             po.setRetrievalMode(req.getRetrievalMode());
         }
@@ -741,6 +1061,25 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return po != null && StringUtils.hasText(po.getRetrievalMode()) ? po.getRetrievalMode() : "VECTOR";
     }
 
+    private static String effectiveVisibility(KnowledgeBasePo po) {
+        return po != null && StringUtils.hasText(po.getVisibility()) ? po.getVisibility() : VISIBILITY_PROJECT;
+    }
+
+    private static String effectiveShareScope(KnowledgeBasePo po) {
+        return po != null && StringUtils.hasText(po.getShareScope()) ? po.getShareScope() : VISIBILITY_PROJECT;
+    }
+
+    private static String normalizeVisibility(String value) {
+        if (!StringUtils.hasText(value)) {
+            return VISIBILITY_PROJECT;
+        }
+        String normalized = value.trim().toUpperCase();
+        if (!List.of(VISIBILITY_PROJECT, VISIBILITY_WORKSPACE, VISIBILITY_PUBLIC).contains(normalized)) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "共享范围仅支持 PROJECT / WORKSPACE / PUBLIC");
+        }
+        return normalized;
+    }
+
     private static int effectiveTopK(KnowledgeBasePo po) {
         return po == null || po.getTopK() == null ? DEFAULT_TOP_K : po.getTopK();
     }
@@ -751,6 +1090,32 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private static double effectiveScoreThreshold(KnowledgeBasePo po) {
         return po == null || po.getScoreThreshold() == null ? DEFAULT_SCORE_THRESHOLD : po.getScoreThreshold();
+    }
+
+    private void processDocumentTask(Long taskId, Long documentId) {
+        KnowledgeTaskPo task = taskMapper.selectById(taskId);
+        if (task == null || TASK_STATUS_CANCELED.equals(task.getStatus())) {
+            return;
+        }
+        if (Integer.valueOf(1).equals(task.getCancelRequested())) {
+            markDocumentCanceled(documentId, "文档处理已取消");
+            markTaskCanceled(taskId, "文档处理已取消");
+            return;
+        }
+        markTaskRunning(taskId);
+        processDocumentAsync(documentId);
+        KnowledgeDocumentPo document = documentMapper.selectById(documentId);
+        if (document == null) {
+            markTaskFailed(taskId, ErrorCode.NOT_FOUND.name(), "文档不存在: " + documentId);
+            return;
+        }
+        if (STATUS_DONE.equals(document.getParseStatus())) {
+            markTaskDone(taskId, "文档处理完成");
+        } else if (STATUS_CANCELED.equals(document.getParseStatus())) {
+            markTaskCanceled(taskId, document.getErrorMessage());
+        } else if (STATUS_FAILED.equals(document.getParseStatus())) {
+            markTaskFailed(taskId, document.getErrorCode(), document.getErrorMessage());
+        }
     }
 
     private void processDocumentAsync(Long documentId) {
@@ -836,39 +1201,40 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return processor.finish();
     }
 
-    private void submitAfterCommit(Long documentId) {
+    private void submitAfterCommit(Long taskId, Long documentId) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            enqueueDocumentProcessing(documentId);
+            enqueueDocumentProcessing(taskId, documentId);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                enqueueDocumentProcessing(documentId);
+                enqueueDocumentProcessing(taskId, documentId);
             }
         });
     }
 
-    private void enqueueDocumentProcessing(Long documentId) {
+    private void enqueueDocumentProcessing(Long taskId, Long documentId) {
         try {
             if (knowledgeTaskQueue != null) {
                 knowledgeTaskQueue.submit(TaskRequest.builder()
                         .taskType(TaskType.KNOWLEDGE_PROCESS)
-                        .taskId("knowledge-document-" + documentId)
-                        .task(() -> processDocumentAsync(documentId))
+                        .taskId("knowledge-task-" + taskId)
+                        .task(() -> processDocumentTask(taskId, documentId))
                         .build());
                 return;
             }
-            asyncExecutor.execute(() -> processDocumentAsync(documentId));
+            asyncExecutor.execute(() -> processDocumentTask(taskId, documentId));
         } catch (TaskRejectedException e) {
-            handleDocumentQueueFull(documentId);
+            handleDocumentQueueFull(taskId, documentId);
         } catch (RejectedExecutionException e) {
-            handleDocumentQueueFull(documentId);
+            handleDocumentQueueFull(taskId, documentId);
         }
     }
 
-    private void handleDocumentQueueFull(Long documentId) {
+    private void handleDocumentQueueFull(Long taskId, Long documentId) {
         log.warn("knowledge document processing queue is full id={}", documentId);
+        markTaskFailed(taskId, ERROR_QUEUE_FULL, "文档处理队列已满，请稍后重试");
         updateDocumentProgress(documentId, STATUS_FAILED, 0, 0);
         updateDocumentStatus(documentId, STATUS_FAILED, "文档处理队列已满，请稍后重试", ERROR_QUEUE_FULL,
                 STAGE_SAVED, 1, 0, 0);
@@ -884,6 +1250,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         var wrapper = Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
                 .eq(KnowledgeDocumentPo::getId, documentId)
                 .set(KnowledgeDocumentPo::getParseStatus, status)
+                .set(KnowledgeDocumentPo::getTaskStatus, toTaskStatus(status))
                 .set(KnowledgeDocumentPo::getErrorMessage, truncateErrorMessage(errorMessage));
         if (errorCode != null) {
             wrapper.set(KnowledgeDocumentPo::getErrorCode, errorCode);
@@ -919,9 +1286,34 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         document.setFailedStage(STATUS_CANCELED);
         document.setRetryable(0);
         document.setCancelRequested(1);
+        document.setTaskStatus(TASK_STATUS_CANCELED);
+        document.setProgressMessage("文档处理已取消");
         document.setFinishedAt(LocalDateTime.now());
         documentMapper.updateById(document);
+        markTaskCanceled(document.getProcessingTaskId(), message);
         log.info("canceled knowledge document id={}", documentId);
+    }
+
+    private void resetDocumentForProcessing(KnowledgeDocumentPo document, String progressMessage) {
+        document.setParseStatus(STATUS_PENDING);
+        document.setProcessStage(STAGE_SAVED);
+        document.setProcessProgress(0);
+        document.setProcessedChunkCount(0);
+        document.setChunkCount(0);
+        document.setErrorMessage("");
+        document.setErrorCode("");
+        document.setFailedStage("");
+        document.setRetryable(0);
+        document.setCancelRequested(0);
+        document.setStartedAt(null);
+        document.setFinishedAt(null);
+        document.setTaskStatus(TASK_STATUS_PENDING);
+        document.setProgressMessage(progressMessage);
+        document.setParseLatencyMs(null);
+        document.setChunkLatencyMs(null);
+        document.setEmbeddingLatencyMs(null);
+        document.setVectorSaveLatencyMs(null);
+        document.setLastProcessedChunkIndex(0);
     }
 
     private void checkCancellation(Long documentId) {
@@ -963,14 +1355,127 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private void updateDocumentProgress(Long documentId, String stage, Integer progress, Integer processedChunkCount) {
         var wrapper = Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
                 .eq(KnowledgeDocumentPo::getId, documentId)
-                .set(KnowledgeDocumentPo::getProcessStage, stage);
+                .set(KnowledgeDocumentPo::getProcessStage, stage)
+                .set(KnowledgeDocumentPo::getProgressMessage, progressMessage(stage));
         if (progress != null) {
             wrapper.set(KnowledgeDocumentPo::getProcessProgress, Math.max(0, Math.min(100, progress)));
         }
         if (processedChunkCount != null) {
-            wrapper.set(KnowledgeDocumentPo::getProcessedChunkCount, Math.max(0, processedChunkCount));
+            int count = Math.max(0, processedChunkCount);
+            wrapper.set(KnowledgeDocumentPo::getProcessedChunkCount, count)
+                    .set(KnowledgeDocumentPo::getLastProcessedChunkIndex, count);
         }
         documentMapper.update(null, wrapper);
+        updateTaskProgressForDocument(documentId, stage, progress, processedChunkCount, progressMessage(stage));
+    }
+
+    private KnowledgeTaskPo createTask(Long knowledgeBaseId, Long documentId, String taskType,
+                                       String targetType, Long targetId, String reason) {
+        KnowledgeTaskPo task = new KnowledgeTaskPo();
+        task.setKnowledgeBaseId(knowledgeBaseId);
+        task.setDocumentId(documentId);
+        task.setTaskType(taskType);
+        task.setTargetType(targetType);
+        task.setTargetId(targetId);
+        task.setReason(StringUtils.hasText(reason) ? reason : "UPLOAD");
+        task.setStatus(TASK_STATUS_PENDING);
+        task.setProcessStage(STAGE_SAVED);
+        task.setProcessProgress(0);
+        task.setProgressMessage("任务已创建，等待处理");
+        task.setAttempt(0);
+        task.setMaxAttempt(3);
+        task.setLastProcessedChunkIndex(0);
+        task.setCancelRequested(0);
+        task.setErrorCode("");
+        task.setErrorMessage("");
+        taskMapper.insert(task);
+        return task;
+    }
+
+    private void markTaskRunning(Long taskId) {
+        if (taskId == null) {
+            return;
+        }
+        taskMapper.update(null, Wrappers.lambdaUpdate(KnowledgeTaskPo.class)
+                .eq(KnowledgeTaskPo::getId, taskId)
+                .set(KnowledgeTaskPo::getStatus, TASK_STATUS_RUNNING)
+                .set(KnowledgeTaskPo::getStartedAt, LocalDateTime.now())
+                .setSql("attempt = attempt + 1")
+                .set(KnowledgeTaskPo::getProgressMessage, "任务开始处理"));
+    }
+
+    private void markTaskDone(Long taskId, String message) {
+        if (taskId == null) {
+            return;
+        }
+        taskMapper.update(null, Wrappers.lambdaUpdate(KnowledgeTaskPo.class)
+                .eq(KnowledgeTaskPo::getId, taskId)
+                .set(KnowledgeTaskPo::getStatus, TASK_STATUS_DONE)
+                .set(KnowledgeTaskPo::getProcessStage, STATUS_DONE)
+                .set(KnowledgeTaskPo::getProcessProgress, 100)
+                .set(KnowledgeTaskPo::getProgressMessage, blankToEmpty(message))
+                .set(KnowledgeTaskPo::getFinishedAt, LocalDateTime.now()));
+    }
+
+    private void markTaskFailed(Long taskId, String errorCode, String errorMessage) {
+        if (taskId == null) {
+            return;
+        }
+        taskMapper.update(null, Wrappers.lambdaUpdate(KnowledgeTaskPo.class)
+                .eq(KnowledgeTaskPo::getId, taskId)
+                .set(KnowledgeTaskPo::getStatus, TASK_STATUS_FAILED)
+                .set(KnowledgeTaskPo::getProcessStage, STATUS_FAILED)
+                .set(KnowledgeTaskPo::getProgressMessage, "任务失败")
+                .set(KnowledgeTaskPo::getErrorCode, blankToEmpty(errorCode))
+                .set(KnowledgeTaskPo::getErrorMessage, truncateErrorMessage(errorMessage))
+                .set(KnowledgeTaskPo::getFinishedAt, LocalDateTime.now()));
+    }
+
+    private void markTaskCanceled(Long taskId, String message) {
+        if (taskId == null) {
+            return;
+        }
+        taskMapper.update(null, Wrappers.lambdaUpdate(KnowledgeTaskPo.class)
+                .eq(KnowledgeTaskPo::getId, taskId)
+                .set(KnowledgeTaskPo::getStatus, TASK_STATUS_CANCELED)
+                .set(KnowledgeTaskPo::getProcessStage, STATUS_CANCELED)
+                .set(KnowledgeTaskPo::getProcessProgress, 0)
+                .set(KnowledgeTaskPo::getProgressMessage, truncateErrorMessage(message))
+                .set(KnowledgeTaskPo::getCancelRequested, 1)
+                .set(KnowledgeTaskPo::getFinishedAt, LocalDateTime.now()));
+    }
+
+    private void updateTaskProgressForDocument(Long documentId, String stage, Integer progress,
+                                               Integer processedChunkCount, String message) {
+        KnowledgeDocumentPo document = documentMapper.selectById(documentId);
+        if (document == null || document.getProcessingTaskId() == null) {
+            return;
+        }
+        var wrapper = Wrappers.lambdaUpdate(KnowledgeTaskPo.class)
+                .eq(KnowledgeTaskPo::getId, document.getProcessingTaskId())
+                .set(KnowledgeTaskPo::getProcessStage, stage)
+                .set(KnowledgeTaskPo::getProgressMessage, message);
+        if (progress != null) {
+            wrapper.set(KnowledgeTaskPo::getProcessProgress, Math.max(0, Math.min(100, progress)));
+        }
+        if (processedChunkCount != null) {
+            wrapper.set(KnowledgeTaskPo::getLastProcessedChunkIndex, Math.max(0, processedChunkCount));
+        }
+        taskMapper.update(null, wrapper);
+    }
+
+    private static String progressMessage(String stage) {
+        return switch (stage) {
+            case STAGE_SAVED -> "文档已保存";
+            case STAGE_EXTRACTING -> "正在解析文档";
+            case STAGE_CHUNKING -> "正在切分文档";
+            case STAGE_EMBEDDING -> "正在生成向量";
+            case STAGE_SAVING -> "正在写入向量库";
+            case STATUS_DONE -> "处理完成";
+            case STATUS_FAILED -> "处理失败";
+            case STATUS_CANCELED -> "处理已取消";
+            default -> stage == null ? "" : stage;
+        };
     }
 
     private static String truncateErrorMessage(String errorMessage) {
@@ -1197,11 +1702,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             chunk.setContent(dto.content());
             chunk.setTokenCount(dto.tokenCount());
             chunk.setEmbedding(dto.embedding());
-            chunk.setMetadataJson(toJson(Map.of(
-                    "documentId", documentId,
-                    "documentName", document.getName(),
-                    "fileType", document.getFileType()
-            )));
+            chunk.setMetadataJson(toJson(documentMetadata(document, null)));
             rows.add(chunk);
         }
         vectorRepository.saveDocumentChunks(rows);
@@ -1316,6 +1817,34 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         return chunkCount == null ? 0 : Math.max(0, chunkCount);
     }
 
+    private static String toTaskStatus(String documentStatus) {
+        if (STATUS_DONE.equals(documentStatus)) {
+            return TASK_STATUS_DONE;
+        }
+        if (STATUS_FAILED.equals(documentStatus)) {
+            return TASK_STATUS_FAILED;
+        }
+        if (STATUS_CANCELED.equals(documentStatus)) {
+            return TASK_STATUS_CANCELED;
+        }
+        if (STATUS_PROCESSING.equals(documentStatus)) {
+            return TASK_STATUS_RUNNING;
+        }
+        return TASK_STATUS_PENDING;
+    }
+
+    private static String normalizeReason(KnowledgeRebuildReq req, String fallback) {
+        return req == null || !StringUtils.hasText(req.getReason()) ? fallback : req.getReason().trim().toUpperCase();
+    }
+
+    private static String blankToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String blankToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
     private class DocumentChunkProcessor {
         private final KnowledgeDocumentPo document;
         private final Long embeddingModelConfigId;
@@ -1389,16 +1918,13 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
         private KnowledgeChunk toKnowledgeChunk(String content) {
             KnowledgeChunk chunk = new KnowledgeChunk();
+            int currentChunkIndex = chunkIndex++;
             chunk.setKnowledgeBaseId(document.getKnowledgeBaseId());
             chunk.setDocumentId(document.getId().toString());
-            chunk.setChunkIndex(chunkIndex++);
+            chunk.setChunkIndex(currentChunkIndex);
             chunk.setContent(content);
             chunk.setTokenCount(countTokens(content));
-            chunk.setMetadataJson(toJson(Map.of(
-                    "documentId", document.getId(),
-                    "documentName", document.getName(),
-                    "fileType", document.getFileType()
-            )));
+            chunk.setMetadataJson(toJson(documentMetadata(document, currentChunkIndex)));
             return chunk;
         }
 

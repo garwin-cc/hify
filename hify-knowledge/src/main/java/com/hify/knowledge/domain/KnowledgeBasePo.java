@@ -14,6 +14,10 @@ public class KnowledgeBasePo extends BaseEntity {
 
     private Long projectId;
 
+    private String visibility;
+
+    private String shareScope;
+
     private String name;
 
     private String description;

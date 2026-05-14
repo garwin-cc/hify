@@ -18,6 +18,7 @@ public class KnowledgeDocumentRecoveryRunner implements ApplicationRunner {
     private static final int STALE_PROCESSING_HOURS = 1;
 
     private final KnowledgeDocumentMapper documentMapper;
+    private final KnowledgeServiceImpl knowledgeService;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -35,5 +36,6 @@ public class KnowledgeDocumentRecoveryRunner implements ApplicationRunner {
         if (updated > 0) {
             log.warn("marked stale processing knowledge documents as failed count={}", updated);
         }
+        knowledgeService.recoverProcessingTasks();
     }
 }

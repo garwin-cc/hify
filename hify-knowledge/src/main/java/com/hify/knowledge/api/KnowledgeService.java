@@ -33,6 +33,14 @@ public interface KnowledgeService {
 
     void cancelDocument(Long id);
 
+    Long revectorizeDocument(Long id, KnowledgeRebuildReq req);
+
+    Long rebuildKnowledgeBaseIndex(Long id, KnowledgeRebuildReq req);
+
+    List<KnowledgeTaskResp> listProcessingTasks(Long knowledgeBaseId, Long documentId);
+
+    void recoverProcessingTasks();
+
     Long upsertChunk(KnowledgeChunkUpsertReq req);
 
     List<KnowledgeSearchResp> searchSimilar(KnowledgeSearchReq req);

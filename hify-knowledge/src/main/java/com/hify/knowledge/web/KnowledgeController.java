@@ -10,9 +10,11 @@ import com.hify.knowledge.api.KnowledgeBaseResp;
 import com.hify.knowledge.api.KnowledgeChunkUpsertReq;
 import com.hify.knowledge.api.KnowledgeDocumentQuery;
 import com.hify.knowledge.api.KnowledgeDocumentResp;
+import com.hify.knowledge.api.KnowledgeRebuildReq;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
 import com.hify.knowledge.api.KnowledgeService;
+import com.hify.knowledge.api.KnowledgeTaskResp;
 import com.hify.knowledge.api.RagRetrievalTraceResp;
 import com.hify.knowledge.api.UpdateKnowledgeBaseReq;
 import com.hify.knowledge.api.UpdateKnowledgeRetrievalConfigReq;
@@ -75,6 +77,13 @@ public class KnowledgeController {
         return Result.ok();
     }
 
+    @PostMapping("/{id}/rebuild-index")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
+    public Result<Long> rebuildIndex(@PathVariable Long id,
+                                     @Valid @RequestBody(required = false) KnowledgeRebuildReq req) {
+        return Result.ok(knowledgeService.rebuildKnowledgeBaseIndex(id, req));
+    }
+
     @PostMapping("/{kbId}/documents")
     @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<Long> uploadDocument(@PathVariable Long kbId,
@@ -86,6 +95,12 @@ public class KnowledgeController {
     public PageResult<KnowledgeDocumentResp> listDocuments(@PathVariable Long kbId,
                                                            KnowledgeDocumentQuery query) {
         return knowledgeService.listDocuments(kbId, query);
+    }
+
+    @GetMapping("/{kbId}/tasks")
+    public Result<List<KnowledgeTaskResp>> listTasks(@PathVariable Long kbId,
+                                                     @RequestParam(required = false) Long documentId) {
+        return Result.ok(knowledgeService.listProcessingTasks(kbId, documentId));
     }
 
     @PostMapping("/chunks")

@@ -15,4 +15,12 @@ public class UpdateKnowledgeBaseReq {
     private Long embeddingModelConfigId;
 
     private Integer enabled;
+
+    private Long workspaceId;
+
+    private Long projectId;
+
+    private String visibility;
+
+    private String shareScope;
 }

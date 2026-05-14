@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.Data;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
@@ -34,4 +35,18 @@ public class KnowledgeSearchReq {
     private String sourceId;
 
     private Boolean includeTrace;
+
+    private String department;
+
+    private String documentType;
+
+    private List<String> tags;
+
+    private LocalDateTime createdAtStart;
+
+    private LocalDateTime createdAtEnd;
+
+    private Long projectId;
+
+    private String permissionScope;
 }

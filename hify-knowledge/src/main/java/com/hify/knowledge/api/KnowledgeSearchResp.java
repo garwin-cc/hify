@@ -30,6 +30,8 @@ public class KnowledgeSearchResp {
 
     private Double vectorScore;
 
+    private Double keywordScore;
+
     private Map<String, Object> metadata;
 
     private LocalDateTime createdAt;

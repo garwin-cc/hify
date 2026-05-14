@@ -3,6 +3,7 @@ package com.hify.knowledge.api;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 public class KnowledgeDocumentResp {
@@ -16,6 +17,14 @@ public class KnowledgeDocumentResp {
     private String fileType;
 
     private Long fileSize;
+
+    private String department;
+
+    private String documentType;
+
+    private List<String> tags;
+
+    private String permissionScope;
 
     private String status;
 
@@ -38,6 +47,22 @@ public class KnowledgeDocumentResp {
     private Integer cancelRequested;
 
     private Integer retryCount;
+
+    private Long processingTaskId;
+
+    private String taskStatus;
+
+    private String progressMessage;
+
+    private Long parseLatencyMs;
+
+    private Long chunkLatencyMs;
+
+    private Long embeddingLatencyMs;
+
+    private Long vectorSaveLatencyMs;
+
+    private Integer lastProcessedChunkIndex;
 
     private LocalDateTime createdAt;
 

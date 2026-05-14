@@ -22,6 +22,14 @@ public class KnowledgeDocumentPo extends BaseEntity {
 
     private Long fileSize;
 
+    private String department;
+
+    private String documentType;
+
+    private String tagsJson;
+
+    private String permissionScope;
+
     private String parseStatus;
 
     private String processStage;
@@ -49,4 +57,20 @@ public class KnowledgeDocumentPo extends BaseEntity {
     private Integer retryCount;
 
     private LocalDateTime lastRetryAt;
+
+    private Long processingTaskId;
+
+    private String taskStatus;
+
+    private String progressMessage;
+
+    private Long parseLatencyMs;
+
+    private Long chunkLatencyMs;
+
+    private Long embeddingLatencyMs;
+
+    private Long vectorSaveLatencyMs;
+
+    private Integer lastProcessedChunkIndex;
 }

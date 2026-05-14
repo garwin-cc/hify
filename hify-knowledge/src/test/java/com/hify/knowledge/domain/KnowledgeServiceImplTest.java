@@ -1,15 +1,22 @@
 package com.hify.knowledge.domain;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hify.knowledge.api.KnowledgeDocumentResp;
 import com.hify.knowledge.api.KnowledgeChunkUpsertReq;
+import com.hify.knowledge.api.KnowledgeRebuildReq;
+import com.hify.knowledge.api.KnowledgeSearchFilter;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
 import com.hify.knowledge.infra.KnowledgeBaseMapper;
 import com.hify.knowledge.infra.KnowledgeDocumentMapper;
+import com.hify.knowledge.infra.KnowledgeTaskMapper;
 import com.hify.knowledge.infra.RagRetrievalTraceMapper;
 import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.ModelConfigService;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -25,6 +32,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +41,14 @@ class KnowledgeServiceImplTest {
 
     @TempDir
     Path tempDir;
+
+    @BeforeAll
+    static void initMybatisPlusTableInfo() {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), KnowledgeBasePo.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), KnowledgeDocumentPo.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), KnowledgeTaskPo.class);
+    }
 
     @Test
     void nextChunkStartFallsBackToEndWhenOverlapWouldMoveBackward() {
@@ -80,6 +97,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -113,6 +131,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -144,6 +163,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -175,6 +195,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -214,6 +235,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -273,6 +295,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 knowledgeBaseMapper,
                 mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -322,6 +345,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 documentMapper,
+                mock(KnowledgeTaskMapper.class),
                 new FakeKnowledgeVectorRepository(),
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -355,6 +379,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 documentMapper,
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 executor,
@@ -382,6 +407,7 @@ class KnowledgeServiceImplTest {
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
                 mock(KnowledgeBaseMapper.class),
                 documentMapper,
+                mock(KnowledgeTaskMapper.class),
                 repository,
                 new ObjectMapper(),
                 mock(ThreadPoolExecutor.class),
@@ -399,12 +425,173 @@ class KnowledgeServiceImplTest {
                         && Integer.valueOf(1).equals(updated.getCancelRequested())));
     }
 
+    @Test
+    void revectorizeDocumentCreatesPersistentTaskAndQueuesDocument() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        KnowledgeTaskMapper taskMapper = mock(KnowledgeTaskMapper.class);
+        ThreadPoolExecutor executor = mock(ThreadPoolExecutor.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 11L);
+        KnowledgeDocumentPo document = document(7L, 1L, "DONE");
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        when(documentMapper.selectById(7L)).thenReturn(document);
+        doAnswer(invocation -> {
+            KnowledgeTaskPo task = invocation.getArgument(0);
+            task.setId(99L);
+            return 1;
+        }).when(taskMapper).insert(any(KnowledgeTaskPo.class));
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                documentMapper,
+                taskMapper,
+                repository,
+                new ObjectMapper(),
+                executor,
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+
+        Long taskId = service.revectorizeDocument(7L, new KnowledgeRebuildReq());
+
+        assertThat(taskId).isEqualTo(99L);
+        assertThat(repository.deletedDocumentIds).containsExactly(7L);
+        verify(taskMapper).insert(org.mockito.ArgumentMatchers.<KnowledgeTaskPo>argThat(task ->
+                "REVECTORIZE".equals(task.getTaskType())
+                        && Long.valueOf(7L).equals(task.getDocumentId())
+                        && "DOCUMENT_UPDATED".equals(task.getReason())));
+        verify(documentMapper).updateById(org.mockito.ArgumentMatchers.<KnowledgeDocumentPo>argThat(updated ->
+                Long.valueOf(99L).equals(updated.getProcessingTaskId())
+                        && "PENDING".equals(updated.getParseStatus())));
+        verify(executor).execute(any(Runnable.class));
+    }
+
+    @Test
+    void rebuildKnowledgeBaseCreatesDocumentTasks() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        KnowledgeTaskMapper taskMapper = mock(KnowledgeTaskMapper.class);
+        ThreadPoolExecutor executor = mock(ThreadPoolExecutor.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 11L);
+        KnowledgeDocumentPo first = document(7L, 1L, "DONE");
+        KnowledgeDocumentPo second = document(8L, 1L, "FAILED");
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        when(documentMapper.selectList(any())).thenReturn(List.of(first, second));
+        final long[] id = {100L};
+        doAnswer(invocation -> {
+            KnowledgeTaskPo task = invocation.getArgument(0);
+            task.setId(id[0]++);
+            return 1;
+        }).when(taskMapper).insert(any(KnowledgeTaskPo.class));
+        KnowledgeRebuildReq req = new KnowledgeRebuildReq();
+        req.setReason("MANUAL_REBUILD");
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                documentMapper,
+                taskMapper,
+                repository,
+                new ObjectMapper(),
+                executor,
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+
+        Long taskId = service.rebuildKnowledgeBaseIndex(1L, req);
+
+        assertThat(taskId).isEqualTo(100L);
+        assertThat(repository.deletedDocumentIds).containsExactly(7L, 8L);
+        verify(executor, times(2)).execute(any(Runnable.class));
+        verify(taskMapper).insert(org.mockito.ArgumentMatchers.<KnowledgeTaskPo>argThat(task ->
+                "REBUILD_INDEX".equals(task.getTaskType())
+                        && "KNOWLEDGE_BASE".equals(task.getTargetType())));
+        verify(taskMapper).insert(org.mockito.ArgumentMatchers.<KnowledgeTaskPo>argThat(task ->
+                "DOCUMENT_PROCESS".equals(task.getTaskType())
+                        && Long.valueOf(7L).equals(task.getDocumentId())));
+    }
+
+    @Test
+    void searchSimilarAppliesProjectFilterBeforeRepositorySearch() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo own = knowledgeBase(1L, 10L, 11L);
+        KnowledgeBasePo other = knowledgeBase(2L, 20L, 11L);
+        other.setVisibility("PROJECT");
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(own);
+        when(knowledgeBaseMapper.selectById(2L)).thenReturn(other);
+        KnowledgeSearchHit hit = hit(7L, 1L, "own", 0.9);
+        repository.hits = List.of(hit);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        KnowledgeSearchReq req = new KnowledgeSearchReq();
+        req.setKnowledgeBaseIds(List.of(1L, 2L));
+        req.setQueryEmbedding(List.of(0.1, 0.2, 0.3));
+        req.setProjectId(10L);
+        req.setDepartment("finance");
+
+        List<KnowledgeSearchResp> results = service.searchSimilar(req);
+
+        assertThat(results).hasSize(1);
+        assertThat(repository.lastKnowledgeBaseIds).containsExactly(1L);
+        assertThat(repository.lastFilter.getProjectId()).isEqualTo(10L);
+        assertThat(repository.lastFilter.getDepartment()).isEqualTo("finance");
+    }
+
+    @Test
+    void hybridSearchMergesVectorAndKeywordScores() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        EmbeddingService embeddingService = mock(EmbeddingService.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 9L);
+        knowledgeBase.setRetrievalMode("HYBRID");
+        knowledgeBase.setScoreThreshold(0D);
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        when(embeddingService.embed(9L, List.of("报销流程"))).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        KnowledgeSearchHit vectorHit = hit(7L, 1L, "vector", 0.8);
+        vectorHit.setVectorScore(0.8);
+        KnowledgeSearchHit keywordHit = hit(7L, 1L, "vector", 0.5);
+        keywordHit.setKeywordScore(0.5);
+        repository.hits = List.of(vectorHit);
+        repository.keywordHits = List.of(keywordHit);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        KnowledgeSearchReq req = new KnowledgeSearchReq();
+        req.setKnowledgeBaseIds(List.of(1L));
+        req.setQueryText("报销流程");
+
+        List<KnowledgeSearchResp> results = service.searchSimilar(req);
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getVectorScore()).isEqualTo(0.8);
+        assertThat(results.get(0).getKeywordScore()).isEqualTo(0.5);
+        assertThat(results.get(0).getFinalScore()).isEqualTo(0.71);
+    }
+
     private static class FakeKnowledgeVectorRepository implements KnowledgeVectorRepository {
         private KnowledgeChunk savedChunk;
         private List<Double> savedEmbedding;
         private List<KnowledgeSearchHit> hits = new ArrayList<>();
+        private List<KnowledgeSearchHit> keywordHits = new ArrayList<>();
         private List<List<KnowledgeChunk>> savedBatches = new ArrayList<>();
         private List<Long> deletedDocumentIds = new ArrayList<>();
+        private List<Long> lastKnowledgeBaseIds = new ArrayList<>();
+        private KnowledgeSearchFilter lastFilter;
         private int lastTopK;
 
         @Override
@@ -422,7 +609,26 @@ class KnowledgeServiceImplTest {
         @Override
         public List<KnowledgeSearchHit> search(List<Long> knowledgeBaseIds, List<Double> queryEmbedding, int topK) {
             this.lastTopK = topK;
+            this.lastKnowledgeBaseIds = knowledgeBaseIds;
             return hits;
+        }
+
+        @Override
+        public List<KnowledgeSearchHit> search(List<Long> knowledgeBaseIds, List<Double> queryEmbedding,
+                                               int topK, KnowledgeSearchFilter filter) {
+            this.lastTopK = topK;
+            this.lastKnowledgeBaseIds = knowledgeBaseIds;
+            this.lastFilter = filter;
+            return hits;
+        }
+
+        @Override
+        public List<KnowledgeSearchHit> keywordSearch(List<Long> knowledgeBaseIds, String queryText,
+                                                      int topK, KnowledgeSearchFilter filter) {
+            this.lastTopK = topK;
+            this.lastKnowledgeBaseIds = knowledgeBaseIds;
+            this.lastFilter = filter;
+            return keywordHits;
         }
 
         @Override
@@ -456,5 +662,47 @@ class KnowledgeServiceImplTest {
         Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
         field.setInt(target, value);
+    }
+
+    private static KnowledgeBasePo knowledgeBase(Long id, Long projectId, Long embeddingModelConfigId) {
+        KnowledgeBasePo po = new KnowledgeBasePo();
+        po.setId(id);
+        po.setWorkspaceId(1L);
+        po.setProjectId(projectId);
+        po.setVisibility("PROJECT");
+        po.setShareScope("PROJECT");
+        po.setEmbeddingModelConfigId(embeddingModelConfigId);
+        po.setEnabled(1);
+        po.setTopK(5);
+        po.setCandidateTopK(20);
+        po.setScoreThreshold(0.65D);
+        po.setRetrievalMode("VECTOR");
+        return po;
+    }
+
+    private static KnowledgeDocumentPo document(Long id, Long knowledgeBaseId, String status) {
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(id);
+        document.setKnowledgeBaseId(knowledgeBaseId);
+        document.setName("doc-" + id + ".txt");
+        document.setFileType("txt");
+        document.setParseStatus(status);
+        document.setChunkCount(2);
+        document.setRetryable(1);
+        document.setTagsJson("[]");
+        document.setPermissionScope("PROJECT");
+        return document;
+    }
+
+    private static KnowledgeSearchHit hit(Long id, Long knowledgeBaseId, String content, double score) {
+        KnowledgeSearchHit hit = new KnowledgeSearchHit();
+        hit.setId(id);
+        hit.setKnowledgeBaseId(knowledgeBaseId);
+        hit.setDocumentId("doc-" + id);
+        hit.setChunkIndex(0);
+        hit.setContent(content);
+        hit.setMetadataJson("{}");
+        hit.setScore(score);
+        return hit;
     }
 }

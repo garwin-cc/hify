@@ -8,4 +8,8 @@ import lombok.EqualsAndHashCode;
 public class KnowledgeSearchHit extends KnowledgeChunk {
 
     private Double score;
+
+    private Double vectorScore;
+
+    private Double keywordScore;
 }

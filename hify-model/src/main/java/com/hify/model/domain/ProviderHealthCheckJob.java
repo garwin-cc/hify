@@ -1,6 +1,10 @@
 package com.hify.model.domain;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.hify.common.task.TaskQueue;
+import com.hify.common.task.TaskRejectedException;
+import com.hify.common.task.TaskRequest;
+import com.hify.common.task.TaskType;
 import com.hify.model.api.ConnectivityTestResult;
 import com.hify.model.domain.adapter.ProviderAdapterFactory;
 import com.hify.model.infra.ProviderHealthMapper;
@@ -8,6 +12,7 @@ import com.hify.model.infra.ProviderHealthPo;
 import com.hify.model.infra.ProviderMapper;
 import com.hify.model.infra.ProviderPo;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -29,6 +34,7 @@ public class ProviderHealthCheckJob {
     private final ProviderAdapterFactory providerAdapterFactory;
     private final CacheManager           cacheManager;
     private final ThreadPoolExecutor     asyncExecutor;
+    private TaskQueue backgroundTaskQueue;
 
     public ProviderHealthCheckJob(ProviderMapper providerMapper,
                                   ProviderHealthMapper providerHealthMapper,
@@ -42,6 +48,11 @@ public class ProviderHealthCheckJob {
         this.asyncExecutor          = asyncExecutor;
     }
 
+    @Autowired(required = false)
+    public void setBackgroundTaskQueue(@Qualifier("backgroundTaskQueue") TaskQueue backgroundTaskQueue) {
+        this.backgroundTaskQueue = backgroundTaskQueue;
+    }
+
     @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)
     public void checkAll() {
         List<ProviderPo> providers = providerMapper.selectList(
@@ -51,7 +62,23 @@ public class ProviderHealthCheckJob {
 
         log.info("health check start, {} enabled provider(s)", providers.size());
         for (ProviderPo provider : providers) {
+            submitHealthCheck(provider);
+        }
+    }
+
+    private void submitHealthCheck(ProviderPo provider) {
+        try {
+            if (backgroundTaskQueue != null) {
+                backgroundTaskQueue.submit(TaskRequest.builder()
+                        .taskType(TaskType.PROVIDER_HEALTH_CHECK)
+                        .taskId("provider-health-" + provider.getId())
+                        .task(() -> checkOne(provider))
+                        .build());
+                return;
+            }
             asyncExecutor.execute(() -> checkOne(provider));
+        } catch (TaskRejectedException e) {
+            log.warn("provider health check skipped because queue is full id={}", provider.getId());
         }
     }
 

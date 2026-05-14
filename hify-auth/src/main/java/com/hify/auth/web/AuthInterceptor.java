@@ -6,6 +6,7 @@ import com.hify.auth.api.PermissionService;
 import com.hify.auth.api.RequireProjectPermission;
 import com.hify.auth.api.RequireRole;
 import com.hify.auth.api.UserRole;
+import com.hify.common.audit.AuditContext;
 import com.hify.auth.domain.CurrentUserContext;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
@@ -48,18 +49,25 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
         CurrentUser user = authService.authenticate(extractBearerToken(request));
         CurrentUserContext.set(user);
-        if (handler instanceof HandlerMethod handlerMethod) {
-            RequireRole requireRole = findRequireRole(handlerMethod);
-            if (requireRole != null && Arrays.stream(requireRole.value()).noneMatch(role -> role == user.getRole())) {
-                throw new BizException(ErrorCode.FORBIDDEN);
-            }
-            RequireProjectPermission requireProjectPermission = findRequireProjectPermission(handlerMethod);
-            if (projectPermissionEnabled && requireProjectPermission != null && permissionService != null) {
-                Long projectId = resolveProjectId(request, requireProjectPermission.projectIdParam());
-                if (!permissionService.canAccessProject(user, projectId, requireProjectPermission.action())) {
+        AuditContext.setActor(user.getId(), user.getUsername());
+        try {
+            if (handler instanceof HandlerMethod handlerMethod) {
+                RequireRole requireRole = findRequireRole(handlerMethod);
+                if (requireRole != null && Arrays.stream(requireRole.value()).noneMatch(role -> role == user.getRole())) {
                     throw new BizException(ErrorCode.FORBIDDEN);
                 }
+                RequireProjectPermission requireProjectPermission = findRequireProjectPermission(handlerMethod);
+                if (projectPermissionEnabled && requireProjectPermission != null && permissionService != null) {
+                    Long projectId = resolveProjectId(request, requireProjectPermission.projectIdParam());
+                    if (!permissionService.canAccessProject(user, projectId, requireProjectPermission.action())) {
+                        throw new BizException(ErrorCode.FORBIDDEN);
+                    }
+                }
             }
+        } catch (RuntimeException e) {
+            CurrentUserContext.clear();
+            AuditContext.clear();
+            throw e;
         }
         return true;
     }
@@ -67,6 +75,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         CurrentUserContext.clear();
+        AuditContext.clear();
     }
 
     private boolean isPublicPath(String path) {

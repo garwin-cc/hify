@@ -8,6 +8,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
+import com.hify.common.task.TaskQueue;
+import com.hify.common.task.TaskRejectedException;
+import com.hify.common.task.TaskRequest;
+import com.hify.common.task.TaskType;
 import com.hify.common.util.PageHelper;
 import com.hify.common.web.PageResult;
 import com.hify.knowledge.api.*;
@@ -21,6 +25,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -107,6 +112,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final EmbeddingService embeddingService;
     private final ModelConfigService modelConfigService;
     private final RagRetrievalTraceMapper traceMapper;
+    private TaskQueue knowledgeTaskQueue;
+
+    @Autowired(required = false)
+    public void setKnowledgeTaskQueue(@Qualifier("knowledgeTaskQueue") TaskQueue knowledgeTaskQueue) {
+        this.knowledgeTaskQueue = knowledgeTaskQueue;
+    }
 
     @Value("${hify.knowledge.max-file-size-bytes:" + DEFAULT_MAX_FILE_SIZE + "}")
     private long maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE;
@@ -838,13 +849,27 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private void enqueueDocumentProcessing(Long documentId) {
         try {
+            if (knowledgeTaskQueue != null) {
+                knowledgeTaskQueue.submit(TaskRequest.builder()
+                        .taskType(TaskType.KNOWLEDGE_PROCESS)
+                        .taskId("knowledge-document-" + documentId)
+                        .task(() -> processDocumentAsync(documentId))
+                        .build());
+                return;
+            }
             asyncExecutor.execute(() -> processDocumentAsync(documentId));
+        } catch (TaskRejectedException e) {
+            handleDocumentQueueFull(documentId);
         } catch (RejectedExecutionException e) {
-            log.warn("knowledge document processing queue is full id={}", documentId);
-            updateDocumentProgress(documentId, STATUS_FAILED, 0, 0);
-            updateDocumentStatus(documentId, STATUS_FAILED, "文档处理队列已满，请稍后重试", ERROR_QUEUE_FULL,
-                    STAGE_SAVED, 1, 0, 0);
+            handleDocumentQueueFull(documentId);
         }
+    }
+
+    private void handleDocumentQueueFull(Long documentId) {
+        log.warn("knowledge document processing queue is full id={}", documentId);
+        updateDocumentProgress(documentId, STATUS_FAILED, 0, 0);
+        updateDocumentStatus(documentId, STATUS_FAILED, "文档处理队列已满，请稍后重试", ERROR_QUEUE_FULL,
+                STAGE_SAVED, 1, 0, 0);
     }
 
     private void updateDocumentStatus(Long documentId, String status, String errorMessage, Integer chunkCount) {

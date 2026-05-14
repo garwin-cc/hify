@@ -5,13 +5,17 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hify.auth.api.AuditLogRecord;
-import com.hify.auth.api.AuditLogService;
+import com.hify.common.audit.AuditLogRecord;
+import com.hify.common.audit.AuditLogService;
 import com.hify.auth.api.AuthService;
 import com.hify.auth.api.CurrentUser;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.log.TraceContext;
+import com.hify.common.task.TaskQueue;
+import com.hify.common.task.TaskRejectedException;
+import com.hify.common.task.TaskRequest;
+import com.hify.common.task.TaskType;
 import com.hify.common.util.PageHelper;
 import com.hify.common.web.PageResult;
 import com.hify.workflow.api.CreateWorkflowReq;
@@ -44,6 +48,7 @@ import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -79,6 +84,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final ObjectMapper objectMapper;
     private AuditLogService auditLogService;
     private AuthService authService;
+    private TaskQueue workflowTaskQueue;
     @Resource(name = "llmExecutor")
     private ThreadPoolExecutor llmExecutor;
 
@@ -90,6 +96,11 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Autowired(required = false)
     public void setAuthService(AuthService authService) {
         this.authService = authService;
+    }
+
+    @Autowired(required = false)
+    public void setWorkflowTaskQueue(@Qualifier("workflowTaskQueue") TaskQueue workflowTaskQueue) {
+        this.workflowTaskQueue = workflowTaskQueue;
     }
 
     @Override
@@ -196,18 +207,33 @@ public class WorkflowServiceImpl implements WorkflowService {
             workflowRunMapper.updateById(run);
         }
         try {
-            llmExecutor.execute(TraceContext.wrap(() -> {
-                try {
-                    workflowEngine.executeExistingRun(run.getId(), id, userMessage);
-                } catch (Exception e) {
-                    log.warn("async workflow run failed runId={} workflowId={}: {}",
-                            run.getId(), id, e.getMessage());
-                }
-            }));
+            Runnable task = () -> executeAsyncWorkflowRun(run.getId(), id, userMessage);
+            if (workflowTaskQueue != null) {
+                workflowTaskQueue.submit(TaskRequest.builder()
+                        .taskType(TaskType.WORKFLOW_RUN)
+                        .taskId("workflow-run-" + run.getId())
+                        .task(task)
+                        .build());
+            } else {
+                llmExecutor.execute(TraceContext.wrap(task));
+            }
+        } catch (TaskRejectedException e) {
+            markRunFailed(run, e);
         } catch (Exception e) {
             markRunFailed(run, e);
         }
         return getRunDetail(run.getId());
+    }
+
+    private void executeAsyncWorkflowRun(Long runId, Long workflowId, String userMessage) {
+        TraceContext.put("workflowId", workflowId);
+        TraceContext.put("workflowRunId", runId);
+        try {
+            workflowEngine.executeExistingRun(runId, workflowId, userMessage);
+        } catch (Exception e) {
+            log.warn("async workflow run failed runId={} workflowId={}: {}",
+                    runId, workflowId, e.getMessage());
+        }
     }
 
     @Override

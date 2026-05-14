@@ -1,10 +1,7 @@
-package com.hify.auth.domain;
+package com.hify.common.audit;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hify.auth.api.AuditLogRecord;
-import com.hify.auth.api.AuditLogService;
-import com.hify.auth.infra.AuditLogMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,12 +14,13 @@ import java.util.Set;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class AuditLogServiceImpl implements AuditLogService {
+public class DefaultAuditLogService implements AuditLogService {
 
     private static final Set<String> SENSITIVE_KEYS = Set.of(
-            "apikey", "api_key", "password", "token", "authorization", "secret", "credential");
+            "apikey", "api_key", "password", "token", "authorization", "secret", "credential", "authconfig");
+    private static final int MAX_JSON_LENGTH = 16_000;
 
-    private final AuditLogMapper auditLogMapper;
+    private final AuditLogWriter auditLogWriter;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -31,10 +29,13 @@ public class AuditLogServiceImpl implements AuditLogService {
             return;
         }
         try {
+            AuditContext.Actor actor = AuditContext.currentActor();
             AuditLogPo po = new AuditLogPo();
             po.setTraceId(valueOrEmpty(record.getTraceId()));
-            po.setActorUserId(record.getActorUserId());
-            po.setActorUsername(valueOrEmpty(record.getActorUsername()));
+            po.setActorUserId(record.getActorUserId() != null ? record.getActorUserId()
+                    : actor == null ? null : actor.getUserId());
+            po.setActorUsername(valueOrEmpty(record.getActorUsername() != null ? record.getActorUsername()
+                    : actor == null ? "" : actor.getUsername()));
             po.setWorkspaceId(record.getWorkspaceId());
             po.setProjectId(record.getProjectId());
             po.setAction(valueOrEmpty(record.getAction()));
@@ -50,7 +51,7 @@ public class AuditLogServiceImpl implements AuditLogService {
             po.setErrorMessage(valueOrEmpty(record.getErrorMessage()));
             po.setBeforeJson(toJson(record.getBefore()));
             po.setAfterJson(toJson(record.getAfter()));
-            auditLogMapper.insert(po);
+            auditLogWriter.insert(po);
         } catch (Exception e) {
             log.warn("audit log record failed action={} resourceType={} resourceId={} message={}",
                     record.getAction(), record.getResourceType(), record.getResourceId(), e.getMessage());
@@ -58,8 +59,15 @@ public class AuditLogServiceImpl implements AuditLogService {
     }
 
     private String toJson(Map<String, Object> value) throws JsonProcessingException {
-        Map<String, Object> sanitized = sanitize(value);
-        return objectMapper.writeValueAsString(sanitized);
+        String json = objectMapper.writeValueAsString(sanitize(value));
+        if (json.length() <= MAX_JSON_LENGTH) {
+            return json;
+        }
+        Map<String, Object> truncated = new LinkedHashMap<>();
+        truncated.put("truncated", true);
+        truncated.put("length", json.length());
+        truncated.put("prefix", json.substring(0, MAX_JSON_LENGTH));
+        return objectMapper.writeValueAsString(truncated);
     }
 
     private Map<String, Object> sanitize(Map<String, Object> value) {

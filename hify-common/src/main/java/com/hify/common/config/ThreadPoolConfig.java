@@ -1,5 +1,7 @@
 package com.hify.common.config;
 
+import com.hify.common.task.InMemoryTaskQueue;
+import com.hify.common.task.TaskQueue;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -64,5 +66,20 @@ public class ThreadPoolConfig {
                         .build(),
                 new ThreadPoolExecutor.AbortPolicy()
         );
+    }
+
+    @Bean("knowledgeTaskQueue")
+    public TaskQueue knowledgeTaskQueue(@Qualifier("knowledgeExecutor") ThreadPoolExecutor executor) {
+        return new InMemoryTaskQueue(executor, 20);
+    }
+
+    @Bean("workflowTaskQueue")
+    public TaskQueue workflowTaskQueue(@Qualifier("llmExecutor") ThreadPoolExecutor executor) {
+        return new InMemoryTaskQueue(executor, 100);
+    }
+
+    @Bean("backgroundTaskQueue")
+    public TaskQueue backgroundTaskQueue(@Qualifier("asyncExecutor") ThreadPoolExecutor executor) {
+        return new InMemoryTaskQueue(executor, 100);
     }
 }

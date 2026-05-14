@@ -1,7 +1,6 @@
 package com.hify.common.exception;
 
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 
 /**
  * 全局错误码枚举。
@@ -22,7 +21,6 @@ import lombok.RequiredArgsConstructor;
  * </pre>
  */
 @Getter
-@RequiredArgsConstructor
 public enum ErrorCode {
 
     // ================================================================
@@ -48,7 +46,7 @@ public enum ErrorCode {
     CONFLICT(409, "数据已存在，请勿重复提交"),
 
     /** 请求频率超限（限流） */
-    TOO_MANY_REQUESTS(429, "请求过于频繁，请稍后重试"),
+    TOO_MANY_REQUESTS(429, "请求过于频繁，请稍后重试", ErrorCategory.RATE_LIMIT, true, "WARN"),
 
     // ================================================================
     // 5xx 服务端通用错误
@@ -61,7 +59,10 @@ public enum ErrorCode {
     THIRD_PARTY_ERROR(502, "第三方服务异常"),
 
     /** 服务启动中、过载或维护中 */
-    SERVICE_UNAVAILABLE(503, "服务暂时不可用"),
+    SERVICE_UNAVAILABLE(503, "服务暂时不可用", ErrorCategory.INFRA, true, "WARN"),
+
+    /** 后台任务队列已满或任务被拒绝 */
+    TASK_QUEUE_FULL(504, "后台任务队列已满，请稍后重试", ErrorCategory.TASK, true, "WARN"),
 
     // ================================================================
     // 1xxx LLM
@@ -71,13 +72,13 @@ public enum ErrorCode {
     LLM_PROVIDER_NOT_FOUND(1001, "模型提供商不存在或未启用"),
 
     /** LLM HTTP 请求失败（网络异常、4xx/5xx 响应） */
-    LLM_CALL_ERROR(1002, "LLM 调用失败"),
+    LLM_CALL_ERROR(1002, "LLM 调用失败", ErrorCategory.LLM, true, "WARN"),
 
     /** LLM 响应超时，超过 readTimeout 或 CompletableFuture 兜底超时 */
-    LLM_TIMEOUT(1003, "LLM 响应超时，请稍后重试"),
+    LLM_TIMEOUT(1003, "LLM 响应超时，请稍后重试", ErrorCategory.LLM, true, "WARN"),
 
     /** Resilience4j 熔断器处于 OPEN 状态 */
-    LLM_CIRCUIT_OPEN(1004, "LLM 服务熔断，请稍后重试"),
+    LLM_CIRCUIT_OPEN(1004, "LLM 服务熔断，请稍后重试", ErrorCategory.LLM, true, "WARN"),
 
     /** Token 数超出模型上下文窗口 */
     LLM_CONTEXT_OVERFLOW(1005, "对话上下文过长，请开启新对话"),
@@ -100,7 +101,7 @@ public enum ErrorCode {
     KNOWLEDGE_FILE_TYPE_UNSUPPORTED(2102, "不支持的文件类型"),
 
     /** 向量化任务异步执行失败 */
-    KNOWLEDGE_VECTORIZE_FAILED(2103, "文档向量化失败"),
+    KNOWLEDGE_VECTORIZE_FAILED(2103, "文档向量化失败", ErrorCategory.RAG, true, "WARN"),
 
     // ================================================================
     // 3xxx Agent / 工作流
@@ -113,16 +114,56 @@ public enum ErrorCode {
     WORKFLOW_CONFIG_INVALID(3002, "工作流配置格式错误"),
 
     /** 工作流执行时某节点失败 */
-    WORKFLOW_EXECUTE_FAILED(3003, "工作流执行失败"),
+    WORKFLOW_EXECUTE_FAILED(3003, "工作流执行失败", ErrorCategory.WORKFLOW, true, "WARN"),
 
     /** MCP 工具连接或调用失败 */
-    MCP_TOOL_CALL_FAILED(3004, "MCP 工具调用失败"),
+    MCP_TOOL_CALL_FAILED(3004, "MCP 工具调用失败", ErrorCategory.MCP, true, "WARN"),
 
     /** MCP Server 不存在或不可用 */
-    MCP_SERVER_NOT_FOUND(3005, "MCP Server 不存在或未启用");
+    MCP_SERVER_NOT_FOUND(3005, "MCP Server 不存在或未启用", ErrorCategory.MCP, false, "WARN");
 
     // ================================================================
 
     private final int code;
     private final String message;
+    private final ErrorCategory category;
+    private final boolean retryable;
+    private final String logLevel;
+
+    ErrorCode(int code, String message) {
+        this(code, message, defaultCategory(code), false, code >= 500 ? "ERROR" : "WARN");
+    }
+
+    ErrorCode(int code, String message, ErrorCategory category, boolean retryable, String logLevel) {
+        this.code = code;
+        this.message = message;
+        this.category = category;
+        this.retryable = retryable;
+        this.logLevel = logLevel;
+    }
+
+    private static ErrorCategory defaultCategory(int code) {
+        if (code == 401) {
+            return ErrorCategory.AUTH;
+        }
+        if (code == 403) {
+            return ErrorCategory.PERMISSION;
+        }
+        if (code == 429) {
+            return ErrorCategory.RATE_LIMIT;
+        }
+        if (code >= 1000 && code < 2000) {
+            return ErrorCategory.LLM;
+        }
+        if (code >= 2000 && code < 3000) {
+            return ErrorCategory.RAG;
+        }
+        if (code >= 3000 && code < 4000) {
+            return ErrorCategory.WORKFLOW;
+        }
+        if (code >= 500) {
+            return ErrorCategory.INFRA;
+        }
+        return ErrorCategory.VALIDATION;
+    }
 }

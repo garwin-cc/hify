@@ -202,9 +202,11 @@ public class ConversationServiceImpl implements ConversationService {
     @Override
     public SseEmitter sendMessage(Long agentId, Long sessionId, String content) {
         String traceId = TraceContext.ensureTraceId();
+        TraceContext.put("agentId", agentId);
         AgentDetailResp agent = loadAgent(agentId);
 
         ChatSessionPo session = resolveSession(agentId, sessionId, content);
+        TraceContext.put("conversationId", session.getId());
 
         // 持久化用户消息（状态直接 DONE，用户消息无需 STREAMING 过渡）
         Long userMsgId = insertMessage(session.getId(), traceId, "user", content, null, null, "DONE", null, null);
@@ -273,6 +275,7 @@ public class ConversationServiceImpl implements ConversationService {
                 WorkflowRunReq runReq = new WorkflowRunReq();
                 runReq.setUserMessage(userContent);
                 WorkflowRunResp workflowRun = workflowService.startAsyncRun(agent.getWorkflowId(), runReq);
+                TraceContext.put("workflowRunId", workflowRun.getId());
                 updateWorkflowTrace(traceId, agent.getWorkflowId(), workflowRun.getId());
                 if (!cancelled.get()) {
                     trySend(emitter, workflowStartEvent(workflowRun.getId(), agent.getWorkflowId()));

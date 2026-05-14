@@ -1,7 +1,6 @@
-package com.hify.auth.infra;
+package com.hify.common.audit;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.hify.auth.domain.AuditLogPo;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper

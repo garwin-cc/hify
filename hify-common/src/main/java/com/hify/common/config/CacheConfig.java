@@ -1,5 +1,6 @@
 package com.hify.common.config;
 
+import com.hify.common.cache.CacheNames;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,9 +26,15 @@ public class CacheConfig {
         RedisCacheConfiguration defaults = defaultConfig(Duration.ofMinutes(30), jsonSerializer);
 
         Map<String, RedisCacheConfiguration> cacheConfigs = Map.of(
-                "provider-cache", defaultConfig(Duration.ofMinutes(30), jsonSerializer),
-                "agent-cache",    defaultConfig(Duration.ofMinutes(30), jsonSerializer),
-                "session-cache",  defaultConfig(Duration.ofHours(2),    jsonSerializer)
+                CacheNames.PROVIDER, defaultConfig(Duration.ofMinutes(30), jsonSerializer),
+                CacheNames.MODEL, defaultConfig(Duration.ofMinutes(30), jsonSerializer),
+                CacheNames.AGENT_DETAIL, defaultConfig(Duration.ofMinutes(10), jsonSerializer),
+                CacheNames.AGENT_LIST, defaultConfig(Duration.ofMinutes(10), jsonSerializer),
+                CacheNames.SESSION, defaultConfig(Duration.ofHours(2), jsonSerializer),
+                CacheNames.MCP_TOOL, defaultConfig(Duration.ofMinutes(10), jsonSerializer),
+                CacheNames.WORKFLOW, defaultConfig(Duration.ofMinutes(10), jsonSerializer),
+                CacheNames.KNOWLEDGE_CONFIG, defaultConfig(Duration.ofMinutes(10), jsonSerializer),
+                CacheNames.PERMISSION, defaultConfig(Duration.ofMinutes(5), jsonSerializer)
         );
 
         return RedisCacheManager.builder(factory)

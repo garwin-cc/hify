@@ -1,4 +1,4 @@
-package com.hify.auth.api;
+package com.hify.common.audit;
 
 public interface AuditLogService {
 

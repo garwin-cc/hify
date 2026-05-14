@@ -1,8 +1,8 @@
 package com.hify.auth.domain;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.hify.auth.api.AuditLogRecord;
-import com.hify.auth.api.AuditLogService;
+import com.hify.common.audit.AuditLogRecord;
+import com.hify.common.audit.AuditLogService;
 import com.hify.auth.api.CreateIdentityProviderReq;
 import com.hify.auth.api.CurrentUser;
 import com.hify.auth.api.IdentityProviderResp;

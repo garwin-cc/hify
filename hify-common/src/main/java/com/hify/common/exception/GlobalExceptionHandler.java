@@ -16,7 +16,14 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BizException.class)
     public Result<Void> handleBizException(BizException e) {
-        log.warn("BizException: code={} message={}", e.getCode(), e.getMessage());
+        ErrorCode errorCode = e.getErrorCode();
+        if ("ERROR".equals(errorCode.getLogLevel())) {
+            log.error("BizException: code={} category={} retryable={} message={}",
+                    e.getCode(), errorCode.getCategory(), errorCode.isRetryable(), e.getMessage(), e);
+        } else {
+            log.warn("BizException: code={} category={} retryable={} message={}",
+                    e.getCode(), errorCode.getCategory(), errorCode.isRetryable(), e.getMessage());
+        }
         return Result.fail(e.getCode(), e.getMessage());
     }
 

@@ -25,6 +25,9 @@
           <el-icon style="margin-right: 4px"><Collection /></el-icon>
           另存为模板
         </el-button>
+        <el-button v-if="isEditMode" :loading="publishingWorkflow" @click="publishDialogVisible = true">
+          发布入口
+        </el-button>
         <el-button type="primary" :loading="submitting" @click="handleSubmit">
           {{ isEditMode ? '保存' : '提交' }}
         </el-button>
@@ -286,6 +289,18 @@
               {{ variable.label }}
             </button>
           </div>
+          <div v-if="workflowVariables.length" class="variable-panel">
+            <div class="panel-title">后端变量面板</div>
+            <button
+              v-for="variable in workflowVariables"
+              :key="variable.expression"
+              class="variable-token"
+              type="button"
+              @click="insertVariable(variable.expression)"
+            >
+              {{ variable.label || variable.expression }}
+            </button>
+          </div>
           <div v-if="selectedNodeRun" class="node-run-detail">
             <div class="node-run-detail__meta">
               <el-tag size="small" :type="runTagType(selectedNodeRun.status)">
@@ -501,6 +516,10 @@
         <template v-else>
           <section v-if="workflowVersions.length" class="version-panel">
             <div class="panel-title">版本快照</div>
+            <div class="version-actions">
+              <el-button size="small" :loading="loadingWorkflowMeta" @click="loadWorkflowMeta">刷新元数据</el-button>
+              <el-button size="small" @click="openDiffDialog">版本差异</el-button>
+            </div>
             <div
               v-for="version in workflowVersions"
               :key="version.id"
@@ -518,6 +537,22 @@
               >
                 恢复
               </el-button>
+            </div>
+          </section>
+          <section v-if="workflowPublishes.length" class="version-panel">
+            <div class="panel-title">发布入口</div>
+            <div
+              v-for="publish in workflowPublishes"
+              :key="publish.id"
+              class="version-item"
+            >
+              <div>
+                <strong>{{ publish.publishType }}</strong>
+                <span>{{ publish.displayName || publish.endpointKey || publish.toolKey || '-' }}</span>
+              </div>
+              <el-tag size="small" :type="publish.publishStatus === 'ACTIVE' ? 'success' : 'info'">
+                {{ publish.publishStatus }}
+              </el-tag>
             </div>
           </section>
           <div class="panel-title">JSON 预览</div>
@@ -559,6 +594,47 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="publishDialogVisible" title="发布 Workflow" width="520px">
+      <el-form :model="publishForm" label-width="100px">
+        <el-form-item label="发布类型">
+          <el-select v-model="publishForm.publishType" style="width: 100%">
+            <el-option label="内部 Web App" value="WEB_APP" />
+            <el-option label="API Endpoint" value="API_ENDPOINT" />
+            <el-option label="受控工具" value="TOOL" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="显示名称">
+          <el-input v-model="publishForm.displayName" />
+        </el-form-item>
+        <el-form-item label="灰度比例">
+          <el-input-number v-model="publishForm.grayPercent" :min="0" :max="100" controls-position="right" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="publishDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="publishingWorkflow" @click="handlePublishWorkflow">发布</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="diffDialogVisible" title="版本差异" width="680px">
+      <div class="diff-toolbar">
+        <el-select v-model="diffForm.leftVersionNo" placeholder="旧版本">
+          <el-option v-for="version in workflowVersions" :key="version.id" :label="`v${version.versionNo}`" :value="version.versionNo" />
+        </el-select>
+        <el-select v-model="diffForm.rightVersionNo" placeholder="新版本">
+          <el-option v-for="version in workflowVersions" :key="version.id" :label="`v${version.versionNo}`" :value="version.versionNo" />
+        </el-select>
+        <el-button type="primary" @click="loadVersionDiff">对比</el-button>
+      </div>
+      <el-input
+        :model-value="JSON.stringify(workflowVersionDiff?.summary ?? {}, null, 2)"
+        type="textarea"
+        :rows="18"
+        readonly
+        class="json-preview"
+      />
+    </el-dialog>
+
     <el-drawer v-model="runDetailVisible" title="运行详情" size="620px">
       <template v-if="latestRun">
         <section class="run-detail-section">
@@ -586,6 +662,25 @@
             <el-input :model-value="latestRun.output || ''" type="textarea" :rows="3" readonly />
           </div>
           <div v-if="latestRun.error" class="run-detail-error">{{ latestRun.error }}</div>
+        </section>
+
+        <section class="run-detail-section">
+          <h3>事件回放</h3>
+          <el-timeline>
+            <el-timeline-item
+              v-for="event in latestRunEvents"
+              :key="event.id"
+              :type="runTagType(event.status || event.eventType)"
+              :timestamp="event.createdAt"
+            >
+              <div class="node-run-card__head">
+                <strong>{{ event.eventType }}</strong>
+                <span>{{ event.nodeKey || '-' }}</span>
+                <span>{{ event.status || '-' }}</span>
+              </div>
+            </el-timeline-item>
+          </el-timeline>
+          <el-empty v-if="latestRunEvents.length === 0" description="暂无事件缓存，运行中会实时追加" :image-size="80" />
         </section>
 
         <section class="run-detail-section">
@@ -658,6 +753,10 @@ import {
   getWorkflowReviewTask,
   getWorkflowRunDetail,
   getWorkflowVersions,
+  getWorkflowVersionDiff,
+  getWorkflowPublishes,
+  getWorkflowVariables,
+  publishWorkflow,
   rerunWorkflowRun,
   restoreWorkflowVersion,
   startAsyncWorkflowRun,
@@ -674,6 +773,9 @@ import {
   type WorkflowRun,
   type WorkflowReviewTask,
   type WorkflowVersion,
+  type WorkflowVersionDiff,
+  type WorkflowPublish,
+  type WorkflowVariable,
 } from '@/api/workflow'
 import { getModelGroups, type ModelGroup } from '@/api/agent'
 import { subscribeSse } from '@/api/sse'
@@ -714,8 +816,25 @@ const loadingModels = ref(false)
 const debuggingNode = ref(false)
 const nodeDebugResult = ref<WorkflowNodeDebugResult | null>(null)
 const workflowVersions = ref<WorkflowVersion[]>([])
+const workflowPublishes = ref<WorkflowPublish[]>([])
+const workflowVariables = ref<WorkflowVariable[]>([])
+const workflowVersionDiff = ref<WorkflowVersionDiff | null>(null)
+const loadingWorkflowMeta = ref(false)
+const latestRunEvents = ref<WorkflowRunEvent[]>([])
 const templateDialogVisible = ref(false)
+const publishDialogVisible = ref(false)
+const diffDialogVisible = ref(false)
 const creatingTemplate = ref(false)
+const publishingWorkflow = ref(false)
+const publishForm = reactive({
+  publishType: 'WEB_APP',
+  displayName: '',
+  grayPercent: 100,
+})
+const diffForm = reactive({
+  leftVersionNo: 0,
+  rightVersionNo: 0,
+})
 const templateForm = reactive({
   name: '',
   description: '',
@@ -1447,6 +1566,7 @@ function resetExample() {
   selectedNodeKey.value = ''
   selectedEdge.value = null
   latestRun.value = null
+  latestRunEvents.value = []
 }
 
 async function loadWorkflowDetail() {
@@ -1458,7 +1578,7 @@ async function loadWorkflowDetail() {
     form.description = detail.description ?? ''
     applyConfig(toConfigJson(detail))
     latestRun.value = await getLatestWorkflowRun(workflowId.value).catch(() => null)
-    await loadWorkflowVersions()
+    await loadWorkflowMeta()
   } catch {
     router.push('/workflows')
   } finally {
@@ -1466,12 +1586,21 @@ async function loadWorkflowDetail() {
   }
 }
 
-async function loadWorkflowVersions() {
-  if (!isEditMode.value) {
-    workflowVersions.value = []
-    return
+async function loadWorkflowMeta() {
+  if (!isEditMode.value) return
+  loadingWorkflowMeta.value = true
+  try {
+    const [versions, publishes, variables] = await Promise.all([
+      getWorkflowVersions(workflowId.value).catch(() => []),
+      getWorkflowPublishes(workflowId.value).catch(() => []),
+      getWorkflowVariables(workflowId.value).catch(() => []),
+    ])
+    workflowVersions.value = versions
+    workflowPublishes.value = publishes
+    workflowVariables.value = variables
+  } finally {
+    loadingWorkflowMeta.value = false
   }
-  workflowVersions.value = await getWorkflowVersions(workflowId.value).catch(() => [])
 }
 
 async function debugSelectedNode() {
@@ -1497,7 +1626,7 @@ async function restoreVersion(versionNo: number) {
     form.name = detail.name ?? ''
     form.description = detail.description ?? ''
     applyConfig(toConfigJson(detail))
-    await loadWorkflowVersions()
+    await loadWorkflowMeta()
     notifySuccess(`已恢复到 v${versionNo}`)
   } catch {
     // request interceptor has shown the error message
@@ -1517,7 +1646,7 @@ async function saveWorkflowBeforeRun(): Promise<number | null> {
   }
   if (isEditMode.value) {
     await updateWorkflow(workflowId.value, payload)
-    await loadWorkflowVersions()
+    await loadWorkflowMeta()
     return workflowId.value
   }
   const created = await createWorkflow(payload) as WorkflowDetail
@@ -1535,6 +1664,7 @@ async function handleRun() {
   runningWorkflow.value = true
   latestRun.value = null
   clearReviewTask()
+  latestRunEvents.value = []
   lastRunEventSeq.value = 0
   try {
     const id = await saveWorkflowBeforeRun()
@@ -1646,6 +1776,7 @@ function startRunEventStream(runId: number, afterEventSeq = 0) {
       try {
         const event = JSON.parse(message.data) as WorkflowRunEvent
         lastRunEventSeq.value = Math.max(lastRunEventSeq.value, event.eventSeq ?? 0)
+        latestRunEvents.value = [...latestRunEvents.value, event].slice(-100)
         persistRunResumeState()
         const detail = await getWorkflowRunDetail(runId)
         latestRun.value = detail
@@ -1737,6 +1868,7 @@ async function restoreRunningWorkflow() {
     if (!state.runId) return
     const detail = await getWorkflowRunDetail(state.runId)
     latestRun.value = detail
+    latestRunEvents.value = []
     await syncReviewTaskIfWaiting(detail)
     lastRunEventSeq.value = state.lastEventSeq ?? 0
     if (detail.status === 'WAITING') {
@@ -1752,6 +1884,47 @@ async function restoreRunningWorkflow() {
     startRunEventStream(detail.id, lastRunEventSeq.value)
   } catch {
     clearRunResumeState()
+  }
+}
+
+function openDiffDialog() {
+  if (workflowVersions.value.length >= 2) {
+    diffForm.leftVersionNo = workflowVersions.value[1]?.versionNo ?? workflowVersions.value[0].versionNo
+    diffForm.rightVersionNo = workflowVersions.value[0].versionNo
+  } else if (workflowVersions.value.length === 1) {
+    diffForm.leftVersionNo = workflowVersions.value[0].versionNo
+    diffForm.rightVersionNo = workflowVersions.value[0].versionNo
+  }
+  workflowVersionDiff.value = null
+  diffDialogVisible.value = true
+}
+
+async function loadVersionDiff() {
+  if (!isEditMode.value || !diffForm.leftVersionNo || !diffForm.rightVersionNo) {
+    ElMessage.warning('请选择两个版本')
+    return
+  }
+  workflowVersionDiff.value = await getWorkflowVersionDiff(
+    workflowId.value,
+    diffForm.leftVersionNo,
+    diffForm.rightVersionNo,
+  )
+}
+
+async function handlePublishWorkflow() {
+  if (!isEditMode.value) return
+  publishingWorkflow.value = true
+  try {
+    await publishWorkflow(workflowId.value, {
+      publishType: publishForm.publishType,
+      displayName: publishForm.displayName.trim() || form.name.trim(),
+      grayPercent: publishForm.grayPercent,
+    })
+    publishDialogVisible.value = false
+    await loadWorkflowMeta()
+    notifySuccess('Workflow 已发布')
+  } finally {
+    publishingWorkflow.value = false
   }
 }
 
@@ -1771,7 +1944,7 @@ async function handleSubmit() {
     }
     if (isEditMode.value) {
       await updateWorkflow(workflowId.value, payload)
-      await loadWorkflowVersions()
+      await loadWorkflowMeta()
       notifySuccess('工作流已更新')
     } else {
       await createWorkflow(payload)
@@ -2407,6 +2580,17 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-light);
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.version-actions,
+.diff-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.diff-toolbar :deep(.el-select) {
+  flex: 1;
 }
 
 .version-item {

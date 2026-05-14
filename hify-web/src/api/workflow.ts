@@ -199,6 +199,47 @@ export interface WorkflowVersion {
   createdAt: string
 }
 
+export interface WorkflowVersionDiff {
+  workflowId: number
+  leftVersionNo: number
+  rightVersionNo: number
+  summary: Record<string, unknown>
+}
+
+export interface WorkflowVariable {
+  nodeKey: string
+  nodeType: string
+  variable: string
+  expression: string
+  label: string
+}
+
+export interface WorkflowPublish {
+  id: number
+  workflowId: number
+  workflowVersionId: number
+  publishType: string
+  publishStatus: string
+  endpointKey?: string
+  toolKey?: string
+  displayName?: string
+  grayPercent?: number
+  publishedAt?: string
+}
+
+export interface WorkflowTrigger {
+  id: number
+  workflowId: number
+  workflowVersionId?: number
+  triggerType: string
+  triggerKey: string
+  cronExpression?: string
+  enabled: number
+  nextFireAt?: string
+  lastFireAt?: string
+  lastRunId?: number
+}
+
 export const getWorkflowList = (
   page: number,
   size: number,
@@ -282,8 +323,41 @@ export const debugWorkflowNode = (
 export const getWorkflowVersions = (id: number): Promise<WorkflowVersion[]> =>
   get(`/v1/workflows/${id}/versions`)
 
+export const getWorkflowVersionDiff = (
+  id: number,
+  leftVersionNo: number,
+  rightVersionNo: number,
+): Promise<WorkflowVersionDiff> =>
+  get(`/v1/workflows/${id}/versions/${leftVersionNo}/diff/${rightVersionNo}`)
+
 export const restoreWorkflowVersion = (id: number, versionNo: number): Promise<WorkflowDetail> =>
   post(`/v1/workflows/${id}/versions/${versionNo}/restore`, {})
+
+export const rollbackWorkflowVersion = (
+  id: number,
+  versionNo: number,
+  reason?: string,
+): Promise<WorkflowDetail> =>
+  post(`/v1/workflows/${id}/versions/${versionNo}/rollback`, { reason })
+
+export const publishWorkflow = (
+  id: number,
+  data: { publishType: string; displayName?: string; grayPercent?: number },
+): Promise<WorkflowPublish> =>
+  post(`/v1/workflows/${id}/publish`, data)
+
+export const getWorkflowPublishes = (id: number): Promise<WorkflowPublish[]> =>
+  get(`/v1/workflows/${id}/publishes`)
+
+export const getWorkflowVariables = (id: number): Promise<WorkflowVariable[]> =>
+  get(`/v1/workflows/${id}/variables`)
+
+export const getWorkflowReviewTasks = (
+  page: number,
+  size: number,
+  query: Record<string, unknown> = {},
+): Promise<PageData<WorkflowReviewTask>> =>
+  get('/v1/workflow-runs/reviews', { page, size, ...query })
 
 export function workflowStatusOf(row: WorkflowListItem): WorkflowStatus {
   return row.enabled === 1 ? 'PUBLISHED' : 'DRAFT'

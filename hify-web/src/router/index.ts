@@ -18,6 +18,12 @@ const router = createRouter({
       meta: { roles: ['ADMIN'] },
     },
     {
+      path: '/apps',
+      name: 'Apps',
+      component: () => import('@/views/app/AppPublishView.vue'),
+      meta: { roles: ['ADMIN', 'EDITOR'] },
+    },
+    {
       path: '/agents',
       name: 'Agents',
       component: () => import('@/views/agent/AgentList.vue'),
@@ -74,6 +80,24 @@ const router = createRouter({
       path: '/mcp',
       name: 'McpTools',
       component: () => import('@/views/mcp/McpView.vue'),
+    },
+    {
+      path: '/logs',
+      name: 'Logs',
+      component: () => import('@/views/logs/LogCenterView.vue'),
+      meta: { roles: ['ADMIN', 'EDITOR'] },
+    },
+    {
+      path: '/audit',
+      name: 'Audit',
+      component: () => import('@/views/audit/AuditView.vue'),
+      meta: { roles: ['ADMIN'] },
+    },
+    {
+      path: '/settings',
+      name: 'SystemSettings',
+      component: () => import('@/views/settings/SystemSettingsView.vue'),
+      meta: { roles: ['ADMIN'] },
     },
     {
       path: '/users',

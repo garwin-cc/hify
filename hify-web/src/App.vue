@@ -18,7 +18,9 @@
 
       <!-- 菜单区 -->
       <nav class="sidebar-nav">
-        <template v-for="item in navItems" :key="item.path">
+        <template v-for="group in navGroups" :key="group.label">
+          <div v-if="!isCollapsed" class="sidebar-group">{{ group.label }}</div>
+          <template v-for="item in group.items" :key="item.path">
           <el-tooltip
             v-if="isCollapsed"
             :content="item.label"
@@ -53,6 +55,7 @@
               </span>
             </Transition>
           </RouterLink>
+          </template>
         </template>
       </nav>
 
@@ -96,6 +99,10 @@ import {
   Cpu,
   Share,
   Tools,
+  Grid,
+  Tickets,
+  Lock,
+  DataLine,
   ArrowLeft,
   ArrowRight,
 } from '@element-plus/icons-vue'
@@ -116,15 +123,43 @@ const isCollapsed = computed({
   set: (v: boolean) => { userCollapsed.value = v },
 })
 
-const navItems = computed(() => [
-  auth.isAdmin ? { path: '/providers', label: '模型管理', icon: Setting } : null,
-  { path: '/agents', label: 'Agent 管理', icon: User },
-  { path: '/conversation', label: '对话', icon: ChatDotRound },
-  { path: '/knowledge', label: '知识库', icon: Cpu },
-  { path: '/workflows', label: '工作流', icon: Share },
-  auth.isAdmin ? { path: '/mcp', label: 'MCP 工具', icon: Tools } : null,
-  auth.isAdmin ? { path: '/users', label: '用户管理', icon: User } : null,
-].filter(Boolean) as Array<{ path: string; label: string; icon: unknown }>)
+interface NavItem {
+  path: string
+  label: string
+  icon: unknown
+}
+
+const navGroups = computed(() => {
+  const groups: Array<{ label: string; items: NavItem[] }> = [
+    {
+      label: '运行',
+      items: [
+        { path: '/conversation', label: '对话', icon: ChatDotRound },
+        { path: '/apps', label: '应用', icon: Grid },
+      ],
+    },
+    {
+      label: '编排',
+      items: [
+        { path: '/agents', label: 'Agent', icon: User },
+        { path: '/workflows', label: '工作流', icon: Share },
+        { path: '/knowledge', label: '知识库', icon: Cpu },
+        auth.isAdmin ? { path: '/mcp', label: '工具', icon: Tools } : null,
+      ].filter(Boolean) as NavItem[],
+    },
+    {
+      label: '治理',
+      items: [
+        auth.isAdmin ? { path: '/logs', label: '日志', icon: Tickets } : null,
+        auth.isAdmin ? { path: '/audit', label: '审计', icon: Lock } : null,
+        auth.isAdmin ? { path: '/settings', label: '系统设置', icon: Setting } : null,
+        auth.isAdmin ? { path: '/providers', label: '模型管理', icon: DataLine } : null,
+        auth.isAdmin ? { path: '/users', label: '用户管理', icon: User } : null,
+      ].filter(Boolean) as NavItem[],
+    },
+  ]
+  return groups.filter(group => group.items.length > 0)
+})
 </script>
 
 <style scoped>
@@ -225,6 +260,14 @@ const navItems = computed(() => [
   gap: 2px;
 }
 .sidebar-nav::-webkit-scrollbar { width: 0; }
+
+.sidebar-group {
+  padding: 10px 10px 4px;
+  color: rgba(255, 255, 255, 0.28);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
 
 .sidebar-tooltip-anchor {
   display: block;

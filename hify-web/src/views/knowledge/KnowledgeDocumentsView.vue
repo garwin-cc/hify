@@ -72,6 +72,38 @@
       </div>
     </div>
 
+    <div class="hify-card task-panel">
+      <div class="hify-card__header">
+        <span class="hify-card__title">处理队列</span>
+        <div class="task-panel__actions">
+          <el-button size="small" :loading="loadingTasks" @click="loadTasks">刷新队列</el-button>
+          <el-button size="small" type="primary" @click="rebuildDialogVisible = true">重建索引</el-button>
+        </div>
+      </div>
+      <el-table :data="tasks" size="small" v-loading="loadingTasks">
+        <el-table-column prop="taskType" label="任务" width="130" />
+        <el-table-column prop="documentId" label="文档" width="90">
+          <template #default="{ row }">{{ row.documentId || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" :type="taskStatusType(row.status)">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="processStage" label="阶段" width="120">
+          <template #default="{ row }">{{ row.processStage || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="processProgress" label="进度" width="160">
+          <template #default="{ row }">
+            <el-progress :percentage="safeProgress(row.processProgress)" :show-text="false" :stroke-width="5" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="progressMessage" label="说明" min-width="180" />
+        <el-table-column prop="errorMessage" label="错误" min-width="160" />
+      </el-table>
+      <el-empty v-if="!loadingTasks && tasks.length === 0" description="暂无排队或处理中任务" :image-size="80" />
+    </div>
+
     <div class="hify-card hify-card--flush">
       <HifyTable
         ref="tableRef"
@@ -138,6 +170,15 @@
             @click="handleViewChunks(row)"
           >
             查看分块
+          </el-button>
+          <el-button
+            v-if="row.status === 'DONE'"
+            size="small"
+            type="primary"
+            text
+            @click="handleRevectorize(row)"
+          >
+            重向量化
           </el-button>
           <el-button
             v-if="row.status === 'FAILED' || row.status === 'CANCELED'"
@@ -215,6 +256,27 @@
         </div>
       </div>
     </el-dialog>
+
+    <el-dialog v-model="rebuildDialogVisible" title="重建知识库索引" width="520px">
+      <el-form label-width="120px">
+        <el-form-item label="原因">
+          <el-input v-model="rebuildForm.reason" placeholder="例如：embedding 模型或 chunk 策略变更" />
+        </el-form-item>
+        <el-form-item label="Embedding 模型">
+          <el-input-number v-model="rebuildForm.embeddingModelConfigId" :min="1" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="Chunk Size">
+          <el-input-number v-model="rebuildForm.chunkSize" :min="100" :max="8000" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="Overlap">
+          <el-input-number v-model="rebuildForm.chunkOverlap" :min="0" :max="2000" controls-position="right" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rebuildDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="rebuilding" @click="handleRebuildIndex">提交重建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -234,7 +296,10 @@ import {
   getDocument,
   getDocumentChunks,
   getDocumentList,
+  getKnowledgeTasks,
   getKnowledgeBase,
+  rebuildKnowledgeIndex,
+  revectorizeDocument,
   retryDocument,
   testKnowledgeRetrieval,
   uploadKnowledgeDocument,
@@ -243,6 +308,7 @@ import {
   type KnowledgeChunkItem,
   type KnowledgeDocumentItem,
   type KnowledgeSearchHit,
+  type KnowledgeTaskItem,
 } from '@/api/knowledge'
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024
@@ -270,6 +336,16 @@ const testingRetrieval = ref(false)
 const retrievalTested = ref(false)
 const retrievalHits = ref<KnowledgeSearchHit[]>([])
 const retrievalTraceId = computed(() => retrievalHits.value[0]?.traceId || '')
+const tasks = ref<KnowledgeTaskItem[]>([])
+const loadingTasks = ref(false)
+const rebuildDialogVisible = ref(false)
+const rebuilding = ref(false)
+const rebuildForm = reactive({
+  reason: '',
+  embeddingModelConfigId: undefined as number | undefined,
+  chunkSize: undefined as number | undefined,
+  chunkOverlap: undefined as number | undefined,
+})
 
 const columns = computed<HifyColumn[]>(() => [
   { label: '文件名', slot: 'name', minWidth: '220' },
@@ -295,6 +371,18 @@ async function loadKnowledgeBase() {
   retrievalScoreThreshold.value = knowledgeBase.value.scoreThreshold ?? 0.65
 }
 
+async function loadTasks() {
+  loadingTasks.value = true
+  try {
+    tasks.value = await getKnowledgeTasks(knowledgeBaseId.value)
+    if (tasks.value.some(task => shouldPollTask(task.status))) {
+      startTaskPolling()
+    }
+  } finally {
+    loadingTasks.value = false
+  }
+}
+
 async function fetchList(page: number, pageSize: number): Promise<PageData<KnowledgeDocumentItem>> {
   const result = await getDocumentList(knowledgeBaseId.value, page, pageSize)
   result.records
@@ -313,6 +401,13 @@ function statusTagType(status: DocumentStatus) {
 
 function statusLabel(status: DocumentStatus) {
   return STATUS_LABEL[status] ?? status
+}
+
+function taskStatusType(status?: string) {
+  if (status === 'DONE' || status === 'SUCCESS') return 'success'
+  if (status === 'FAILED' || status === 'TIMEOUT') return 'danger'
+  if (status === 'PROCESSING' || status === 'RUNNING' || status === 'PENDING') return 'warning'
+  return 'info'
 }
 
 function processLabel(row: KnowledgeDocumentItem) {
@@ -404,9 +499,14 @@ async function handleUpload(options: UploadRequestOptions) {
 }
 
 const pollingTimers = reactive(new Map<number, ReturnType<typeof setInterval>>())
+const taskPollingTimer = ref<ReturnType<typeof setInterval> | null>(null)
 
 function shouldPoll(status: DocumentStatus) {
   return status === 'PENDING' || status === 'PROCESSING'
+}
+
+function shouldPollTask(status?: string) {
+  return status === 'PENDING' || status === 'PROCESSING' || status === 'RUNNING'
 }
 
 function startPolling(documentId: number) {
@@ -435,6 +535,22 @@ function stopPolling(documentId: number) {
 function clearPolling() {
   pollingTimers.forEach((timer) => clearInterval(timer))
   pollingTimers.clear()
+  if (taskPollingTimer.value) {
+    clearInterval(taskPollingTimer.value)
+    taskPollingTimer.value = null
+  }
+}
+
+function startTaskPolling() {
+  if (taskPollingTimer.value) return
+  taskPollingTimer.value = setInterval(async () => {
+    await loadTasks()
+    if (!tasks.value.some(task => shouldPollTask(task.status)) && taskPollingTimer.value) {
+      clearInterval(taskPollingTimer.value)
+      taskPollingTimer.value = null
+      tableRef.value?.refresh()
+    }
+  }, 5000)
 }
 
 const { confirm } = useConfirm()
@@ -483,6 +599,40 @@ async function handleCancel(row: KnowledgeDocumentItem) {
   }
 }
 
+async function handleRevectorize(row: KnowledgeDocumentItem) {
+  const submitted = await confirm(
+    `确定重新向量化文档「${row.name}」？会创建后台任务并刷新 pgvector 分块。`,
+    () => revectorizeDocument(row.id, { reason: 'manual revectorize from web' }),
+    {
+      title: '重向量化确认',
+      confirmText: '提交',
+      successMsg: '已提交重向量化任务',
+    },
+  )
+  if (submitted) {
+    await loadTasks()
+    startPolling(row.id)
+  }
+}
+
+async function handleRebuildIndex() {
+  rebuilding.value = true
+  try {
+    await rebuildKnowledgeIndex(knowledgeBaseId.value, {
+      reason: rebuildForm.reason.trim() || undefined,
+      embeddingModelConfigId: rebuildForm.embeddingModelConfigId,
+      chunkSize: rebuildForm.chunkSize,
+      chunkOverlap: rebuildForm.chunkOverlap,
+    })
+    rebuildDialogVisible.value = false
+    notifySuccess('已提交重建索引任务')
+    await loadTasks()
+    tableRef.value?.refresh()
+  } finally {
+    rebuilding.value = false
+  }
+}
+
 const chunkDialogVisible = ref(false)
 const loadingChunks = ref(false)
 const chunks = ref<KnowledgeChunkItem[]>([])
@@ -524,6 +674,7 @@ function handleChunkDialogClosed() {
 
 onMounted(() => {
   loadKnowledgeBase()
+  loadTasks()
 })
 
 onBeforeUnmount(() => {
@@ -602,6 +753,12 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.task-panel__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 @media (max-width: 768px) {

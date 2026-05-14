@@ -241,6 +241,7 @@ const selectedAgentName = computed(() => {
 
 let cancelStream: (() => void) | null = null
 let cancelWorkflowEvents: (() => void) | null = null
+const ACTIVE_STATE_KEY = 'hify.conversation.active'
 
 // ── 打字机队列（30ms/字符）────────────────────────────────────────────────────
 // SSE tokens 批量到达，这里逐字符匀速输出，避免内容整块跳入。
@@ -286,29 +287,35 @@ onMounted(async () => {
     const res = await getAgentOptions()
     agents.value = (res.records ?? []).filter(a => a.enabled === 1)
     if (agents.value.length > 0) {
-      selectedAgentId.value = agents.value[0].id
-      loadSessionsForAgent(agents.value[0].id)
+      const saved = loadActiveState()
+      const savedAgent = saved?.agentId && agents.value.find(a => a.id === saved.agentId)
+      const initialAgentId = savedAgent && saved.agentId ? saved.agentId : agents.value[0].id
+      selectedAgentId.value = initialAgentId
+      await loadSessionsForAgent(initialAgentId)
+      if (saved?.sessionId && sessionList.value.some(s => s.id === saved.sessionId)) {
+        const session = sessionList.value.find(s => s.id === saved.sessionId)!
+        await switchSession(session, false)
+      }
     }
   } catch {
     // ignore
   }
 })
 
-function loadSessionsForAgent(agentId: number) {
+async function loadSessionsForAgent(agentId: number) {
   currentSessionId.value = null
   messages.value = []
-  getConversationSessions(agentId)
-    .then(records => {
-      sessionList.value = records ?? []
-    })
-    .catch(() => {
-      sessionList.value = loadSessions().filter(s => s.agentId === agentId)
-    })
+  try {
+    sessionList.value = await getConversationSessions(agentId) ?? []
+  } catch {
+    sessionList.value = loadSessions().filter(s => s.agentId === agentId)
+  }
 }
 
 // ── Agent / 会话切换 ──────────────────────────────────────────────────────
 
 function onAgentChange(id: number) {
+  saveActiveState(id, null)
   loadSessionsForAgent(id)
 }
 
@@ -316,12 +323,14 @@ function newSession() {
   closeWorkflowEvents()
   currentSessionId.value = null
   messages.value = []
+  saveActiveState(selectedAgentId.value, null)
 }
 
-async function switchSession(s: SessionMeta) {
+async function switchSession(s: SessionMeta, persist = true) {
   if (isStreaming.value) return
   closeWorkflowEvents()
   currentSessionId.value = s.id
+  if (persist) saveActiveState(selectedAgentId.value, s.id)
   messages.value = []
   try {
     const records = await getConversationMessages(s.id)
@@ -365,6 +374,7 @@ async function deleteSession(s: SessionMeta) {
     stopDrip()
     currentSessionId.value = null
     messages.value = []
+    saveActiveState(selectedAgentId.value, null)
   }
   ElMessage.success('会话已删除')
 }
@@ -530,6 +540,7 @@ function persistSession(sessionId: number) {
   if (currentSessionId.value === sessionId) return // 已保存
 
   currentSessionId.value = sessionId
+  saveActiveState(selectedAgentId.value, sessionId)
 
   const all = loadSessions()
   if (sessionList.value.find(s => s.id === sessionId)) return
@@ -544,6 +555,18 @@ function persistSession(sessionId: number) {
   all.unshift(meta)
   saveSessions(all)
   sessionList.value = [meta, ...sessionList.value]
+}
+
+function loadActiveState(): { agentId: number | null; sessionId: number | null } | null {
+  try {
+    return JSON.parse(localStorage.getItem(ACTIVE_STATE_KEY) ?? 'null')
+  } catch {
+    return null
+  }
+}
+
+function saveActiveState(agentId: number | null, sessionId: number | null) {
+  localStorage.setItem(ACTIVE_STATE_KEY, JSON.stringify({ agentId, sessionId }))
 }
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────

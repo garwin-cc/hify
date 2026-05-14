@@ -97,6 +97,62 @@ export interface AgentQuery {
   enabled?: number
 }
 
+export interface AgentVersion {
+  id: number
+  agentId: number
+  versionNo: number
+  status: 'DRAFT' | 'TEST' | 'PUBLISHED' | 'ROLLED_BACK' | string
+  name: string
+  modelConfigId?: number
+  workflowId?: number | null
+  knowledgeBaseIds?: number[]
+  toolIds?: number[]
+  maxToolRounds?: number
+  publishedAt?: string
+  createdAt: string
+}
+
+export interface AgentPublishReq {
+  description?: string
+}
+
+export interface AgentApp {
+  id: number
+  agentId: number
+  publishedVersionId: number
+  name: string
+  description?: string
+  webEnabled: number
+  apiEnabled: number
+  endpointPath: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateAgentAppReq {
+  publishedVersionId: number
+  name: string
+  description?: string
+  webEnabled?: number
+  apiEnabled?: number
+  endpointPath?: string
+}
+
+export interface AgentApiKey {
+  id: number
+  agentAppId: number
+  name: string
+  keyPrefix: string
+  status: string
+  lastUsedAt?: string
+  createdAt: string
+}
+
+export interface AgentApiKeyCreateResp extends AgentApiKey {
+  apiKey: string
+}
+
 // ── API ────────────────────────────────────────────────────────────────
 
 export const getModelGroups = async (): Promise<ModelGroup[]> => {
@@ -140,3 +196,40 @@ export const deleteAgent = (id: number): Promise<void> =>
 
 export const toggleAgentEnabled = (id: number, enabled: number): Promise<AgentDetail> =>
   put(`/v1/agents/${id}/enabled/${enabled}`)
+
+export const getAgentVersions = (id: number): Promise<AgentVersion[]> =>
+  get(`/v1/agents/${id}/versions`)
+
+export const publishAgentTestVersion = (
+  id: number,
+  data: AgentPublishReq,
+): Promise<AgentVersion> =>
+  post(`/v1/agents/${id}/versions/test`, data)
+
+export const publishAgentVersion = (
+  id: number,
+  data: AgentPublishReq,
+): Promise<AgentVersion> =>
+  post(`/v1/agents/${id}/versions/publish`, data)
+
+export const rollbackAgentVersion = (
+  id: number,
+  versionNo: number,
+  reason?: string,
+): Promise<AgentDetail> =>
+  post(`/v1/agents/${id}/versions/${versionNo}/rollback`, { reason })
+
+export const createAgentApp = (id: number, data: CreateAgentAppReq): Promise<AgentApp> =>
+  post(`/v1/agents/${id}/apps`, data)
+
+export const getAgentApps = (id: number): Promise<AgentApp[]> =>
+  get(`/v1/agents/${id}/apps`)
+
+export const createAgentApiKey = (appId: number, name: string): Promise<AgentApiKeyCreateResp> =>
+  post(`/v1/agent-apps/${appId}/api-keys`, { name })
+
+export const getAgentApiKeys = (appId: number): Promise<AgentApiKey[]> =>
+  get(`/v1/agent-apps/${appId}/api-keys`)
+
+export const revokeAgentApiKey = (appId: number, keyId: number): Promise<void> =>
+  del(`/v1/agent-apps/${appId}/api-keys/${keyId}`)

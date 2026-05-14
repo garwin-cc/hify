@@ -82,6 +82,37 @@ export interface KnowledgeChunkItem {
   createdAt: string
 }
 
+export interface KnowledgeTaskItem {
+  id: number
+  knowledgeBaseId: number
+  documentId?: number
+  taskType: string
+  targetType: string
+  targetId?: number
+  reason?: string
+  status: string
+  processStage?: string
+  processProgress?: number
+  progressMessage?: string
+  attempt?: number
+  maxAttempt?: number
+  lastProcessedChunkIndex?: number
+  cancelRequested?: number
+  errorCode?: string
+  errorMessage?: string
+  startedAt?: string
+  finishedAt?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface KnowledgeRebuildReq {
+  reason?: string
+  embeddingModelConfigId?: number
+  chunkSize?: number
+  chunkOverlap?: number
+}
+
 export interface KnowledgeSearchReq {
   queryText: string
   topK?: number
@@ -161,6 +192,21 @@ export const retryDocument = (id: number) =>
 
 export const cancelDocument = (id: number) =>
   post(`/v1/documents/${id}/cancel`)
+
+export const revectorizeDocument = (id: number, data: KnowledgeRebuildReq = {}): Promise<number> =>
+  post(`/v1/documents/${id}/revectorize`, data)
+
+export const rebuildKnowledgeIndex = (
+  knowledgeBaseId: number,
+  data: KnowledgeRebuildReq = {},
+): Promise<number> =>
+  post(`/v1/knowledge-bases/${knowledgeBaseId}/rebuild-index`, data)
+
+export const getKnowledgeTasks = (
+  knowledgeBaseId: number,
+  documentId?: number,
+): Promise<KnowledgeTaskItem[]> =>
+  get(`/v1/knowledge-bases/${knowledgeBaseId}/tasks`, { documentId })
 
 export const testKnowledgeRetrieval = (
   knowledgeBaseId: number,

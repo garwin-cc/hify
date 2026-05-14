@@ -5,27 +5,18 @@ import com.hify.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.time.LocalDateTime;
-
 @Data
-@TableName("t_chat_session")
+@TableName("t_message_feedback")
 @EqualsAndHashCode(callSuper = false)
-public class ChatSessionPo extends BaseEntity {
+public class MessageFeedbackPo extends BaseEntity {
 
+    private Long messageId;
+    private Long sessionId;
     private Long agentId;
-
     private Long userId;
-
-    private Long appId;
-
-    private Long apiKeyId;
-
-    private String title;
-
-    /** ACTIVE / ARCHIVED */
+    private String rating;
+    private String issueType;
+    private String comment;
+    private String correctedAnswer;
     private String status;
-
-    private Integer messageCount;
-
-    private LocalDateTime lastMessageAt;
 }

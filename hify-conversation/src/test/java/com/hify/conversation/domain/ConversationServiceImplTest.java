@@ -1,40 +1,72 @@
 package com.hify.conversation.domain;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hify.agent.api.AgentDetailResp;
 import com.hify.agent.api.AgentService;
+import com.hify.common.metrics.HifyMetrics;
+import com.hify.common.ratelimit.RateLimitResult;
+import com.hify.common.ratelimit.RateLimitService;
+import com.hify.conversation.api.ConversationLogQuery;
+import com.hify.conversation.api.ConversationLogResp;
+import com.hify.conversation.api.ConversationMessageCursorQuery;
 import com.hify.conversation.api.ConversationMessageResp;
+import com.hify.conversation.api.ConversationSessionCursorQuery;
 import com.hify.conversation.api.ConversationSessionResp;
+import com.hify.conversation.api.CursorPageResp;
+import com.hify.conversation.api.MessageFeedbackReq;
+import com.hify.conversation.api.MessageFeedbackResp;
 import com.hify.conversation.infra.ChatMessageMapper;
 import com.hify.conversation.infra.ChatMessagePo;
 import com.hify.conversation.infra.ChatSessionMapper;
 import com.hify.conversation.infra.ChatSessionPo;
 import com.hify.conversation.infra.ChatSessionSummaryMapper;
 import com.hify.conversation.infra.ChatSessionSummaryPo;
+import com.hify.conversation.infra.ConversationTraceMapper;
+import com.hify.conversation.infra.ConversationTracePo;
+import com.hify.conversation.infra.MessageFeedbackMapper;
+import com.hify.conversation.infra.MessageFeedbackPo;
 import com.hify.model.api.ChatMessage;
 import com.hify.model.api.LlmCallService;
 import com.hify.mcp.api.McpToolCallAuditService;
+import com.hify.workflow.api.WorkflowRunResp;
+import com.hify.workflow.api.WorkflowService;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class ConversationServiceImplTest {
+
+    @BeforeAll
+    static void initMybatisPlusTableInfo() {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ChatMessagePo.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ChatSessionPo.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ConversationTracePo.class);
+    }
 
     @Mock
     private ChatSessionMapper sessionMapper;
@@ -46,10 +78,25 @@ class ConversationServiceImplTest {
     private ChatSessionSummaryMapper summaryMapper;
 
     @Mock
+    private ConversationTraceMapper conversationTraceMapper;
+
+    @Mock
+    private MessageFeedbackMapper messageFeedbackMapper;
+
+    @Mock
     private AgentService agentService;
 
     @Mock
     private LlmCallService llmCallService;
+
+    @Mock
+    private WorkflowService workflowService;
+
+    @Mock
+    private RateLimitService rateLimitService;
+
+    @Mock
+    private HifyMetrics hifyMetrics;
 
     @Mock
     private ThreadPoolExecutor llmExecutor;
@@ -57,7 +104,8 @@ class ConversationServiceImplTest {
     @Mock
     private McpToolCallAuditService mcpToolCallAuditService;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
     private ConversationServiceImpl conversationService;
@@ -127,6 +175,180 @@ class ConversationServiceImplTest {
     }
 
     @Test
+    void listSessionsCursorReturnsCursorMetadataAndNewIdentityFields() {
+        LocalDateTime firstTime = LocalDateTime.of(2026, 5, 14, 10, 2);
+        LocalDateTime secondTime = LocalDateTime.of(2026, 5, 14, 10, 1);
+        ChatSessionPo first = session(21L, firstTime);
+        first.setUserId(5L);
+        first.setAppId(6L);
+        first.setApiKeyId(7L);
+        ChatSessionPo second = session(20L, secondTime);
+        ChatSessionPo extra = session(19L, LocalDateTime.of(2026, 5, 14, 10, 0));
+        when(sessionMapper.selectList(any())).thenReturn(List.of(first, second, extra));
+
+        ConversationSessionCursorQuery query = new ConversationSessionCursorQuery();
+        query.setAgentId(3L);
+        query.setLimit(2);
+
+        CursorPageResp<ConversationSessionResp> page = conversationService.listSessionsCursor(query);
+
+        assertThat(page.getHasMore()).isTrue();
+        assertThat(page.getNextCursorId()).isEqualTo(20L);
+        assertThat(page.getNextCursorTime()).isEqualTo(secondTime);
+        assertThat(page.getRecords())
+                .extracting(ConversationSessionResp::getId, ConversationSessionResp::getUserId,
+                        ConversationSessionResp::getAppId, ConversationSessionResp::getApiKeyId)
+                .containsExactly(
+                        tuple(21L, 5L, 6L, 7L),
+                        tuple(20L, 0L, null, null)
+                );
+    }
+
+    @Test
+    void listMessagesCursorRequiresSessionAndReturnsNextCursor() {
+        ChatSessionPo session = new ChatSessionPo();
+        session.setId(11L);
+        session.setAgentId(3L);
+        when(sessionMapper.selectById(11L)).thenReturn(session);
+
+        LocalDateTime firstTime = LocalDateTime.of(2026, 5, 14, 10, 0);
+        LocalDateTime secondTime = LocalDateTime.of(2026, 5, 14, 10, 1);
+        ChatMessagePo first = message(101L, "user", "你好", firstTime);
+        ChatMessagePo second = message(102L, "assistant", "你好，有什么可以帮你", secondTime);
+        ChatMessagePo extra = message(103L, "user", "继续", LocalDateTime.of(2026, 5, 14, 10, 2));
+        when(messageMapper.selectList(any())).thenReturn(List.of(first, second, extra));
+
+        ConversationMessageCursorQuery query = new ConversationMessageCursorQuery();
+        query.setLimit(2);
+
+        CursorPageResp<ConversationMessageResp> page = conversationService.listMessagesCursor(11L, query);
+
+        assertThat(page.getHasMore()).isTrue();
+        assertThat(page.getNextCursorId()).isEqualTo(102L);
+        assertThat(page.getNextCursorTime()).isEqualTo(secondTime);
+        assertThat(page.getRecords())
+                .extracting(ConversationMessageResp::getId, ConversationMessageResp::getRole,
+                        ConversationMessageResp::getContent)
+                .containsExactly(
+                        tuple(101L, "user", "你好"),
+                        tuple(102L, "assistant", "你好，有什么可以帮你")
+                );
+    }
+
+    @Test
+    void listConversationLogsMapsTraceFieldsForLogCenter() {
+        LocalDateTime startedAt = LocalDateTime.of(2026, 5, 14, 10, 0);
+        ConversationTracePo trace = new ConversationTracePo();
+        trace.setId(31L);
+        trace.setTraceId("trace-1");
+        trace.setSessionId(11L);
+        trace.setUserId(5L);
+        trace.setAppId(6L);
+        trace.setApiKeyId(7L);
+        trace.setAgentId(3L);
+        trace.setAgentName("客服助手");
+        trace.setModelConfigId(9L);
+        trace.setModelId("gpt-4o");
+        trace.setRagTriggered(1);
+        trace.setMcpTriggered(0);
+        trace.setSummaryUsed(1);
+        trace.setStatus("DONE");
+        trace.setStartedAt(startedAt);
+        when(conversationTraceMapper.selectList(any())).thenReturn(List.of(trace));
+
+        ConversationLogQuery query = new ConversationLogQuery();
+        query.setUserId(5L);
+        query.setAgentId(3L);
+
+        CursorPageResp<ConversationLogResp> page = conversationService.listConversationLogs(query);
+
+        assertThat(page.getHasMore()).isFalse();
+        assertThat(page.getNextCursorId()).isEqualTo(31L);
+        assertThat(page.getNextCursorTime()).isEqualTo(startedAt);
+        assertThat(page.getRecords()).singleElement()
+                .satisfies(resp -> {
+                    assertThat(resp.getTraceId()).isEqualTo("trace-1");
+                    assertThat(resp.getUserId()).isEqualTo(5L);
+                    assertThat(resp.getAppId()).isEqualTo(6L);
+                    assertThat(resp.getApiKeyId()).isEqualTo(7L);
+                    assertThat(resp.getRagTriggered()).isTrue();
+                    assertThat(resp.getMcpTriggered()).isFalse();
+                    assertThat(resp.getSummaryUsed()).isTrue();
+                });
+    }
+
+    @Test
+    void upsertFeedbackCreatesFeedbackForAssistantMessage() {
+        ChatMessagePo assistant = message(102L, "assistant", "原始回答", LocalDateTime.of(2026, 5, 14, 10, 1));
+        when(messageMapper.selectById(102L)).thenReturn(assistant);
+        ChatSessionPo session = session(11L, LocalDateTime.of(2026, 5, 14, 10, 1));
+        session.setAgentId(3L);
+        when(sessionMapper.selectById(11L)).thenReturn(session);
+        when(messageFeedbackMapper.selectOne(any())).thenReturn(null);
+
+        MessageFeedbackReq req = new MessageFeedbackReq();
+        req.setUserId(5L);
+        req.setRating("dislike");
+        req.setIssueType("wrong_fact");
+        req.setComment("答案不准确");
+        req.setCorrectedAnswer("修正后的答案");
+
+        MessageFeedbackResp resp = conversationService.upsertFeedback(102L, req);
+
+        assertThat(resp.getMessageId()).isEqualTo(102L);
+        assertThat(resp.getSessionId()).isEqualTo(11L);
+        assertThat(resp.getAgentId()).isEqualTo(3L);
+        assertThat(resp.getUserId()).isEqualTo(5L);
+        assertThat(resp.getRating()).isEqualTo("DISLIKE");
+        assertThat(resp.getCorrectedAnswer()).isEqualTo("修正后的答案");
+        verify(messageFeedbackMapper).insert(any(MessageFeedbackPo.class));
+        verify(messageFeedbackMapper, never()).updateById(any(MessageFeedbackPo.class));
+    }
+
+    @Test
+    void sendMessageReturnsControlledErrorWhenRateLimited() {
+        AgentDetailResp agent = enabledAgent(3L);
+        when(agentService.getDetail(3L)).thenReturn(agent);
+        when(rateLimitService.check(any())).thenReturn(RateLimitResult.rejected(3));
+        conversationService.setRateLimitService(rateLimitService);
+
+        conversationService.sendMessage(3L, null, "你好", 5L, 6L, 7L);
+
+        verify(sessionMapper, never()).insert(any(ChatSessionPo.class));
+        verify(messageMapper, never()).insert(any(ChatMessagePo.class));
+        verify(llmExecutor, never()).execute(any(Runnable.class));
+    }
+
+    @Test
+    void sendMessageRunsWorkflowInsteadOfOrdinaryLlmWhenAgentBindsWorkflow() {
+        AgentDetailResp agent = enabledAgent(3L);
+        agent.setWorkflowId(77L);
+        when(agentService.getDetail(3L)).thenReturn(agent);
+        ChatSessionPo session = session(11L, LocalDateTime.of(2026, 5, 14, 10, 0));
+        when(sessionMapper.selectOne(any())).thenReturn(session);
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        AtomicLong ids = new AtomicLong(101L);
+        doAnswer(invocation -> {
+            ChatMessagePo po = invocation.getArgument(0);
+            po.setId(ids.getAndIncrement());
+            return 1;
+        }).when(messageMapper).insert(any(ChatMessagePo.class));
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(0);
+            task.run();
+            return null;
+        }).when(llmExecutor).execute(any(Runnable.class));
+        WorkflowRunResp run = new WorkflowRunResp();
+        run.setId(900L);
+        when(workflowService.startAsyncRun(eq(77L), any())).thenReturn(run);
+
+        conversationService.sendMessage(3L, 11L, "启动审批流程", 5L, 6L, 7L);
+
+        verify(workflowService).startAsyncRun(eq(77L), any());
+        verify(llmCallService, never()).streamChat(any(), any(), any());
+    }
+
+    @Test
     void deleteSessionDeletesSessionAndMessages() {
         ChatSessionPo session = new ChatSessionPo();
         session.setId(11L);
@@ -189,5 +411,38 @@ class ConversationServiceImplTest {
 
     private ConversationServiceImpl nullSafeService() {
         return conversationService;
+    }
+
+    private static AgentDetailResp enabledAgent(Long id) {
+        AgentDetailResp agent = new AgentDetailResp();
+        agent.setId(id);
+        agent.setName("客服助手");
+        agent.setEnabled(1);
+        agent.setSystemPrompt("你是客服助手");
+        return agent;
+    }
+
+    private static ChatSessionPo session(Long id, LocalDateTime lastMessageAt) {
+        ChatSessionPo session = new ChatSessionPo();
+        session.setId(id);
+        session.setAgentId(3L);
+        session.setUserId(0L);
+        session.setTitle("会话 " + id);
+        session.setStatus("ACTIVE");
+        session.setMessageCount(2);
+        session.setCreatedAt(lastMessageAt.minusMinutes(1));
+        session.setLastMessageAt(lastMessageAt);
+        return session;
+    }
+
+    private static ChatMessagePo message(Long id, String role, String content, LocalDateTime createdAt) {
+        ChatMessagePo message = new ChatMessagePo();
+        message.setId(id);
+        message.setSessionId(11L);
+        message.setRole(role);
+        message.setContent(content);
+        message.setStatus("DONE");
+        message.setCreatedAt(createdAt);
+        return message;
     }
 }

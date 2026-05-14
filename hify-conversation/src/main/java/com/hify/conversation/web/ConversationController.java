@@ -4,9 +4,16 @@ import com.hify.conversation.api.ConversationService;
 import com.hify.conversation.api.SendMessageReq;
 import com.hify.common.web.Result;
 import com.hify.conversation.api.ConversationMessageResp;
+import com.hify.conversation.api.ConversationMessageCursorQuery;
+import com.hify.conversation.api.ConversationLogQuery;
+import com.hify.conversation.api.ConversationLogResp;
 import com.hify.conversation.api.ConversationSessionResp;
+import com.hify.conversation.api.ConversationSessionCursorQuery;
 import com.hify.conversation.api.ConversationSummaryResp;
 import com.hify.conversation.api.ConversationTraceDetailResp;
+import com.hify.conversation.api.CursorPageResp;
+import com.hify.conversation.api.MessageFeedbackReq;
+import com.hify.conversation.api.MessageFeedbackResp;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -34,9 +41,25 @@ public class ConversationController {
         return Result.ok(conversationService.listSessions(agentId));
     }
 
+    @GetMapping("/cursor")
+    public Result<CursorPageResp<ConversationSessionResp>> listSessionsCursor(ConversationSessionCursorQuery query) {
+        return Result.ok(conversationService.listSessionsCursor(query));
+    }
+
     @GetMapping("/{sessionId}/messages")
     public Result<List<ConversationMessageResp>> listMessages(@PathVariable Long sessionId) {
         return Result.ok(conversationService.listMessages(sessionId));
+    }
+
+    @GetMapping("/{sessionId}/messages/cursor")
+    public Result<CursorPageResp<ConversationMessageResp>> listMessagesCursor(@PathVariable Long sessionId,
+                                                                              ConversationMessageCursorQuery query) {
+        return Result.ok(conversationService.listMessagesCursor(sessionId, query));
+    }
+
+    @GetMapping("/logs")
+    public Result<CursorPageResp<ConversationLogResp>> listConversationLogs(ConversationLogQuery query) {
+        return Result.ok(conversationService.listConversationLogs(query));
     }
 
     @GetMapping("/messages/{messageId}/trace")
@@ -61,12 +84,19 @@ public class ConversationController {
         return Result.ok();
     }
 
+    @PostMapping("/messages/{messageId}/feedback")
+    public Result<MessageFeedbackResp> upsertFeedback(@PathVariable Long messageId,
+                                                      @Valid @RequestBody MessageFeedbackReq req) {
+        return Result.ok(conversationService.upsertFeedback(messageId, req));
+    }
+
     /**
      * 发送消息，响应为 SSE 流（text/event-stream）。
      * sessionId 为空时自动创建新会话。
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(@Valid @RequestBody SendMessageReq req) {
-        return conversationService.sendMessage(req.getAgentId(), req.getSessionId(), req.getContent());
+        return conversationService.sendMessage(req.getAgentId(), req.getSessionId(), req.getContent(),
+                req.getUserId(), req.getAppId(), req.getApiKeyId());
     }
 }

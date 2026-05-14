@@ -12,11 +12,22 @@ import com.hify.common.exception.ErrorCode;
 import com.hify.common.http.LlmApiException;
 import com.hify.common.log.TraceContext;
 import com.hify.common.metrics.HifyMetrics;
+import com.hify.common.ratelimit.RateLimitDimension;
+import com.hify.common.ratelimit.RateLimitResult;
+import com.hify.common.ratelimit.RateLimitRule;
+import com.hify.common.ratelimit.RateLimitService;
+import com.hify.conversation.api.ConversationLogQuery;
+import com.hify.conversation.api.ConversationLogResp;
+import com.hify.conversation.api.ConversationMessageCursorQuery;
 import com.hify.conversation.api.ConversationMessageResp;
 import com.hify.conversation.api.ConversationService;
+import com.hify.conversation.api.ConversationSessionCursorQuery;
 import com.hify.conversation.api.ConversationSessionResp;
 import com.hify.conversation.api.ConversationSummaryResp;
 import com.hify.conversation.api.ConversationTraceDetailResp;
+import com.hify.conversation.api.CursorPageResp;
+import com.hify.conversation.api.MessageFeedbackReq;
+import com.hify.conversation.api.MessageFeedbackResp;
 import com.hify.conversation.infra.ChatMessageMapper;
 import com.hify.conversation.infra.ChatMessagePo;
 import com.hify.conversation.infra.ChatSessionMapper;
@@ -29,12 +40,15 @@ import com.hify.conversation.infra.ConversationRagTraceMapper;
 import com.hify.conversation.infra.ConversationRagTracePo;
 import com.hify.conversation.infra.ConversationTraceMapper;
 import com.hify.conversation.infra.ConversationTracePo;
+import com.hify.conversation.infra.MessageFeedbackMapper;
+import com.hify.conversation.infra.MessageFeedbackPo;
 import com.hify.model.api.ChatMessage;
 import com.hify.model.api.ChatRequest;
 import com.hify.model.api.ChatResponse;
 import com.hify.model.api.ChatStreamCallback;
 import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.LlmCallService;
+import com.hify.model.api.LlmCallContext;
 import com.hify.model.api.ModelConfigResp;
 import com.hify.model.api.ModelConfigService;
 import com.hify.model.api.ProviderDetailResp;
@@ -56,6 +70,7 @@ import com.hify.workflow.api.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -63,6 +78,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -94,6 +110,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final ChatMessageMapper messageMapper;
     private final ChatSessionSummaryMapper summaryMapper;
     private final ConversationTraceMapper conversationTraceMapper;
+    private final MessageFeedbackMapper messageFeedbackMapper;
     private final ConversationRagTraceMapper conversationRagTraceMapper;
     private final ConversationLlmTraceMapper conversationLlmTraceMapper;
     private final AgentService      agentService;
@@ -109,12 +126,28 @@ public class ConversationServiceImpl implements ConversationService {
     private final ObjectMapper      objectMapper;
     private final HifyMetrics       hifyMetrics;
     private final ToolArgumentSchemaValidator toolArgumentSchemaValidator = new ToolArgumentSchemaValidator();
+    private RateLimitService rateLimitService;
 
     @Qualifier("llmExecutor")
     private final ThreadPoolExecutor llmExecutor;
+    private ThreadPoolExecutor llmStreamExecutor;
 
     // SSE 超时略大于 OkHttp readTimeout（120s），确保 LLM 超时先于 emitter 超时触发
     private static final long EMITTER_TIMEOUT_MS = 130_000L;
+    private static final int DEFAULT_SESSION_LIMIT = 20;
+    private static final int DEFAULT_MESSAGE_LIMIT = 50;
+    private static final int MAX_CURSOR_LIMIT = 100;
+
+    @Autowired(required = false)
+    public void setRateLimitService(RateLimitService rateLimitService) {
+        this.rateLimitService = rateLimitService;
+    }
+
+    @Autowired(required = false)
+    @Qualifier("llmStreamExecutor")
+    public void setLlmStreamExecutor(ThreadPoolExecutor llmStreamExecutor) {
+        this.llmStreamExecutor = llmStreamExecutor;
+    }
 
     @Override
     public List<ConversationSessionResp> listSessions(Long agentId) {
@@ -125,6 +158,33 @@ public class ConversationServiceImpl implements ConversationService {
                         .orderByDesc(ChatSessionPo::getLastMessageAt)
                         .orderByDesc(ChatSessionPo::getCreatedAt));
         return sessions.stream().map(this::toSessionResp).collect(Collectors.toList());
+    }
+
+    @Override
+    public CursorPageResp<ConversationSessionResp> listSessionsCursor(ConversationSessionCursorQuery query) {
+        ConversationSessionCursorQuery q = query == null ? new ConversationSessionCursorQuery() : query;
+        int limit = normalizeLimit(q.getLimit(), DEFAULT_SESSION_LIMIT);
+        List<ChatSessionPo> rows = sessionMapper.selectList(
+                Wrappers.lambdaQuery(ChatSessionPo.class)
+                        .eq(q.getAgentId() != null, ChatSessionPo::getAgentId, q.getAgentId())
+                        .eq(q.getUserId() != null, ChatSessionPo::getUserId, q.getUserId())
+                        .eq(q.getAppId() != null, ChatSessionPo::getAppId, q.getAppId())
+                        .eq(ChatSessionPo::getStatus, "ACTIVE")
+                        .and(q.getCursorTime() != null && q.getCursorId() != null, wrapper -> wrapper
+                                .lt(ChatSessionPo::getLastMessageAt, q.getCursorTime())
+                                .or(nested -> nested
+                                        .eq(ChatSessionPo::getLastMessageAt, q.getCursorTime())
+                                        .lt(ChatSessionPo::getId, q.getCursorId())))
+                        .orderByDesc(ChatSessionPo::getLastMessageAt)
+                        .orderByDesc(ChatSessionPo::getId)
+                        .last("LIMIT " + (limit + 1)));
+        boolean hasMore = rows.size() > limit;
+        List<ChatSessionPo> pageRows = hasMore ? rows.subList(0, limit) : rows;
+        ChatSessionPo cursor = pageRows.isEmpty() ? null : pageRows.get(pageRows.size() - 1);
+        return CursorPageResp.of(pageRows.stream().map(this::toSessionResp).toList(),
+                cursor == null ? null : cursor.getId(),
+                cursor == null ? null : cursor.getLastMessageAt(),
+                hasMore);
     }
 
     @Override
@@ -141,6 +201,67 @@ public class ConversationServiceImpl implements ConversationService {
                 .stream()
                 .map(this::toMessageResp)
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public CursorPageResp<ConversationMessageResp> listMessagesCursor(Long sessionId, ConversationMessageCursorQuery query) {
+        ChatSessionPo session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
+        }
+        ConversationMessageCursorQuery q = query == null ? new ConversationMessageCursorQuery() : query;
+        int limit = normalizeLimit(q.getLimit(), DEFAULT_MESSAGE_LIMIT);
+        List<ChatMessagePo> rows = messageMapper.selectList(
+                Wrappers.lambdaQuery(ChatMessagePo.class)
+                        .eq(ChatMessagePo::getSessionId, sessionId)
+                        .in(ChatMessagePo::getStatus, List.of("DONE", "ERROR"))
+                        .and(q.getCursorTime() != null && q.getCursorId() != null, wrapper -> wrapper
+                                .gt(ChatMessagePo::getCreatedAt, q.getCursorTime())
+                                .or(nested -> nested
+                                        .eq(ChatMessagePo::getCreatedAt, q.getCursorTime())
+                                        .gt(ChatMessagePo::getId, q.getCursorId())))
+                        .orderByAsc(ChatMessagePo::getCreatedAt)
+                        .orderByAsc(ChatMessagePo::getId)
+                        .last("LIMIT " + (limit + 1)));
+        boolean hasMore = rows.size() > limit;
+        List<ChatMessagePo> pageRows = hasMore ? rows.subList(0, limit) : rows;
+        ChatMessagePo cursor = pageRows.isEmpty() ? null : pageRows.get(pageRows.size() - 1);
+        return CursorPageResp.of(pageRows.stream().map(this::toMessageResp).toList(),
+                cursor == null ? null : cursor.getId(),
+                cursor == null ? null : cursor.getCreatedAt(),
+                hasMore);
+    }
+
+    @Override
+    public CursorPageResp<ConversationLogResp> listConversationLogs(ConversationLogQuery query) {
+        ConversationLogQuery q = query == null ? new ConversationLogQuery() : query;
+        int limit = normalizeLimit(q.getLimit(), DEFAULT_SESSION_LIMIT);
+        List<ConversationTracePo> rows = conversationTraceMapper.selectList(
+                Wrappers.lambdaQuery(ConversationTracePo.class)
+                        .eq(q.getUserId() != null, ConversationTracePo::getUserId, q.getUserId())
+                        .eq(q.getAgentId() != null, ConversationTracePo::getAgentId, q.getAgentId())
+                        .eq(q.getAppId() != null, ConversationTracePo::getAppId, q.getAppId())
+                        .eq(q.getApiKeyId() != null, ConversationTracePo::getApiKeyId, q.getApiKeyId())
+                        .eq(q.getModelConfigId() != null, ConversationTracePo::getModelConfigId, q.getModelConfigId())
+                        .eq(StringUtils.hasText(q.getTraceId()), ConversationTracePo::getTraceId, q.getTraceId())
+                        .eq(StringUtils.hasText(q.getStatus()), ConversationTracePo::getStatus, q.getStatus())
+                        .ge(q.getStartAt() != null, ConversationTracePo::getStartedAt, q.getStartAt())
+                        .lt(q.getEndAt() != null, ConversationTracePo::getStartedAt, q.getEndAt())
+                        .and(q.getCursorTime() != null && q.getCursorId() != null, wrapper -> wrapper
+                                .lt(ConversationTracePo::getStartedAt, q.getCursorTime())
+                                .or(nested -> nested
+                                        .eq(ConversationTracePo::getStartedAt, q.getCursorTime())
+                                        .lt(ConversationTracePo::getId, q.getCursorId())))
+                        .orderByDesc(ConversationTracePo::getStartedAt)
+                        .orderByDesc(ConversationTracePo::getId)
+                        .last("LIMIT " + (limit + 1)));
+        boolean hasMore = rows.size() > limit;
+        List<ConversationTracePo> pageRows = hasMore ? rows.subList(0, limit) : rows;
+        ConversationTracePo cursor = pageRows.isEmpty() ? null : pageRows.get(pageRows.size() - 1);
+        return CursorPageResp.of(pageRows.stream().map(this::toLogResp).toList(),
+                cursor == null ? null : cursor.getId(),
+                cursor == null ? null : cursor.getStartedAt(),
+                hasMore);
     }
 
     @Override
@@ -196,6 +317,41 @@ public class ConversationServiceImpl implements ConversationService {
         log.info("deleted conversation session id={} agentId={}", sessionId, session.getAgentId());
     }
 
+    @Override
+    public MessageFeedbackResp upsertFeedback(Long messageId, MessageFeedbackReq req) {
+        ChatMessagePo message = messageMapper.selectById(messageId);
+        if (message == null || !"assistant".equals(message.getRole())) {
+            throw new BizException(ErrorCode.NOT_FOUND, "助手消息不存在: " + messageId);
+        }
+        ChatSessionPo session = sessionMapper.selectById(message.getSessionId());
+        if (session == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "会话不存在: " + message.getSessionId());
+        }
+        Long userId = req == null || req.getUserId() == null ? 0L : req.getUserId();
+        MessageFeedbackPo po = messageFeedbackMapper.selectOne(Wrappers.lambdaQuery(MessageFeedbackPo.class)
+                .eq(MessageFeedbackPo::getMessageId, messageId)
+                .eq(MessageFeedbackPo::getUserId, userId)
+                .last("LIMIT 1"));
+        if (po == null) {
+            po = new MessageFeedbackPo();
+            po.setMessageId(messageId);
+            po.setSessionId(message.getSessionId());
+            po.setAgentId(session.getAgentId());
+            po.setUserId(userId);
+        }
+        po.setRating(normalizeFeedbackRating(req == null ? null : req.getRating()));
+        po.setIssueType(blankToEmpty(req == null ? null : req.getIssueType()));
+        po.setComment(abbreviate(blankToEmpty(req == null ? null : req.getComment()), 1000));
+        po.setCorrectedAnswer(req == null ? null : req.getCorrectedAnswer());
+        po.setStatus("ACTIVE");
+        if (po.getId() == null) {
+            messageFeedbackMapper.insert(po);
+        } else {
+            messageFeedbackMapper.updateById(po);
+        }
+        return toFeedbackResp(po);
+    }
+
     /**
      * 不加 @Transactional：此方法立即返回 SseEmitter，LLM 调用在异步线程内完成。
      * 加 @Transactional 会在整个流式过程中持有 DB 连接（最长 130s），耗尽连接池。
@@ -203,11 +359,23 @@ public class ConversationServiceImpl implements ConversationService {
      */
     @Override
     public SseEmitter sendMessage(Long agentId, Long sessionId, String content) {
+        return sendMessage(agentId, sessionId, content, null, null, null);
+    }
+
+    @Override
+    public SseEmitter sendMessage(Long agentId, Long sessionId, String content, Long userId, Long appId, Long apiKeyId) {
         String traceId = TraceContext.ensureTraceId();
         TraceContext.put("agentId", agentId);
         AgentDetailResp agent = loadAgent(agentId);
+        ConversationRequestContext requestContext = new ConversationRequestContext(
+                userId == null ? 0L : userId, appId, apiKeyId);
+        RateLimitResult rateLimit = checkConversationRateLimit(agentId, requestContext);
+        if (!rateLimit.isAllowed()) {
+            return rejectedEmitter(ErrorCode.TOO_MANY_REQUESTS.getCode(),
+                    "对话调用过于频繁，请 " + rateLimit.getRetryAfterSeconds() + " 秒后重试");
+        }
 
-        ChatSessionPo session = resolveSession(agentId, sessionId, content);
+        ChatSessionPo session = resolveSession(agentId, sessionId, content, requestContext);
         TraceContext.put("conversationId", session.getId());
 
         // 持久化用户消息（状态直接 DONE，用户消息无需 STREAMING 过渡）
@@ -241,7 +409,19 @@ public class ConversationServiceImpl implements ConversationService {
                     traceId, session.getId(), assistantMsgId, ex.getMessage())
         );
 
-        llmExecutor.execute(TraceContext.wrap(() ->
+        ThreadPoolExecutor streamExecutor = streamExecutor();
+        if (isExecutorSaturated(streamExecutor)) {
+            markMessageError(assistantMsgId, ErrorCode.TOO_MANY_REQUESTS.name(),
+                    ErrorCode.TOO_MANY_REQUESTS.getMessage(), "流式线程池已满载", false);
+            finishConversationTrace(traceId, "ERROR", ErrorCode.TOO_MANY_REQUESTS.name(),
+                    ErrorCode.TOO_MANY_REQUESTS.getMessage());
+            incrementSessionCount(session.getId(), 1);
+            trySend(emitter, errorEvent(ErrorCode.TOO_MANY_REQUESTS.getCode(),
+                    ErrorCode.TOO_MANY_REQUESTS.getMessage(), assistantMsgId));
+            emitter.complete();
+            return emitter;
+        }
+        streamExecutor.execute(TraceContext.wrap(() ->
             doStream(emitter, cancelled, traceId, agent, session, assistantMsgId, context)
         ));
 
@@ -355,6 +535,7 @@ public class ConversationServiceImpl implements ConversationService {
                     .tools(toolSchemas.isEmpty() ? null : toolSchemas)
                     .temperature(agent.getTemperature())
                     .maxTokens(agent.getMaxTokens())
+                    .context(llmContext(agent, session))
                     .build();
             updateLlmRequestSummary(llmTraceId.get(), request);
 
@@ -492,6 +673,7 @@ public class ConversationServiceImpl implements ConversationService {
                 .tools(firstRequest.getTools())
                 .temperature(agent.getTemperature())
                 .maxTokens(agent.getMaxTokens())
+                .context(llmContext(agent, session))
                 .build();
         updateLlmRequestSummary(llmTraceId, secondRequest);
 
@@ -814,6 +996,9 @@ public class ConversationServiceImpl implements ConversationService {
             ConversationTracePo po = new ConversationTracePo();
             po.setTraceId(traceId);
             po.setSessionId(session.getId());
+            po.setUserId(session.getUserId());
+            po.setAppId(session.getAppId());
+            po.setApiKeyId(session.getApiKeyId());
             po.setUserMessageId(userMsgId);
             po.setAssistantMessageId(assistantMsgId);
             po.setAgentId(agent.getId());
@@ -1253,7 +1438,8 @@ public class ConversationServiceImpl implements ConversationService {
         return agent;
     }
 
-    private ChatSessionPo resolveSession(Long agentId, Long sessionId, String firstContent) {
+    private ChatSessionPo resolveSession(Long agentId, Long sessionId, String firstContent,
+                                         ConversationRequestContext requestContext) {
         if (sessionId != null) {
             ChatSessionPo session = sessionMapper.selectOne(
                     Wrappers.lambdaQuery(ChatSessionPo.class)
@@ -1268,13 +1454,77 @@ public class ConversationServiceImpl implements ConversationService {
         }
         ChatSessionPo session = new ChatSessionPo();
         session.setAgentId(agentId);
-        session.setUserId(0L);
+        session.setUserId(requestContext.userId());
+        session.setAppId(requestContext.appId());
+        session.setApiKeyId(requestContext.apiKeyId());
         String title = firstContent.length() > 20 ? firstContent.substring(0, 20) : firstContent;
         session.setTitle(title);
         session.setStatus("ACTIVE");
         session.setMessageCount(0);
         sessionMapper.insert(session);
         return session;
+    }
+
+    private RateLimitResult checkConversationRateLimit(Long agentId, ConversationRequestContext context) {
+        if (rateLimitService == null) {
+            return RateLimitResult.allowed(Long.MAX_VALUE);
+        }
+        List<RateLimitRule> rules = new ArrayList<>();
+        rules.add(rateRule(RateLimitDimension.AGENT, String.valueOf(agentId), 120));
+        if (context.userId() != null) {
+            rules.add(rateRule(RateLimitDimension.USER, String.valueOf(context.userId()), 60));
+        }
+        if (context.appId() != null) {
+            rules.add(rateRule(RateLimitDimension.APP, String.valueOf(context.appId()), 120));
+        }
+        if (context.apiKeyId() != null) {
+            rules.add(rateRule(RateLimitDimension.API_KEY, String.valueOf(context.apiKeyId()), 120));
+        }
+        for (RateLimitRule rule : rules) {
+            RateLimitResult result = rateLimitService.check(rule);
+            if (!result.isAllowed()) {
+                return result;
+            }
+        }
+        return RateLimitResult.allowed(Long.MAX_VALUE);
+    }
+
+    private RateLimitRule rateRule(RateLimitDimension dimension, String key, int limit) {
+        return RateLimitRule.builder()
+                .dimension(dimension)
+                .key(key)
+                .limit(limit)
+                .window(Duration.ofMinutes(1))
+                .failOpen(true)
+                .build();
+    }
+
+    private ThreadPoolExecutor streamExecutor() {
+        return llmStreamExecutor == null ? llmExecutor : llmStreamExecutor;
+    }
+
+    private boolean isExecutorSaturated(ThreadPoolExecutor executor) {
+        if (executor.getQueue() == null) {
+            return false;
+        }
+        return executor.getActiveCount() >= executor.getMaximumPoolSize()
+                && executor.getQueue().remainingCapacity() == 0;
+    }
+
+    private SseEmitter rejectedEmitter(int code, String message) {
+        SseEmitter emitter = new SseEmitter(10_000L);
+        trySend(emitter, errorEvent(code, message, null));
+        emitter.complete();
+        return emitter;
+    }
+
+    private LlmCallContext llmContext(AgentDetailResp agent, ChatSessionPo session) {
+        return LlmCallContext.builder()
+                .userId(session.getUserId())
+                .appId(session.getAppId())
+                .agentId(agent.getId())
+                .projectId(agent.getProjectId())
+                .build();
     }
 
     /**
@@ -1582,6 +1832,9 @@ public class ConversationServiceImpl implements ConversationService {
         ConversationSessionResp resp = new ConversationSessionResp();
         resp.setId(po.getId());
         resp.setAgentId(po.getAgentId());
+        resp.setUserId(po.getUserId());
+        resp.setAppId(po.getAppId());
+        resp.setApiKeyId(po.getApiKeyId());
         resp.setTitle(po.getTitle());
         resp.setMessageCount(po.getMessageCount());
         resp.setCreatedAt(po.getCreatedAt());
@@ -1602,6 +1855,70 @@ public class ConversationServiceImpl implements ConversationService {
         resp.setPartial(po.getPartial());
         resp.setCreatedAt(po.getCreatedAt());
         return resp;
+    }
+
+    private ConversationLogResp toLogResp(ConversationTracePo po) {
+        ConversationLogResp resp = new ConversationLogResp();
+        resp.setTraceId(po.getTraceId());
+        resp.setSessionId(po.getSessionId());
+        resp.setUserMessageId(po.getUserMessageId());
+        resp.setAssistantMessageId(po.getAssistantMessageId());
+        resp.setUserId(po.getUserId());
+        resp.setAppId(po.getAppId());
+        resp.setApiKeyId(po.getApiKeyId());
+        resp.setAgentId(po.getAgentId());
+        resp.setAgentName(po.getAgentName());
+        resp.setModelConfigId(po.getModelConfigId());
+        resp.setModelId(po.getModelId());
+        resp.setWorkflowId(po.getWorkflowId());
+        resp.setWorkflowRunId(po.getWorkflowRunId());
+        resp.setRagTriggered(Integer.valueOf(1).equals(po.getRagTriggered()));
+        resp.setMcpTriggered(Integer.valueOf(1).equals(po.getMcpTriggered()));
+        resp.setSummaryUsed(Integer.valueOf(1).equals(po.getSummaryUsed()));
+        resp.setSummaryLatencyMs(po.getSummaryLatencyMs());
+        resp.setSummaryErrorMessage(po.getSummaryErrorMessage());
+        resp.setStatus(po.getStatus());
+        resp.setErrorCode(po.getErrorCode());
+        resp.setErrorMessage(po.getErrorMessage());
+        resp.setStartedAt(po.getStartedAt());
+        resp.setFirstTokenAt(po.getFirstTokenAt());
+        resp.setFinishedAt(po.getFinishedAt());
+        return resp;
+    }
+
+    private MessageFeedbackResp toFeedbackResp(MessageFeedbackPo po) {
+        MessageFeedbackResp resp = new MessageFeedbackResp();
+        resp.setId(po.getId());
+        resp.setMessageId(po.getMessageId());
+        resp.setSessionId(po.getSessionId());
+        resp.setAgentId(po.getAgentId());
+        resp.setUserId(po.getUserId());
+        resp.setRating(po.getRating());
+        resp.setIssueType(po.getIssueType());
+        resp.setComment(po.getComment());
+        resp.setCorrectedAnswer(po.getCorrectedAnswer());
+        resp.setStatus(po.getStatus());
+        resp.setCreatedAt(po.getCreatedAt());
+        resp.setUpdatedAt(po.getUpdatedAt());
+        return resp;
+    }
+
+    private static int normalizeLimit(Integer limit, int defaultLimit) {
+        if (limit == null || limit <= 0) {
+            return defaultLimit;
+        }
+        return Math.min(limit, MAX_CURSOR_LIMIT);
+    }
+
+    private static String normalizeFeedbackRating(String rating) {
+        if (!StringUtils.hasText(rating)) {
+            return "";
+        }
+        String normalized = rating.trim().toUpperCase();
+        if (!List.of("LIKE", "DISLIKE").contains(normalized)) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "反馈 rating 只支持 LIKE / DISLIKE");
+        }
+        return normalized;
     }
 
     private static List<Map<String, Object>> toStoredToolCalls(List<ToolCall> toolCalls) {
@@ -1668,5 +1985,8 @@ public class ConversationServiceImpl implements ConversationService {
 
     private static String blankToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private record ConversationRequestContext(Long userId, Long appId, Long apiKeyId) {
     }
 }

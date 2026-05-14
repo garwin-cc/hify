@@ -9,7 +9,13 @@ public interface ConversationService {
 
     List<ConversationSessionResp> listSessions(Long agentId);
 
+    CursorPageResp<ConversationSessionResp> listSessionsCursor(ConversationSessionCursorQuery query);
+
     List<ConversationMessageResp> listMessages(Long sessionId);
+
+    CursorPageResp<ConversationMessageResp> listMessagesCursor(Long sessionId, ConversationMessageCursorQuery query);
+
+    CursorPageResp<ConversationLogResp> listConversationLogs(ConversationLogQuery query);
 
     ConversationTraceDetailResp getMessageTrace(Long messageId);
 
@@ -18,6 +24,8 @@ public interface ConversationService {
     void clearSessionSummary(Long sessionId);
 
     void deleteSession(Long sessionId);
+
+    MessageFeedbackResp upsertFeedback(Long messageId, MessageFeedbackReq req);
 
     /**
      * 发送消息，返回 SSE 流。
@@ -33,6 +41,8 @@ public interface ConversationService {
      * </ul>
      */
     SseEmitter sendMessage(Long agentId, Long sessionId, String content);
+
+    SseEmitter sendMessage(Long agentId, Long sessionId, String content, Long userId, Long appId, Long apiKeyId);
 
     SseEmitter sendMessageToSession(Long sessionId, String content);
 }

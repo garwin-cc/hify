@@ -14,6 +14,12 @@ public class SendMessageReq {
     /** null 时自动创建新会话 */
     private Long sessionId;
 
+    private Long userId;
+
+    private Long appId;
+
+    private Long apiKeyId;
+
     @NotBlank
     @Size(max = 10000)
     private String content;

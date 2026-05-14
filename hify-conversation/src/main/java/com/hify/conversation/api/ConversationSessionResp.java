@@ -11,6 +11,12 @@ public class ConversationSessionResp {
 
     private Long agentId;
 
+    private Long userId;
+
+    private Long appId;
+
+    private Long apiKeyId;
+
     private String title;
 
     private Integer messageCount;

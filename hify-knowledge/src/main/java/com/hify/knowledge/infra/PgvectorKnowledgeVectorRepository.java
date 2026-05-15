@@ -31,16 +31,18 @@ public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorReposit
     public Long upsert(KnowledgeChunk chunk, List<Double> embedding) {
         String sql = """
                 INSERT INTO t_knowledge_chunk
-                    (knowledge_base_id, document_id, chunk_index, content, metadata, embedding, search_vector)
+                    (knowledge_base_id, document_id, chunk_index, content, metadata, embedding,
+                     search_vector, index_version, active)
                 VALUES
                     (:knowledgeBaseId, :documentId, :chunkIndex, :content, CAST(:metadata AS jsonb),
-                     CAST(:embedding AS vector), to_tsvector('simple', :content))
-                ON CONFLICT (knowledge_base_id, document_id, chunk_index) WHERE deleted = false
+                     CAST(:embedding AS vector), to_tsvector('simple', :content), :indexVersion, :active)
+                ON CONFLICT (knowledge_base_id, document_id, chunk_index, index_version) WHERE deleted = false
                 DO UPDATE SET
                     content = EXCLUDED.content,
                     metadata = EXCLUDED.metadata,
                     embedding = EXCLUDED.embedding,
                     search_vector = EXCLUDED.search_vector,
+                    active = EXCLUDED.active,
                     updated_at = now()
                 RETURNING id
                 """;
@@ -50,7 +52,9 @@ public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorReposit
                 .addValue("chunkIndex", chunk.getChunkIndex())
                 .addValue("content", chunk.getContent())
                 .addValue("metadata", chunk.getMetadataJson())
-                .addValue("embedding", toVectorLiteral(embedding));
+                .addValue("embedding", toVectorLiteral(embedding))
+                .addValue("indexVersion", chunk.getIndexVersion() == null ? 1L : chunk.getIndexVersion())
+                .addValue("active", chunk.getActive() == null || chunk.getActive());
         return jdbcTemplate.queryForObject(sql, params, Long.class);
     }
 
@@ -61,17 +65,20 @@ public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorReposit
         }
         String sql = """
                 INSERT INTO t_knowledge_chunk
-                    (knowledge_base_id, document_id, chunk_index, content, token_count, metadata, embedding, search_vector)
+                    (knowledge_base_id, document_id, chunk_index, content, token_count, metadata,
+                     embedding, search_vector, index_version, active)
                 VALUES
                     (:knowledgeBaseId, :documentId, :chunkIndex, :content, :tokenCount,
-                     CAST(:metadataJson AS jsonb), CAST(:embeddingLiteral AS vector), to_tsvector('simple', :content))
-                ON CONFLICT (knowledge_base_id, document_id, chunk_index) WHERE deleted = false
+                     CAST(:metadataJson AS jsonb), CAST(:embeddingLiteral AS vector),
+                     to_tsvector('simple', :content), :indexVersion, :active)
+                ON CONFLICT (knowledge_base_id, document_id, chunk_index, index_version) WHERE deleted = false
                 DO UPDATE SET
                     content = EXCLUDED.content,
                     token_count = EXCLUDED.token_count,
                     metadata = EXCLUDED.metadata,
                     embedding = EXCLUDED.embedding,
                     search_vector = EXCLUDED.search_vector,
+                    active = EXCLUDED.active,
                     updated_at = now()
                 """;
         MapSqlParameterSource[] params = chunks.stream()
@@ -82,7 +89,9 @@ public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorReposit
                         .addValue("content", chunk.getContent())
                         .addValue("tokenCount", chunk.getTokenCount())
                         .addValue("metadataJson", chunk.getMetadataJson())
-                        .addValue("embeddingLiteral", toVectorLiteral(chunk.getEmbedding())))
+                        .addValue("embeddingLiteral", toVectorLiteral(chunk.getEmbedding()))
+                        .addValue("indexVersion", chunk.getIndexVersion() == null ? 1L : chunk.getIndexVersion())
+                        .addValue("active", chunk.getActive() == null || chunk.getActive()))
                 .toArray(MapSqlParameterSource[]::new);
         jdbcTemplate.batchUpdate(sql, params);
     }
@@ -106,6 +115,7 @@ public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorReposit
                        NULL::double precision AS keyword_score
                   FROM t_knowledge_chunk
                  WHERE deleted = false
+                   AND active = true
                    AND vector_dims(embedding) = :queryDimension
                 %s
                 %s
@@ -137,6 +147,7 @@ public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorReposit
                        ts_rank_cd(search_vector, plainto_tsquery('simple', :queryText)) AS keyword_score
                   FROM t_knowledge_chunk
                  WHERE deleted = false
+                   AND active = true
                    AND search_vector @@ plainto_tsquery('simple', :queryText)
                 %s
                 %s
@@ -188,6 +199,45 @@ public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorReposit
                    AND deleted = false
                 """;
         jdbcTemplate.update(sql, Map.of("documentId", documentId.toString()));
+    }
+
+    @Override
+    public void deleteByDocumentIdAndIndexVersion(Long documentId, Long indexVersion) {
+        String sql = """
+                UPDATE t_knowledge_chunk
+                   SET deleted = true,
+                       updated_at = now()
+                 WHERE document_id = :documentId
+                   AND index_version = :indexVersion
+                   AND deleted = false
+                """;
+        jdbcTemplate.update(sql, Map.of("documentId", documentId.toString(),
+                "indexVersion", indexVersion == null ? 1L : indexVersion));
+    }
+
+    @Override
+    public void activateIndexVersion(Long knowledgeBaseId, Long indexVersion) {
+        String deactivateSql = """
+                UPDATE t_knowledge_chunk
+                   SET active = false,
+                       deleted = true,
+                       updated_at = now()
+                 WHERE knowledge_base_id = :knowledgeBaseId
+                   AND index_version <> :indexVersion
+                   AND deleted = false
+                """;
+        jdbcTemplate.update(deactivateSql, Map.of("knowledgeBaseId", knowledgeBaseId,
+                "indexVersion", indexVersion == null ? 1L : indexVersion));
+        String activateSql = """
+                UPDATE t_knowledge_chunk
+                   SET active = true,
+                       updated_at = now()
+                 WHERE knowledge_base_id = :knowledgeBaseId
+                   AND index_version = :indexVersion
+                   AND deleted = false
+                """;
+        jdbcTemplate.update(activateSql, Map.of("knowledgeBaseId", knowledgeBaseId,
+                "indexVersion", indexVersion == null ? 1L : indexVersion));
     }
 
     private static RowMapper<KnowledgeSearchHit> rowMapper() {

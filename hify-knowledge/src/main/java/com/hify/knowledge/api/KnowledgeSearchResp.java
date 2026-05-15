@@ -32,6 +32,10 @@ public class KnowledgeSearchResp {
 
     private Double keywordScore;
 
+    private Double rerankScore;
+
+    private String retrievalMode;
+
     private Map<String, Object> metadata;
 
     private LocalDateTime createdAt;

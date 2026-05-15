@@ -24,5 +24,9 @@ public class KnowledgeChunk {
 
     private String metadataJson;
 
+    private Long indexVersion;
+
+    private Boolean active;
+
     private LocalDateTime createdAt;
 }

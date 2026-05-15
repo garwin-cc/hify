@@ -22,6 +22,9 @@ import com.hify.knowledge.infra.RagRetrievalTraceMapper;
 import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.ModelConfigResp;
 import com.hify.model.api.ModelConfigService;
+import com.hify.model.api.RerankRequest;
+import com.hify.model.api.RerankResult;
+import com.hify.model.api.RerankService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -117,8 +120,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final String VISIBILITY_PROJECT = "PROJECT";
     private static final String VISIBILITY_WORKSPACE = "WORKSPACE";
     private static final String VISIBILITY_PUBLIC = "PUBLIC";
-    private static final double HYBRID_VECTOR_WEIGHT = 0.7D;
-    private static final double HYBRID_KEYWORD_WEIGHT = 0.3D;
+    private static final double DEFAULT_HYBRID_ALPHA = 0.7D;
+    private static final String INDEX_STATUS_READY = "READY";
+    private static final String INDEX_STATUS_REBUILDING = "REBUILDING";
+    private static final String INDEX_STATUS_FAILED = "FAILED";
 
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeDocumentMapper documentMapper;
@@ -130,10 +135,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final ModelConfigService modelConfigService;
     private final RagRetrievalTraceMapper traceMapper;
     private TaskQueue knowledgeTaskQueue;
+    private RerankService rerankService;
 
     @Autowired(required = false)
     public void setKnowledgeTaskQueue(@Qualifier("knowledgeTaskQueue") TaskQueue knowledgeTaskQueue) {
         this.knowledgeTaskQueue = knowledgeTaskQueue;
+    }
+
+    @Autowired(required = false)
+    public void setRerankService(RerankService rerankService) {
+        this.rerankService = rerankService;
     }
 
     @Value("${hify.knowledge.max-file-size-bytes:" + DEFAULT_MAX_FILE_SIZE + "}")
@@ -433,6 +444,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public Long rebuildKnowledgeBaseIndex(Long id, KnowledgeRebuildReq req) {
         KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(id);
         applyRebuildOptions(knowledgeBase, req);
+        Long nextIndexVersion = effectiveActiveIndexVersion(knowledgeBase) + 1;
+        knowledgeBase.setBuildingIndexVersion(nextIndexVersion);
+        knowledgeBase.setIndexStatus(INDEX_STATUS_REBUILDING);
+        knowledgeBaseMapper.updateById(knowledgeBase);
         KnowledgeTaskPo rootTask = createTask(id, null, TASK_TYPE_REBUILD_INDEX, TARGET_KNOWLEDGE_BASE,
                 id, normalizeReason(req, "MANUAL_REBUILD"));
         List<KnowledgeDocumentPo> documents = documentMapper.selectList(Wrappers.lambdaQuery(KnowledgeDocumentPo.class)
@@ -442,7 +457,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 .set(KnowledgeBasePo::getChunkCount, 0));
         for (KnowledgeDocumentPo document : documents) {
             resetDocumentForProcessing(document, "知识库重建索引已排队");
-            vectorRepository.deleteByDocumentId(document.getId());
+            vectorRepository.deleteByDocumentIdAndIndexVersion(document.getId(), nextIndexVersion);
             KnowledgeTaskPo documentTask = createTask(id, document.getId(), TASK_TYPE_DOCUMENT_PROCESS,
                     TARGET_DOCUMENT, document.getId(), rootTask.getReason());
             document.setProcessingTaskId(documentTask.getId());
@@ -527,6 +542,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setDocumentCount(po.getDocumentCount());
         resp.setChunkCount(po.getChunkCount());
         resp.setRetrievalMode(effectiveRetrievalMode(po));
+        resp.setHybridAlpha(effectiveHybridAlpha(po));
         resp.setTopK(effectiveTopK(po));
         resp.setCandidateTopK(effectiveCandidateTopK(po));
         resp.setScoreThreshold(effectiveScoreThreshold(po));
@@ -536,6 +552,11 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setRerankEnabled(po.getRerankEnabled() == null ? 0 : po.getRerankEnabled());
         resp.setRerankModelConfigId(po.getRerankModelConfigId());
         resp.setRerankTopN(po.getRerankTopN() == null ? DEFAULT_CANDIDATE_TOP_K : po.getRerankTopN());
+        resp.setMetadataFilterEnabled(po.getMetadataFilterEnabled() == null ? 0 : po.getMetadataFilterEnabled());
+        resp.setDefaultMetadataFilterJson(po.getDefaultMetadataFilterJson());
+        resp.setActiveIndexVersion(effectiveActiveIndexVersion(po));
+        resp.setBuildingIndexVersion(po.getBuildingIndexVersion());
+        resp.setIndexStatus(effectiveIndexStatus(po));
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
@@ -551,6 +572,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 || !"EMBEDDING".equals(modelConfig.getModelType())) {
             throw new BizException(ErrorCode.PARAM_ERROR,
                     "向量模型不存在、未启用或类型不是 EMBEDDING: " + modelConfigId);
+        }
+    }
+
+    private void requireEnabledRerankModel(Long modelConfigId) {
+        if (modelConfigId == null) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "启用 rerank 时必须配置 rerank 模型");
+        }
+        ModelConfigResp modelConfig = modelConfigService.getById(modelConfigId);
+        if (modelConfig == null
+                || !Integer.valueOf(1).equals(modelConfig.getEnabled())
+                || !"RERANK".equals(modelConfig.getModelType())) {
+            throw new BizException(ErrorCode.PARAM_ERROR,
+                    "Rerank 模型不存在、未启用或类型不是 RERANK: " + modelConfigId);
         }
     }
 
@@ -659,9 +693,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
 
         boolean hasQueryEmbedding = req.getQueryEmbedding() != null && !req.getQueryEmbedding().isEmpty();
-        Map<Long, KnowledgeBasePo> knowledgeBaseMap = hasQueryEmbedding && req.getProjectId() == null
-                ? Map.of()
-                : loadEnabledKnowledgeBases(knowledgeBaseIds);
+        Map<Long, KnowledgeBasePo> knowledgeBaseMap;
+        try {
+            knowledgeBaseMap = loadEnabledKnowledgeBases(knowledgeBaseIds);
+        } catch (BizException e) {
+            if (!hasQueryEmbedding || req.getProjectId() != null) {
+                throw e;
+            }
+            knowledgeBaseMap = Map.of();
+        }
         List<Long> searchableKnowledgeBaseIds = knowledgeBaseMap.isEmpty()
                 ? knowledgeBaseIds
                 : filterKnowledgeBaseIdsByProject(knowledgeBaseMap, req.getProjectId());
@@ -675,14 +715,21 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         RetrievalOptions options = knowledgeBaseMap.isEmpty()
                 ? resolveOptions(req, null)
                 : resolveOptions(req, knowledgeBaseMap.values().iterator().next());
+        if (!knowledgeBaseMap.isEmpty()) {
+            applyDefaultMetadataFilter(req, knowledgeBaseMap.values().iterator().next());
+        }
         req.setTopK(options.topK());
         req.setCandidateTopK(options.candidateTopK());
         req.setScoreThreshold(options.scoreThreshold());
         req.setRetrievalMode(options.retrievalMode());
         KnowledgeSearchFilter filter = buildSearchFilter(req);
         List<KnowledgeSearchHit> hits = new ArrayList<>();
-        if (hasQueryEmbedding) {
-            hits.addAll(vectorRepository.search(searchableKnowledgeBaseIds, req.getQueryEmbedding(), options.candidateTopK(), filter));
+        if ("FULLTEXT".equals(options.retrievalMode())) {
+            hits.addAll(vectorRepository.keywordSearch(searchableKnowledgeBaseIds, req.getQueryText(),
+                    options.candidateTopK(), filter));
+        } else if (hasQueryEmbedding) {
+            hits.addAll(vectorRepository.search(searchableKnowledgeBaseIds, req.getQueryEmbedding(),
+                    options.candidateTopK(), filter));
         } else {
             Map<Long, List<Long>> grouped = knowledgeBaseMap.values().stream()
                     .filter(kb -> searchableKnowledgeBaseIds.contains(kb.getId()))
@@ -696,14 +743,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         if ("HYBRID".equalsIgnoreCase(options.retrievalMode()) && StringUtils.hasText(req.getQueryText())) {
             hits = mergeHybridHits(hits, vectorRepository.keywordSearch(searchableKnowledgeBaseIds, req.getQueryText(),
-                    options.candidateTopK(), filter));
+                    options.candidateTopK(), filter), options.hybridAlpha());
         } else {
             hits.forEach(hit -> {
-                if (hit.getVectorScore() == null) {
+                if ("FULLTEXT".equals(options.retrievalMode())) {
+                    if (hit.getKeywordScore() == null) {
+                        hit.setKeywordScore(hit.getScore());
+                    }
+                } else if (hit.getVectorScore() == null) {
                     hit.setVectorScore(hit.getScore());
                 }
             });
         }
+        hits = applyRerankIfEnabled(hits, req, options, knowledgeBaseMap);
 
         List<KnowledgeSearchResp> responses = hits.stream()
                 .filter(hit -> hit.getScore() != null && hit.getScore() >= options.scoreThreshold())
@@ -716,6 +768,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             KnowledgeSearchResp resp = responses.get(i);
             resp.setTraceId(traceId);
             resp.setRank(i + 1);
+            resp.setRetrievalMode(options.retrievalMode());
         }
         return responses;
     }
@@ -731,6 +784,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setFinalScore(hit.getScore());
         resp.setVectorScore(hit.getVectorScore() == null ? hit.getScore() : hit.getVectorScore());
         resp.setKeywordScore(hit.getKeywordScore());
+        resp.setRerankScore(hit.getRerankScore());
         Map<String, Object> metadata = fromJson(hit.getMetadataJson());
         Object documentName = metadata.get("documentName");
         resp.setDocumentName(documentName == null ? null : String.valueOf(documentName));
@@ -812,13 +866,34 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 .build();
     }
 
+    @SuppressWarnings("unchecked")
+    private void applyDefaultMetadataFilter(KnowledgeSearchReq req, KnowledgeBasePo knowledgeBase) {
+        if (knowledgeBase == null || !Integer.valueOf(1).equals(knowledgeBase.getMetadataFilterEnabled())) {
+            return;
+        }
+        Map<String, Object> defaults = fromJson(knowledgeBase.getDefaultMetadataFilterJson());
+        if (!StringUtils.hasText(req.getDepartment()) && defaults.get("department") instanceof String department) {
+            req.setDepartment(department);
+        }
+        if (!StringUtils.hasText(req.getDocumentType()) && defaults.get("documentType") instanceof String documentType) {
+            req.setDocumentType(documentType);
+        }
+        if (!StringUtils.hasText(req.getPermissionScope()) && defaults.get("permissionScope") instanceof String permissionScope) {
+            req.setPermissionScope(permissionScope);
+        }
+        if ((req.getTags() == null || req.getTags().isEmpty()) && defaults.get("tags") instanceof List<?> tags) {
+            req.setTags(tags.stream().map(String::valueOf).filter(StringUtils::hasText).toList());
+        }
+    }
+
     private List<KnowledgeSearchHit> mergeHybridHits(List<KnowledgeSearchHit> vectorHits,
-                                                     List<KnowledgeSearchHit> keywordHits) {
+                                                     List<KnowledgeSearchHit> keywordHits,
+                                                     double hybridAlpha) {
         Map<Long, KnowledgeSearchHit> merged = new HashMap<>();
         for (KnowledgeSearchHit hit : vectorHits == null ? List.<KnowledgeSearchHit>of() : vectorHits) {
             KnowledgeSearchHit copy = copyHit(hit);
             copy.setVectorScore(hit.getVectorScore() == null ? hit.getScore() : hit.getVectorScore());
-            copy.setScore(scoreHybrid(copy.getVectorScore(), null));
+            copy.setScore(scoreHybrid(copy.getVectorScore(), null, hybridAlpha));
             merged.put(copy.getId(), copy);
         }
         for (KnowledgeSearchHit hit : keywordHits == null ? List.<KnowledgeSearchHit>of() : keywordHits) {
@@ -826,14 +901,63 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             if (current == null) {
                 KnowledgeSearchHit copy = copyHit(hit);
                 copy.setKeywordScore(hit.getKeywordScore() == null ? hit.getScore() : hit.getKeywordScore());
-                copy.setScore(scoreHybrid(null, copy.getKeywordScore()));
+                copy.setScore(scoreHybrid(null, copy.getKeywordScore(), hybridAlpha));
                 merged.put(copy.getId(), copy);
             } else {
                 current.setKeywordScore(hit.getKeywordScore() == null ? hit.getScore() : hit.getKeywordScore());
-                current.setScore(scoreHybrid(current.getVectorScore(), current.getKeywordScore()));
+                current.setScore(scoreHybrid(current.getVectorScore(), current.getKeywordScore(), hybridAlpha));
             }
         }
         return new ArrayList<>(merged.values());
+    }
+
+    private List<KnowledgeSearchHit> applyRerankIfEnabled(List<KnowledgeSearchHit> hits, KnowledgeSearchReq req,
+                                                          RetrievalOptions options,
+                                                          Map<Long, KnowledgeBasePo> knowledgeBaseMap) {
+        if (hits == null || hits.isEmpty() || rerankService == null || !StringUtils.hasText(req.getQueryText())) {
+            return hits;
+        }
+        KnowledgeBasePo knowledgeBase = knowledgeBaseMap == null || knowledgeBaseMap.isEmpty()
+                ? null
+                : knowledgeBaseMap.values().iterator().next();
+        if (knowledgeBase == null || !Integer.valueOf(1).equals(knowledgeBase.getRerankEnabled())
+                || knowledgeBase.getRerankModelConfigId() == null) {
+            return hits;
+        }
+        try {
+            List<KnowledgeSearchHit> candidates = hits.stream()
+                    .sorted(Comparator.comparing(KnowledgeSearchHit::getScore,
+                            Comparator.nullsLast(Comparator.reverseOrder())))
+                    .limit(Math.max(options.topK(), knowledgeBase.getRerankTopN() == null
+                            ? options.candidateTopK()
+                            : knowledgeBase.getRerankTopN()))
+                    .map(KnowledgeServiceImpl::copyHit)
+                    .toList();
+            RerankRequest rerankRequest = new RerankRequest();
+            rerankRequest.setModelConfigId(knowledgeBase.getRerankModelConfigId());
+            rerankRequest.setQuery(req.getQueryText());
+            rerankRequest.setDocuments(candidates.stream().map(KnowledgeSearchHit::getContent).toList());
+            rerankRequest.setTopN(Math.min(candidates.size(), Math.max(options.topK(),
+                    knowledgeBase.getRerankTopN() == null ? options.topK() : knowledgeBase.getRerankTopN())));
+            List<RerankResult> rerankResults = rerankService.rerank(rerankRequest);
+            Map<Integer, Double> scores = rerankResults == null ? Map.of() : rerankResults.stream()
+                    .filter(item -> item.getIndex() != null && item.getScore() != null)
+                    .collect(Collectors.toMap(RerankResult::getIndex, RerankResult::getScore, (left, right) -> left));
+            List<KnowledgeSearchHit> reranked = new ArrayList<>(candidates);
+            for (int i = 0; i < reranked.size(); i++) {
+                Double rerankScore = scores.get(i);
+                if (rerankScore != null) {
+                    reranked.get(i).setRerankScore(rerankScore);
+                    reranked.get(i).setScore(rerankScore);
+                }
+            }
+            reranked.sort(Comparator.comparing(KnowledgeSearchHit::getScore,
+                    Comparator.nullsLast(Comparator.reverseOrder())));
+            return reranked;
+        } catch (Exception e) {
+            log.warn("rerank failed, fallback to retrieval score query={} message={}", req.getQueryText(), e.getMessage());
+            return hits;
+        }
     }
 
     private static KnowledgeSearchHit copyHit(KnowledgeSearchHit source) {
@@ -849,12 +973,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         copy.setScore(source.getScore());
         copy.setVectorScore(source.getVectorScore());
         copy.setKeywordScore(source.getKeywordScore());
+        copy.setRerankScore(source.getRerankScore());
         return copy;
     }
 
-    private static double scoreHybrid(Double vectorScore, Double keywordScore) {
-        return Math.max(0D, vectorScore == null ? 0D : vectorScore) * HYBRID_VECTOR_WEIGHT
-                + Math.max(0D, keywordScore == null ? 0D : keywordScore) * HYBRID_KEYWORD_WEIGHT;
+    private static double scoreHybrid(Double vectorScore, Double keywordScore, double hybridAlpha) {
+        double alpha = Math.max(0D, Math.min(1D, hybridAlpha));
+        return Math.max(0D, vectorScore == null ? 0D : vectorScore) * alpha
+                + Math.max(0D, keywordScore == null ? 0D : keywordScore) * (1D - alpha);
     }
 
     private RetrievalOptions resolveOptions(KnowledgeSearchReq req, KnowledgeBasePo fallbackKnowledgeBase) {
@@ -870,7 +996,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         String retrievalMode = StringUtils.hasText(req.getRetrievalMode())
                 ? req.getRetrievalMode()
                 : effectiveRetrievalMode(fallbackKnowledgeBase);
-        return new RetrievalOptions(topK, candidateTopK, scoreThreshold, retrievalMode);
+        double hybridAlpha = effectiveHybridAlpha(fallbackKnowledgeBase);
+        return new RetrievalOptions(topK, candidateTopK, scoreThreshold,
+                normalizeRetrievalMode(retrievalMode), hybridAlpha);
     }
 
     private void saveRetrievalTrace(KnowledgeSearchReq req, String traceId, List<KnowledgeSearchResp> results,
@@ -973,6 +1101,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private static void setDefaultRetrievalConfig(KnowledgeBasePo po) {
         po.setRetrievalMode("VECTOR");
+        po.setHybridAlpha(DEFAULT_HYBRID_ALPHA);
         po.setTopK(DEFAULT_TOP_K);
         po.setCandidateTopK(DEFAULT_CANDIDATE_TOP_K);
         po.setScoreThreshold(DEFAULT_SCORE_THRESHOLD);
@@ -981,6 +1110,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         po.setMaxContextTokens(DEFAULT_MAX_CONTEXT_TOKENS);
         po.setRerankEnabled(0);
         po.setRerankTopN(DEFAULT_CANDIDATE_TOP_K);
+        po.setMetadataFilterEnabled(0);
+        po.setDefaultMetadataFilterJson("{}");
+        po.setActiveIndexVersion(1L);
+        po.setIndexStatus(INDEX_STATUS_READY);
     }
 
     private void applyRebuildOptions(KnowledgeBasePo knowledgeBase, KnowledgeRebuildReq req) {
@@ -1013,10 +1146,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private void applyRetrievalConfig(KnowledgeBasePo po, UpdateKnowledgeRetrievalConfigReq req) {
         if (StringUtils.hasText(req.getRetrievalMode())) {
-            if (!List.of("VECTOR", "HYBRID").contains(req.getRetrievalMode())) {
-                throw new BizException(ErrorCode.PARAM_ERROR, "检索模式仅支持 VECTOR / HYBRID");
-            }
-            po.setRetrievalMode(req.getRetrievalMode());
+            po.setRetrievalMode(normalizeRetrievalMode(req.getRetrievalMode()));
+        }
+        if (req.getHybridAlpha() != null) {
+            po.setHybridAlpha(normalizeHybridAlpha(req.getHybridAlpha()));
         }
         if (req.getTopK() != null) {
             po.setTopK(req.getTopK());
@@ -1038,15 +1171,26 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
         if (req.getRerankEnabled() != null) {
             if (req.getRerankEnabled() == 1) {
-                throw new BizException(ErrorCode.PARAM_ERROR, "阶段 2.1 暂不启用 rerank");
+                requireEnabledRerankModel(req.getRerankModelConfigId() == null
+                        ? po.getRerankModelConfigId()
+                        : req.getRerankModelConfigId());
             }
-            po.setRerankEnabled(0);
+            po.setRerankEnabled(req.getRerankEnabled() == 1 ? 1 : 0);
         }
         if (req.getRerankModelConfigId() != null) {
+            if (Integer.valueOf(1).equals(po.getRerankEnabled())) {
+                requireEnabledRerankModel(req.getRerankModelConfigId());
+            }
             po.setRerankModelConfigId(req.getRerankModelConfigId());
         }
         if (req.getRerankTopN() != null) {
             po.setRerankTopN(req.getRerankTopN());
+        }
+        if (req.getMetadataFilterEnabled() != null) {
+            po.setMetadataFilterEnabled(req.getMetadataFilterEnabled() == 1 ? 1 : 0);
+        }
+        if (req.getDefaultMetadataFilter() != null) {
+            po.setDefaultMetadataFilterJson(toJson(req.getDefaultMetadataFilter()));
         }
         if (effectiveCandidateTopK(po) < effectiveTopK(po)) {
             throw new BizException(ErrorCode.PARAM_ERROR, "candidateTopK 不能小于 topK");
@@ -1058,7 +1202,41 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     private static String effectiveRetrievalMode(KnowledgeBasePo po) {
-        return po != null && StringUtils.hasText(po.getRetrievalMode()) ? po.getRetrievalMode() : "VECTOR";
+        return po != null && StringUtils.hasText(po.getRetrievalMode())
+                ? normalizeRetrievalMode(po.getRetrievalMode())
+                : "VECTOR";
+    }
+
+    private static double effectiveHybridAlpha(KnowledgeBasePo po) {
+        return po == null || po.getHybridAlpha() == null
+                ? DEFAULT_HYBRID_ALPHA
+                : normalizeHybridAlpha(po.getHybridAlpha());
+    }
+
+    private static Long effectiveActiveIndexVersion(KnowledgeBasePo po) {
+        return po == null || po.getActiveIndexVersion() == null ? 1L : po.getActiveIndexVersion();
+    }
+
+    private static String effectiveIndexStatus(KnowledgeBasePo po) {
+        return po != null && StringUtils.hasText(po.getIndexStatus()) ? po.getIndexStatus() : INDEX_STATUS_READY;
+    }
+
+    private static String normalizeRetrievalMode(String retrievalMode) {
+        String normalized = retrievalMode == null ? "VECTOR" : retrievalMode.trim().toUpperCase();
+        if (!List.of("VECTOR", "FULLTEXT", "HYBRID").contains(normalized)) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "检索模式仅支持 VECTOR / FULLTEXT / HYBRID");
+        }
+        return normalized;
+    }
+
+    private static double normalizeHybridAlpha(Double hybridAlpha) {
+        if (hybridAlpha == null) {
+            return DEFAULT_HYBRID_ALPHA;
+        }
+        if (hybridAlpha < 0D || hybridAlpha > 1D) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "hybridAlpha 必须在 0-1 之间");
+        }
+        return hybridAlpha;
     }
 
     private static String effectiveVisibility(KnowledgeBasePo po) {
@@ -1144,12 +1322,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             documentMapper.update(null, Wrappers.lambdaUpdate(KnowledgeDocumentPo.class)
                     .eq(KnowledgeDocumentPo::getId, documentId)
                     .set(KnowledgeDocumentPo::getFinishedAt, LocalDateTime.now()));
+            finalizeRebuildIfComplete(document.getKnowledgeBaseId());
             log.info("processed knowledge document id={} chunks={}", documentId, chunkCount);
         } catch (DocumentProcessingCanceledException e) {
             markDocumentCanceled(documentId, e.getMessage());
         } catch (Exception e) {
             log.warn("process knowledge document failed id={}: {}", documentId, e.getMessage(), e);
-            vectorRepository.deleteByDocumentId(documentId);
+            deleteFailedDocumentChunks(document);
+            markKnowledgeBaseRebuildFailed(document.getKnowledgeBaseId());
             ProcessingFailure failure = classifyFailure(documentId, e);
             updateDocumentProgress(documentId, STATUS_FAILED, 0, null);
             updateDocumentStatus(documentId, STATUS_FAILED, e.getMessage(), failure.errorCode(),
@@ -1176,12 +1356,51 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
 
+    private void deleteFailedDocumentChunks(KnowledgeDocumentPo document) {
+        KnowledgeBasePo knowledgeBase = knowledgeBaseMapper.selectById(document.getKnowledgeBaseId());
+        if (knowledgeBase != null && INDEX_STATUS_REBUILDING.equals(effectiveIndexStatus(knowledgeBase))
+                && knowledgeBase.getBuildingIndexVersion() != null) {
+            vectorRepository.deleteByDocumentIdAndIndexVersion(document.getId(), knowledgeBase.getBuildingIndexVersion());
+            return;
+        }
+        vectorRepository.deleteByDocumentId(document.getId());
+    }
+
+    private void finalizeRebuildIfComplete(Long knowledgeBaseId) {
+        KnowledgeBasePo knowledgeBase = knowledgeBaseMapper.selectById(knowledgeBaseId);
+        if (knowledgeBase == null || !INDEX_STATUS_REBUILDING.equals(effectiveIndexStatus(knowledgeBase))
+                || knowledgeBase.getBuildingIndexVersion() == null) {
+            return;
+        }
+        Long remaining = documentMapper.selectCount(Wrappers.lambdaQuery(KnowledgeDocumentPo.class)
+                .eq(KnowledgeDocumentPo::getKnowledgeBaseId, knowledgeBaseId)
+                .ne(KnowledgeDocumentPo::getParseStatus, STATUS_DONE));
+        if (remaining != null && remaining > 0) {
+            return;
+        }
+        vectorRepository.activateIndexVersion(knowledgeBaseId, knowledgeBase.getBuildingIndexVersion());
+        knowledgeBase.setActiveIndexVersion(knowledgeBase.getBuildingIndexVersion());
+        knowledgeBase.setBuildingIndexVersion(null);
+        knowledgeBase.setIndexStatus(INDEX_STATUS_READY);
+        knowledgeBaseMapper.updateById(knowledgeBase);
+    }
+
+    private void markKnowledgeBaseRebuildFailed(Long knowledgeBaseId) {
+        KnowledgeBasePo knowledgeBase = knowledgeBaseMapper.selectById(knowledgeBaseId);
+        if (knowledgeBase == null || !INDEX_STATUS_REBUILDING.equals(effectiveIndexStatus(knowledgeBase))) {
+            return;
+        }
+        knowledgeBase.setIndexStatus(INDEX_STATUS_FAILED);
+        knowledgeBaseMapper.updateById(knowledgeBase);
+    }
+
     private int processDocumentContent(KnowledgeDocumentPo document, KnowledgeBasePo knowledgeBase) throws IOException {
         Long embeddingModelConfigId = knowledgeBase.getEmbeddingModelConfigId();
         if (embeddingModelConfigId == null) {
             throw new BizException(ErrorCode.KNOWLEDGE_VECTORIZE_FAILED, "知识库未配置 embedding 模型");
         }
-        DocumentChunkProcessor processor = new DocumentChunkProcessor(document, embeddingModelConfigId, true);
+        DocumentChunkProcessor processor = new DocumentChunkProcessor(document, embeddingModelConfigId,
+                targetIndexVersion(knowledgeBase), targetActive(knowledgeBase), true);
         Path filePath = Path.of(document.getFileKey());
         if ("pdf".equals(document.getFileType())) {
             processPdfDocument(filePath, processor);
@@ -1194,7 +1413,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     }
 
     int processTextSegments(KnowledgeDocumentPo document, Long embeddingModelConfigId, Iterable<String> segments) {
-        DocumentChunkProcessor processor = new DocumentChunkProcessor(document, embeddingModelConfigId, false);
+        KnowledgeBasePo knowledgeBase = knowledgeBaseMapper.selectById(document.getKnowledgeBaseId());
+        DocumentChunkProcessor processor = new DocumentChunkProcessor(document, embeddingModelConfigId,
+                targetIndexVersion(knowledgeBase), targetActive(knowledgeBase), false);
         for (String segment : segments) {
             processor.accept(segment);
         }
@@ -1694,6 +1915,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private void saveChunks(Long documentId, Long knowledgeBaseId, KnowledgeDocumentPo document, List<ChunkDTO> chunks) {
         List<KnowledgeChunk> rows = new ArrayList<>(chunks.size());
+        KnowledgeBasePo knowledgeBase = knowledgeBaseMapper.selectById(knowledgeBaseId);
+        Long indexVersion = targetIndexVersion(knowledgeBase);
+        boolean active = !INDEX_STATUS_REBUILDING.equals(effectiveIndexStatus(knowledgeBase));
         for (ChunkDTO dto : chunks) {
             KnowledgeChunk chunk = new KnowledgeChunk();
             chunk.setKnowledgeBaseId(knowledgeBaseId);
@@ -1703,9 +1927,23 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             chunk.setTokenCount(dto.tokenCount());
             chunk.setEmbedding(dto.embedding());
             chunk.setMetadataJson(toJson(documentMetadata(document, null)));
+            chunk.setIndexVersion(indexVersion);
+            chunk.setActive(active);
             rows.add(chunk);
         }
         vectorRepository.saveDocumentChunks(rows);
+    }
+
+    private static Long targetIndexVersion(KnowledgeBasePo knowledgeBase) {
+        if (INDEX_STATUS_REBUILDING.equals(effectiveIndexStatus(knowledgeBase))
+                && knowledgeBase.getBuildingIndexVersion() != null) {
+            return knowledgeBase.getBuildingIndexVersion();
+        }
+        return effectiveActiveIndexVersion(knowledgeBase);
+    }
+
+    private static boolean targetActive(KnowledgeBasePo knowledgeBase) {
+        return !INDEX_STATUS_REBUILDING.equals(effectiveIndexStatus(knowledgeBase));
     }
 
     private static int chooseChunkEnd(String text, int start) {
@@ -1848,6 +2086,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private class DocumentChunkProcessor {
         private final KnowledgeDocumentPo document;
         private final Long embeddingModelConfigId;
+        private final Long indexVersion;
+        private final boolean active;
         private final boolean progressEnabled;
         private final int chunkSize;
         private final int chunkOverlap;
@@ -1858,9 +2098,12 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         private int chunkCount;
         private int splitSteps;
 
-        private DocumentChunkProcessor(KnowledgeDocumentPo document, Long embeddingModelConfigId, boolean progressEnabled) {
+        private DocumentChunkProcessor(KnowledgeDocumentPo document, Long embeddingModelConfigId,
+                                       Long indexVersion, boolean active, boolean progressEnabled) {
             this.document = document;
             this.embeddingModelConfigId = embeddingModelConfigId;
+            this.indexVersion = indexVersion;
+            this.active = active;
             this.progressEnabled = progressEnabled;
             this.chunkSize = effectiveChunkSize(document);
             this.chunkOverlap = Math.min(CHUNK_OVERLAP, Math.max(0, chunkSize / 4));
@@ -1925,6 +2168,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             chunk.setContent(content);
             chunk.setTokenCount(countTokens(content));
             chunk.setMetadataJson(toJson(documentMetadata(document, currentChunkIndex)));
+            chunk.setIndexVersion(indexVersion);
+            chunk.setActive(active);
             return chunk;
         }
 
@@ -1990,7 +2235,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private record ChunkDTO(int chunkIndex, String content, int tokenCount, List<Double> embedding) {
     }
 
-    private record RetrievalOptions(int topK, int candidateTopK, double scoreThreshold, String retrievalMode) {
+    private record RetrievalOptions(int topK, int candidateTopK, double scoreThreshold,
+                                    String retrievalMode, double hybridAlpha) {
     }
 
     private record ProcessingFailure(String errorCode, String failedStage, boolean retryable) {

@@ -122,8 +122,8 @@ public class ModelConfigServiceImpl implements ModelConfigService {
 
     private static String normalizeModelType(String modelType) {
         String normalizedType = modelType == null ? "" : modelType.trim().toUpperCase();
-        if (!"CHAT".equals(normalizedType) && !"EMBEDDING".equals(normalizedType)) {
-            throw new BizException(ErrorCode.PARAM_ERROR, "模型类型只支持 CHAT / EMBEDDING");
+        if (!"CHAT".equals(normalizedType) && !"EMBEDDING".equals(normalizedType) && !"RERANK".equals(normalizedType)) {
+            throw new BizException(ErrorCode.PARAM_ERROR, "模型类型只支持 CHAT / EMBEDDING / RERANK");
         }
         return normalizedType;
     }

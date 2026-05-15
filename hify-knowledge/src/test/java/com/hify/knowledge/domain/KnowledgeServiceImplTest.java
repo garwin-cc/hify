@@ -9,12 +9,16 @@ import com.hify.knowledge.api.KnowledgeRebuildReq;
 import com.hify.knowledge.api.KnowledgeSearchFilter;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
+import com.hify.knowledge.api.UpdateKnowledgeRetrievalConfigReq;
 import com.hify.knowledge.infra.KnowledgeBaseMapper;
 import com.hify.knowledge.infra.KnowledgeDocumentMapper;
 import com.hify.knowledge.infra.KnowledgeTaskMapper;
 import com.hify.knowledge.infra.RagRetrievalTraceMapper;
 import com.hify.model.api.EmbeddingService;
 import com.hify.model.api.ModelConfigService;
+import com.hify.model.api.RerankRequest;
+import com.hify.model.api.RerankResult;
+import com.hify.model.api.RerankService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -33,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -500,7 +505,11 @@ class KnowledgeServiceImplTest {
         Long taskId = service.rebuildKnowledgeBaseIndex(1L, req);
 
         assertThat(taskId).isEqualTo(100L);
-        assertThat(repository.deletedDocumentIds).containsExactly(7L, 8L);
+        assertThat(repository.deletedDocumentIds).isEmpty();
+        assertThat(repository.deletedVersionedDocumentIds).containsExactly(7L, 8L);
+        verify(knowledgeBaseMapper).updateById(org.mockito.ArgumentMatchers.<KnowledgeBasePo>argThat(updated ->
+                "REBUILDING".equals(updated.getIndexStatus())
+                        && Long.valueOf(2L).equals(updated.getBuildingIndexVersion())));
         verify(executor, times(2)).execute(any(Runnable.class));
         verify(taskMapper).insert(org.mockito.ArgumentMatchers.<KnowledgeTaskPo>argThat(task ->
                 "REBUILD_INDEX".equals(task.getTaskType())
@@ -508,6 +517,36 @@ class KnowledgeServiceImplTest {
         verify(taskMapper).insert(org.mockito.ArgumentMatchers.<KnowledgeTaskPo>argThat(task ->
                 "DOCUMENT_PROCESS".equals(task.getTaskType())
                         && Long.valueOf(7L).equals(task.getDocumentId())));
+    }
+
+    @Test
+    void updateRetrievalConfigAcceptsFulltextHybridAlphaAndMetadataDefaults() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 11L);
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                new FakeKnowledgeVectorRepository(),
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        UpdateKnowledgeRetrievalConfigReq req = new UpdateKnowledgeRetrievalConfigReq();
+        req.setRetrievalMode("FULLTEXT");
+        req.setHybridAlpha(0.35D);
+        req.setMetadataFilterEnabled(1);
+        req.setDefaultMetadataFilter(Map.of("department", "finance"));
+
+        service.updateRetrievalConfig(1L, req);
+
+        verify(knowledgeBaseMapper).updateById(org.mockito.ArgumentMatchers.<KnowledgeBasePo>argThat(updated ->
+                "FULLTEXT".equals(updated.getRetrievalMode())
+                        && Double.valueOf(0.35D).equals(updated.getHybridAlpha())
+                        && Integer.valueOf(1).equals(updated.getMetadataFilterEnabled())
+                        && updated.getDefaultMetadataFilterJson().contains("finance")));
     }
 
     @Test
@@ -552,6 +591,7 @@ class KnowledgeServiceImplTest {
         FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
         KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 9L);
         knowledgeBase.setRetrievalMode("HYBRID");
+        knowledgeBase.setHybridAlpha(0.2D);
         knowledgeBase.setScoreThreshold(0D);
         when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
         when(embeddingService.embed(9L, List.of("报销流程"))).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
@@ -580,7 +620,80 @@ class KnowledgeServiceImplTest {
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getVectorScore()).isEqualTo(0.8);
         assertThat(results.get(0).getKeywordScore()).isEqualTo(0.5);
-        assertThat(results.get(0).getFinalScore()).isEqualTo(0.71);
+        assertThat(results.get(0).getFinalScore()).isEqualTo(0.56);
+        assertThat(results.get(0).getRetrievalMode()).isEqualTo("HYBRID");
+    }
+
+    @Test
+    void fulltextSearchUsesKeywordOnlyWithoutEmbedding() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        EmbeddingService embeddingService = mock(EmbeddingService.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 9L);
+        knowledgeBase.setRetrievalMode("FULLTEXT");
+        knowledgeBase.setScoreThreshold(0D);
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        repository.keywordHits = List.of(hit(9L, 1L, "keyword", 0.6));
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        KnowledgeSearchReq req = new KnowledgeSearchReq();
+        req.setKnowledgeBaseIds(List.of(1L));
+        req.setQueryText("报销流程");
+
+        List<KnowledgeSearchResp> results = service.searchSimilar(req);
+
+        assertThat(results).extracting(KnowledgeSearchResp::getId).containsExactly(9L);
+        assertThat(results.get(0).getKeywordScore()).isEqualTo(0.6);
+        assertThat(results.get(0).getRetrievalMode()).isEqualTo("FULLTEXT");
+        verify(embeddingService, never()).embed(any(), any());
+    }
+
+    @Test
+    void searchSimilarReranksWhenEnabledAndFallsBackOnFailure() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 9L);
+        knowledgeBase.setScoreThreshold(0D);
+        knowledgeBase.setRerankEnabled(1);
+        knowledgeBase.setRerankModelConfigId(88L);
+        knowledgeBase.setRerankTopN(2);
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        repository.hits = List.of(hit(7L, 1L, "first", 0.7), hit(8L, 1L, "second", 0.9));
+        FakeRerankService rerankService = new FakeRerankService();
+        rerankService.results = List.of(new RerankResult(1, 0.99D), new RerankResult(0, 0.1D));
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                mock(EmbeddingService.class),
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        service.setRerankService(rerankService);
+        KnowledgeSearchReq req = new KnowledgeSearchReq();
+        req.setKnowledgeBaseIds(List.of(1L));
+        req.setQueryEmbedding(List.of(0.1, 0.2, 0.3));
+        req.setQueryText("报销流程");
+
+        List<KnowledgeSearchResp> results = service.searchSimilar(req);
+
+        assertThat(results).extracting(KnowledgeSearchResp::getId).containsExactly(7L, 8L);
+        assertThat(results.get(0).getRerankScore()).isEqualTo(0.99D);
+
+        rerankService.fail = true;
+        List<KnowledgeSearchResp> fallback = service.searchSimilar(req);
+
+        assertThat(fallback).extracting(KnowledgeSearchResp::getId).containsExactly(8L, 7L);
     }
 
     private static class FakeKnowledgeVectorRepository implements KnowledgeVectorRepository {
@@ -590,6 +703,7 @@ class KnowledgeServiceImplTest {
         private List<KnowledgeSearchHit> keywordHits = new ArrayList<>();
         private List<List<KnowledgeChunk>> savedBatches = new ArrayList<>();
         private List<Long> deletedDocumentIds = new ArrayList<>();
+        private List<Long> deletedVersionedDocumentIds = new ArrayList<>();
         private List<Long> lastKnowledgeBaseIds = new ArrayList<>();
         private KnowledgeSearchFilter lastFilter;
         private int lastTopK;
@@ -644,6 +758,24 @@ class KnowledgeServiceImplTest {
         public void deleteByDocumentId(Long documentId) {
             deletedDocumentIds.add(documentId);
         }
+
+        @Override
+        public void deleteByDocumentIdAndIndexVersion(Long documentId, Long indexVersion) {
+            deletedVersionedDocumentIds.add(documentId);
+        }
+    }
+
+    private static class FakeRerankService implements RerankService {
+        private List<RerankResult> results = List.of();
+        private boolean fail;
+
+        @Override
+        public List<RerankResult> rerank(RerankRequest req) {
+            if (fail) {
+                throw new RuntimeException("rerank timeout");
+            }
+            return results;
+        }
     }
 
     private static class FakeEmbeddingService implements EmbeddingService {
@@ -677,6 +809,9 @@ class KnowledgeServiceImplTest {
         po.setCandidateTopK(20);
         po.setScoreThreshold(0.65D);
         po.setRetrievalMode("VECTOR");
+        po.setHybridAlpha(0.7D);
+        po.setActiveIndexVersion(1L);
+        po.setIndexStatus("READY");
         return po;
     }
 

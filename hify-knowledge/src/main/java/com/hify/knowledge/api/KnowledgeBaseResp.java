@@ -31,6 +31,8 @@ public class KnowledgeBaseResp {
 
     private String retrievalMode;
 
+    private Double hybridAlpha;
+
     private Integer topK;
 
     private Integer candidateTopK;
@@ -48,6 +50,16 @@ public class KnowledgeBaseResp {
     private Long rerankModelConfigId;
 
     private Integer rerankTopN;
+
+    private Integer metadataFilterEnabled;
+
+    private String defaultMetadataFilterJson;
+
+    private Long activeIndexVersion;
+
+    private Long buildingIndexVersion;
+
+    private String indexStatus;
 
     private LocalDateTime createdAt;
 

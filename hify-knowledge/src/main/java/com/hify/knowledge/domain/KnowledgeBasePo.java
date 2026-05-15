@@ -32,6 +32,8 @@ public class KnowledgeBasePo extends BaseEntity {
 
     private String retrievalMode;
 
+    private Double hybridAlpha;
+
     private Integer topK;
 
     private Integer candidateTopK;
@@ -49,4 +51,14 @@ public class KnowledgeBasePo extends BaseEntity {
     private Long rerankModelConfigId;
 
     private Integer rerankTopN;
+
+    private Integer metadataFilterEnabled;
+
+    private String defaultMetadataFilterJson;
+
+    private Long activeIndexVersion;
+
+    private Long buildingIndexVersion;
+
+    private String indexStatus;
 }

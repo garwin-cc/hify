@@ -27,4 +27,11 @@ public interface KnowledgeVectorRepository {
     void deleteByKnowledgeBaseId(Long knowledgeBaseId);
 
     void deleteByDocumentId(Long documentId);
+
+    default void deleteByDocumentIdAndIndexVersion(Long documentId, Long indexVersion) {
+        deleteByDocumentId(documentId);
+    }
+
+    default void activateIndexVersion(Long knowledgeBaseId, Long indexVersion) {
+    }
 }

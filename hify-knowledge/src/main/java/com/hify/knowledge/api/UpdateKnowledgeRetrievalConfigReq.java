@@ -4,10 +4,16 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.Data;
 
+import java.util.Map;
+
 @Data
 public class UpdateKnowledgeRetrievalConfigReq {
 
     private String retrievalMode;
+
+    @Min(value = 0, message = "hybridAlpha 最小为 0")
+    @Max(value = 1, message = "hybridAlpha 最大为 1")
+    private Double hybridAlpha;
 
     @Min(value = 1, message = "topK 最小为 1")
     @Max(value = 50, message = "topK 最大为 50")
@@ -40,4 +46,8 @@ public class UpdateKnowledgeRetrievalConfigReq {
     @Min(value = 1, message = "rerankTopN 最小为 1")
     @Max(value = 100, message = "rerankTopN 最大为 100")
     private Integer rerankTopN;
+
+    private Integer metadataFilterEnabled;
+
+    private Map<String, Object> defaultMetadataFilter;
 }

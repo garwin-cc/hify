@@ -8,6 +8,7 @@ public record ToolConfig(
         Long mcpServerId,
         String toolName,
         Map<String, Object> inputMapping,
-        String outputVariable
+        String outputVariable,
+        Integer timeoutSeconds
 ) implements NodeConfigDef {
 }

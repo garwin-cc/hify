@@ -90,6 +90,7 @@ class NodeConfigParserTest {
                   "inputMapping": {
                     "query": "{{start.userMessage}}"
                   },
+                  "timeoutSeconds": 12,
                   "outputVariable": "result"
                 }
                 """));
@@ -99,6 +100,7 @@ class NodeConfigParserTest {
         assertThat(tool.mcpServerId()).isEqualTo(7L);
         assertThat(tool.toolName()).isEqualTo("search");
         assertThat(tool.inputMapping()).containsEntry("query", "{{start.userMessage}}");
+        assertThat(tool.timeoutSeconds()).isEqualTo(12);
         assertThat(tool.outputVariable()).isEqualTo("result");
     }
 
@@ -111,6 +113,7 @@ class NodeConfigParserTest {
                   "inputMapping": {
                     "query": "{{start.userMessage}}"
                   },
+                  "timeoutSeconds": 12,
                   "outputVariable": "result"
                 }
                 """);
@@ -120,6 +123,7 @@ class NodeConfigParserTest {
                 (com.hify.workflow.engine.executor.ToolConfig) config;
         assertThat(tool.mcpServerId()).isEqualTo(7L);
         assertThat(tool.toolName()).isEqualTo("search");
+        assertThat(tool.timeoutSeconds()).isEqualTo(12);
         assertThat(tool.outputVariable()).isEqualTo("result");
     }
 

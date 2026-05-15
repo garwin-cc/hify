@@ -211,16 +211,19 @@
 
 - 创建/更新 MCP Server 时校验 endpoint URL 协议（仅 http/https）、端口（黑名单 22/3306/5432 等）
 - 可配置内网 IP 段白名单，拒绝直接访问私有地址
+- 基于现有 `McpEndpointGuard` 加固：协议、端口白名单、端口黑名单、host allowlist、私有 CIDR allowlist、可选 DNS 解析后私网地址检查统一在创建/更新和调用前执行。
 
 ### 6-2 工具参数 Schema 校验
 
 - 工具调用前，用 MCP Server 同步到本地的 `input_schema` 对 LLM 生成的 arguments 做 JSON Schema 校验
 - 校验失败时不调用工具，将错误作为 tool message 返回 LLM
+- 一期支持 JSON Schema 常用子集：`required`、`properties`、`additionalProperties=false`、`enum`、嵌套 `object`、`array.items`、字符串长度/正则、数值范围；不追完整 Draft 规范。
 
 ### 6-3 工具调用超时与降级
 
 - `ToolNodeConfig` 和工具绑定增加 `timeoutSeconds` 配置
 - MCP 调用使用 `CompletableFuture.get(timeout)` 包裹，超时后返回受控错误，不阻塞 SSE 链路
+- Workflow `TOOL` 节点的单次 `timeoutSeconds` 转为 `McpToolCallRequest.timeoutMs`，优先级高于工具级和 Server 级默认超时。
 
 ---
 

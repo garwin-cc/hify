@@ -29,11 +29,12 @@ class ToolNodeExecutorTest {
 
         executor.execute(
                 new WorkflowNode("tool", "TOOL", "工具调用"),
-                new ToolConfig(7L, "search", inputMapping, "result"),
+                new ToolConfig(7L, "search", inputMapping, "result", 12),
                 ctx);
 
         assertThat(mcpClientService.request.getMcpServerId()).isEqualTo(7L);
         assertThat(mcpClientService.request.getToolName()).isEqualTo("search");
+        assertThat(mcpClientService.request.getTimeoutMs()).isEqualTo(12000);
         assertThat(mcpClientService.request.getWorkflowRunId()).isEqualTo(99L);
         assertThat(mcpClientService.request.getWorkflowNodeKey()).isEqualTo("tool");
         assertThat(mcpClientService.request.getSourceType()).isEqualTo("WORKFLOW");

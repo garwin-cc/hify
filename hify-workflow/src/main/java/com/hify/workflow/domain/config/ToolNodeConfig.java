@@ -6,6 +6,7 @@ public record ToolNodeConfig(
         Long mcpServerId,
         String toolName,
         Map<String, Object> inputMapping,
-        String outputVariable
+        String outputVariable,
+        Integer timeoutSeconds
 ) implements NodeConfig {
 }

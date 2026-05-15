@@ -57,7 +57,7 @@ public class McpClientServiceImpl implements McpClientService {
         ensureProjectAccess(server, request.getProjectId());
         mcpEndpointGuard.validate(server.getEndpoint());
         long start = System.currentTimeMillis();
-        int timeoutMs = effectiveTimeoutMs(server, tool);
+        int timeoutMs = effectiveTimeoutMs(request, server, tool);
         if (tool.getSchemaValidationEnabled() == null || tool.getSchemaValidationEnabled() == 1) {
             try {
                 schemaValidator.validate(tool.getInputSchema(), request.getArguments());
@@ -217,7 +217,10 @@ public class McpClientServiceImpl implements McpClientService {
         return Math.max(0, server.getRetryTimes() == null ? 0 : server.getRetryTimes());
     }
 
-    private int effectiveTimeoutMs(McpServerPo server, McpToolPo tool) {
+    private int effectiveTimeoutMs(McpToolCallRequest request, McpServerPo server, McpToolPo tool) {
+        if (request.getTimeoutMs() != null && request.getTimeoutMs() > 0) {
+            return request.getTimeoutMs();
+        }
         if (tool.getTimeoutMs() != null && tool.getTimeoutMs() > 0) {
             return tool.getTimeoutMs();
         }

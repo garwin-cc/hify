@@ -41,6 +41,51 @@ class McpToolSchemaValidatorTest {
                 .hasMessageContaining("不允许的参数");
     }
 
+    @Test
+    void acceptsNestedObjectArrayAndRangeConstraints() {
+        validator.validate(nestedSchema(), Map.of(
+                "query", "invoice-2026",
+                "filter", Map.of("department", "finance", "tags", List.of("policy", "expense")),
+                "limit", 20
+        ));
+    }
+
+    @Test
+    void rejectsNestedObjectAndArrayViolations() {
+        assertThatThrownBy(() -> validator.validate(nestedSchema(), Map.of(
+                "query", "invoice-2026",
+                "filter", Map.of("tags", List.of("policy"))
+        )))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("filter.department");
+
+        assertThatThrownBy(() -> validator.validate(nestedSchema(), Map.of(
+                "query", "invoice-2026",
+                "filter", Map.of("department", "finance", "tags", List.of("policy", 3))
+        )))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("filter.tags[1]");
+    }
+
+    @Test
+    void rejectsStringPatternLengthAndNumericRangeViolations() {
+        assertThatThrownBy(() -> validator.validate(nestedSchema(), Map.of(
+                "query", "bad value",
+                "filter", Map.of("department", "finance"),
+                "limit", 20
+        )))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("格式不匹配");
+
+        assertThatThrownBy(() -> validator.validate(nestedSchema(), Map.of(
+                "query", "invoice-2026",
+                "filter", Map.of("department", "finance"),
+                "limit", 200
+        )))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("超过最大值");
+    }
+
     private Map<String, Object> schema() {
         return Map.of(
                 "type", "object",
@@ -50,6 +95,39 @@ class McpToolSchemaValidatorTest {
                         "query", Map.of("type", "string"),
                         "topK", Map.of("type", "integer"),
                         "mode", Map.of("type", "string", "enum", List.of("fast", "safe"))
+                )
+        );
+    }
+
+    private Map<String, Object> nestedSchema() {
+        return Map.of(
+                "type", "object",
+                "required", List.of("query", "filter"),
+                "additionalProperties", false,
+                "properties", Map.of(
+                        "query", Map.of(
+                                "type", "string",
+                                "minLength", 3,
+                                "maxLength", 30,
+                                "pattern", "^[a-z0-9-]+$"
+                        ),
+                        "filter", Map.of(
+                                "type", "object",
+                                "required", List.of("department"),
+                                "additionalProperties", false,
+                                "properties", Map.of(
+                                        "department", Map.of("type", "string"),
+                                        "tags", Map.of(
+                                                "type", "array",
+                                                "items", Map.of("type", "string")
+                                        )
+                                )
+                        ),
+                        "limit", Map.of(
+                                "type", "integer",
+                                "minimum", 1,
+                                "maximum", 50
+                        )
                 )
         );
     }

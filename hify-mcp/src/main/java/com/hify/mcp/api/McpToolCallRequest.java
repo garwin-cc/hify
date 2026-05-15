@@ -21,4 +21,5 @@ public class McpToolCallRequest {
     private String workflowNodeKey;
     private String sourceType;
     private String sourceId;
+    private Integer timeoutMs;
 }

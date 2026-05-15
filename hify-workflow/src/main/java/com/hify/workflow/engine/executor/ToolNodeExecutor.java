@@ -37,6 +37,7 @@ public class ToolNodeExecutor extends AbstractNodeExecutor implements NodeExecut
             request.setWorkflowRunId(ctx.getWorkflowRunId());
             request.setWorkflowNodeKey(node.nodeKey());
             request.setSourceType("WORKFLOW");
+            request.setTimeoutMs(toTimeoutMs(toolConfig.timeoutSeconds()));
             String response = mcpClientService.callTool(request);
             ctx.recordCall(new WorkflowCallTrace(
                     "MCP",
@@ -74,6 +75,9 @@ public class ToolNodeExecutor extends AbstractNodeExecutor implements NodeExecut
         if (!StringUtils.hasText(config.toolName())) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "TOOL 缺少 MCP 工具名称");
         }
+        if (config.timeoutSeconds() != null && config.timeoutSeconds() < 1) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "TOOL timeoutSeconds 必须大于 0");
+        }
     }
 
     private Map<String, Object> resolveArguments(Map<String, Object> inputMapping, ExecutionContext ctx) {
@@ -104,5 +108,12 @@ public class ToolNodeExecutor extends AbstractNodeExecutor implements NodeExecut
 
     private static int elapsed(long startedAt) {
         return (int) Math.min(Integer.MAX_VALUE, System.currentTimeMillis() - startedAt);
+    }
+
+    private static Integer toTimeoutMs(Integer timeoutSeconds) {
+        if (timeoutSeconds == null) {
+            return null;
+        }
+        return Math.toIntExact(Math.min(Integer.MAX_VALUE, timeoutSeconds.longValue() * 1000));
     }
 }

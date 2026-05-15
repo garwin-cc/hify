@@ -7,6 +7,7 @@ public sealed interface NodeConfig permits
         ToolNodeConfig,
         ConditionNodeConfig,
         ReplyNodeConfig,
+        VariableAssignerNodeConfig,
         ApiCallNodeConfig,
         KnowledgeNodeConfig,
         HumanReviewNodeConfig,

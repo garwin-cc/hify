@@ -403,10 +403,19 @@
                 <el-select v-model="selectedConfig.method">
                   <el-option label="GET" value="GET" />
                   <el-option label="POST" value="POST" />
+                  <el-option label="PUT" value="PUT" />
+                  <el-option label="DELETE" value="DELETE" />
+                  <el-option label="PATCH" value="PATCH" />
                 </el-select>
               </el-form-item>
               <el-form-item label="Headers JSON">
                 <el-input v-model="selectedConfig.headersText" type="textarea" :rows="4" />
+              </el-form-item>
+              <el-form-item label="Body">
+                <el-input v-model="selectedConfig.body" type="textarea" :rows="5" placeholder='{"query":"{{start.userMessage}}"}' />
+              </el-form-item>
+              <el-form-item label="响应 JsonPath">
+                <el-input v-model="selectedConfig.responseJsonPath" placeholder="$.data.id" />
               </el-form-item>
               <el-form-item label="输出变量">
                 <el-input v-model="selectedConfig.outputVariable" placeholder="response" />
@@ -425,6 +434,18 @@
               </el-form-item>
               <el-form-item label="输出变量">
                 <el-input v-model="selectedConfig.outputVariable" placeholder="result" />
+              </el-form-item>
+            </template>
+
+            <template v-else-if="selectedNode.nodeType === 'REPLY'">
+              <el-form-item label="回复内容">
+                <el-input v-model="selectedConfig.content" type="textarea" :rows="6" />
+              </el-form-item>
+            </template>
+
+            <template v-else-if="selectedNode.nodeType === 'VARIABLE_ASSIGNER'">
+              <el-form-item label="变量赋值 JSON">
+                <el-input v-model="selectedConfig.assignmentsText" type="textarea" :rows="7" />
               </el-form-item>
             </template>
 
@@ -697,6 +718,9 @@
                 <span>{{ event.nodeKey || '-' }}</span>
                 <span>{{ event.status || '-' }}</span>
               </div>
+              <div v-if="event.eventType === 'NODE_REPLY'" class="event-reply">
+                {{ String(event.payload?.reply ?? '') }}
+              </div>
             </el-timeline-item>
           </el-timeline>
           <el-empty v-if="latestRunEvents.length === 0" description="暂无事件缓存，运行中会实时追加" :image-size="80" />
@@ -801,7 +825,7 @@ import { subscribeSse } from '@/api/sse'
 import { useAuthStore } from '@/stores/auth'
 import { notifySuccess } from '@/utils/notify'
 
-type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'TOOL' | 'END'
+type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'TOOL' | 'REPLY' | 'VARIABLE_ASSIGNER' | 'END'
 type NodeConfig = Record<string, any>
 type ValidationIssue = {
   key: string
@@ -872,6 +896,9 @@ const nodeTypes = [
   { type: 'CONDITION' as NodeType, label: '条件', short: 'C', description: '根据表达式分支' },
   { type: 'KNOWLEDGE' as NodeType, label: '知识库', short: 'K', description: '检索 RAG 内容' },
   { type: 'API_CALL' as NodeType, label: 'API 调用', short: 'A', description: '请求外部接口' },
+  { type: 'TOOL' as NodeType, label: '工具', short: 'T', description: '调用 MCP 工具' },
+  { type: 'REPLY' as NodeType, label: '中间回复', short: 'R', description: '向用户推送过程内容' },
+  { type: 'VARIABLE_ASSIGNER' as NodeType, label: '变量赋值', short: 'V', description: '写入工作流变量' },
   { type: 'HUMAN_REVIEW' as NodeType, label: '人工审核', short: 'H', description: '暂停等待人工确认' },
   { type: 'CODE_TASK' as NodeType, label: '代码任务', short: 'C', description: '调用 Code Worker 实现' },
   { type: 'END' as NodeType, label: '结束', short: 'E', description: '输出最终结果' },
@@ -982,6 +1009,12 @@ const selectedConfig = computed<NodeConfig>(() => {
       config.inputMappingText = JSON.stringify(config.inputMapping ?? {}, null, 2)
     }
   }
+  if (selectedNode.value.nodeType === 'VARIABLE_ASSIGNER') {
+    const config = selectedNode.value.config as NodeConfig
+    if (config.assignmentsText == null) {
+      config.assignmentsText = JSON.stringify(config.assignments ?? {}, null, 2)
+    }
+  }
   return selectedNode.value.config as NodeConfig
 })
 const previewJson = computed(() => JSON.stringify(normalizedConfig(), null, 2))
@@ -1041,6 +1074,15 @@ function normalizeNodeConfig(node: WorkflowNode) {
     }
     delete config.inputMappingText
   }
+  if (node.nodeType === 'VARIABLE_ASSIGNER') {
+    const assignmentsText = typeof config.assignmentsText === 'string' ? config.assignmentsText : '{}'
+    try {
+      config.assignments = JSON.parse(assignmentsText || '{}')
+    } catch {
+      config.assignments = {}
+    }
+    delete config.assignmentsText
+  }
   return config
 }
 
@@ -1090,12 +1132,35 @@ function buildVariableOptions(currentNodeKey?: string) {
   workflowConfig.nodes.forEach((node) => {
     if (node.nodeKey === currentNodeKey) return
     const config = (node.config ?? {}) as NodeConfig
+    if (node.nodeType === 'REPLY') {
+      const key = `${node.nodeKey}.reply`
+      options.push({ label: key, value: `{{${key}}}` })
+    }
+    if (node.nodeType === 'VARIABLE_ASSIGNER') {
+      const assignments = parseObjectText(config.assignmentsText, config.assignments)
+      Object.keys(assignments).forEach((variable) => {
+        const key = `${node.nodeKey}.${variable}`
+        options.push({ label: key, value: `{{${key}}}` })
+      })
+    }
     if (typeof config.outputVariable === 'string' && config.outputVariable.trim()) {
       const key = `${node.nodeKey}.${config.outputVariable.trim()}`
       options.push({ label: key, value: `{{${key}}}` })
     }
   })
   return options
+}
+
+function parseObjectText(text: unknown, fallback: unknown): Record<string, unknown> {
+  if (typeof text === 'string') {
+    try {
+      const parsed = JSON.parse(text || '{}')
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+  return fallback && typeof fallback === 'object' && !Array.isArray(fallback) ? fallback as Record<string, unknown> : {}
 }
 
 function buildValidationIssues(): ValidationIssue[] {
@@ -1190,6 +1255,9 @@ function buildValidationIssues(): ValidationIssue[] {
       if (!String(config.url ?? '').trim()) {
         issues.push({ key: `api-url-${node.nodeKey}`, level: 'error', message: `API 节点「${node.name}」缺少 URL`, nodeKey: node.nodeKey })
       }
+      if (!['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(String(config.method ?? 'GET').toUpperCase())) {
+        issues.push({ key: `api-method-${node.nodeKey}`, level: 'error', message: `API 节点「${node.name}」Method 不支持`, nodeKey: node.nodeKey })
+      }
       try {
         JSON.parse(String(config.headersText ?? '{}') || '{}')
       } catch {
@@ -1210,6 +1278,28 @@ function buildValidationIssues(): ValidationIssue[] {
         JSON.parse(String(config.inputMappingText ?? '{}') || '{}')
       } catch {
         issues.push({ key: `tool-input-${node.nodeKey}`, level: 'error', message: `工具节点「${node.name}」的参数映射 JSON 不合法`, nodeKey: node.nodeKey })
+      }
+    }
+    if (node.nodeType === 'REPLY') {
+      if (!String(config.content ?? '').trim()) {
+        issues.push({ key: `reply-content-${node.nodeKey}`, level: 'error', message: `中间回复节点「${node.name}」缺少回复内容`, nodeKey: node.nodeKey })
+      }
+    }
+    if (node.nodeType === 'VARIABLE_ASSIGNER') {
+      const variablePattern = /^[A-Za-z_][A-Za-z0-9_]*$/
+      try {
+        const assignments = JSON.parse(String(config.assignmentsText ?? '{}') || '{}')
+        const names = Object.keys(assignments)
+        if (names.length === 0) {
+          issues.push({ key: `assignments-empty-${node.nodeKey}`, level: 'error', message: `变量赋值节点「${node.name}」至少需要一个变量`, nodeKey: node.nodeKey })
+        }
+        names.forEach((name) => {
+          if (!variablePattern.test(name)) {
+            issues.push({ key: `assignments-name-${node.nodeKey}-${name}`, level: 'error', message: `变量赋值节点「${node.name}」变量名不合法：${name}`, nodeKey: node.nodeKey })
+          }
+        })
+      } catch {
+        issues.push({ key: `assignments-json-${node.nodeKey}`, level: 'error', message: `变量赋值节点「${node.name}」的变量赋值 JSON 不合法`, nodeKey: node.nodeKey })
       }
     }
     if (node.nodeType === 'CODE_TASK') {
@@ -1265,11 +1355,13 @@ function focusIssue(issue: ValidationIssue) {
 function defaultConfig(type: NodeType): NodeConfig {
   if (type === 'LLM') return { modelConfigId: 1, prompt: '{{start.userMessage}}', outputVariable: 'answer' }
   if (type === 'CONDITION') return { expression: 'true', outputVariable: 'matched' }
-  if (type === 'API_CALL') return { url: '', method: 'GET', headersText: '{}', outputVariable: 'response' }
+  if (type === 'API_CALL') return { url: '', method: 'GET', headersText: '{}', body: '{}', responseJsonPath: '', outputVariable: 'response' }
   if (type === 'KNOWLEDGE') return { knowledgeBaseId: undefined, query: '{{start.userMessage}}', topK: 3, outputVariable: 'context' }
   if (type === 'HUMAN_REVIEW') return { title: '人工审核', content: '{{start.userMessage}}', actions: ['APPROVE', 'REJECT'], allowEdit: false, outputVariable: 'result' }
   if (type === 'CODE_TASK') return { task: '{{start.userMessage}}', executor: 'MCP', mcpServerId: undefined, toolName: 'code_worker', timeoutSeconds: 600, outputVariable: 'result' }
   if (type === 'TOOL') return { mcpServerId: undefined, toolName: '', inputMappingText: '{\n  "query": "{{start.userMessage}}"\n}', outputVariable: 'result' }
+  if (type === 'REPLY') return { content: '正在处理：{{start.userMessage}}' }
+  if (type === 'VARIABLE_ASSIGNER') return { assignmentsText: '{\n  "summary": "{{start.userMessage}}"\n}' }
   if (type === 'END') return { outputVariable: '' }
   return {}
 }
@@ -1430,11 +1522,17 @@ function insertVariable(value: string) {
   } else if (selectedNode.value.nodeType === 'KNOWLEDGE') {
     config.query = `${config.query ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'API_CALL') {
-    config.url = `${config.url ?? ''}${value}`
+    config.body = `${config.body ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'HUMAN_REVIEW') {
     config.content = `${config.content ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'CODE_TASK') {
     config.task = `${config.task ?? ''}${value}`
+  } else if (selectedNode.value.nodeType === 'TOOL') {
+    config.inputMappingText = `${config.inputMappingText ?? ''}${value}`
+  } else if (selectedNode.value.nodeType === 'REPLY') {
+    config.content = `${config.content ?? ''}${value}`
+  } else if (selectedNode.value.nodeType === 'VARIABLE_ASSIGNER') {
+    config.assignmentsText = `${config.assignmentsText ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'END') {
     config.outputVariable = value.replace(/^\{\{|\}\}$/g, '')
   }
@@ -2759,6 +2857,13 @@ onBeforeUnmount(() => {
   color: #e5484d;
   font-size: var(--text-sm);
   line-height: 1.45;
+}
+
+.event-reply {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 1180px) {

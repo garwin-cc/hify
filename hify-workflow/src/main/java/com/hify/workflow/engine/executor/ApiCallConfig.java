@@ -8,6 +8,8 @@ public record ApiCallConfig(
         String url,
         String method,
         Map<String, String> headers,
+        String body,
+        String responseJsonPath,
         String outputVariable
 ) implements NodeConfigDef {
 }

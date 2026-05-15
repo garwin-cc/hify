@@ -28,9 +28,11 @@ public class WorkflowVariableService {
                 .eq(WorkflowNodePo::getWorkflowId, workflowId)
                 .orderByAsc(WorkflowNodePo::getId));
         for (WorkflowNodePo node : nodes) {
-            String outputVariable = outputVariable(node);
-            if (StringUtils.hasText(outputVariable)) {
-                variables.add(variable(node.getNodeKey(), node.getNodeType(), outputVariable, node.getName()));
+            List<String> outputVariables = outputVariables(node);
+            for (String outputVariable : outputVariables) {
+                if (StringUtils.hasText(outputVariable)) {
+                    variables.add(variable(node.getNodeKey(), node.getNodeType(), outputVariable, node.getName()));
+                }
             }
             variables.add(variable(node.getNodeKey(), node.getNodeType(), "error", node.getName() + " 错误"));
         }
@@ -47,27 +49,40 @@ public class WorkflowVariableService {
         return resp;
     }
 
-    private String outputVariable(WorkflowNodePo node) {
+    private List<String> outputVariables(WorkflowNodePo node) {
         if ("START".equalsIgnoreCase(node.getNodeType())) {
-            return null;
+            return List.of();
         }
         try {
             JsonNode config = objectMapper.readTree(node.getConfig());
+            if ("VARIABLE_ASSIGNER".equalsIgnoreCase(node.getNodeType())) {
+                JsonNode assignments = config.path("assignments");
+                if (assignments.isObject()) {
+                    List<String> names = new ArrayList<>();
+                    assignments.fieldNames().forEachRemaining(names::add);
+                    return names;
+                }
+            }
+            if ("REPLY".equalsIgnoreCase(node.getNodeType())) {
+                return List.of("reply");
+            }
             JsonNode output = config.path("outputVariable");
             if (output.isTextual() && StringUtils.hasText(output.asText())) {
-                return output.asText();
+                return List.of(output.asText());
             }
         } catch (Exception e) {
             log.warn("failed to parse workflow node config for variables workflowId={} nodeKey={}: {}",
                     node.getWorkflowId(), node.getNodeKey(), e.getMessage());
         }
-        return switch (node.getNodeType().toUpperCase()) {
+        String fallback = switch (node.getNodeType().toUpperCase()) {
             case "LLM" -> "answer";
             case "KNOWLEDGE" -> "chunks";
             case "API_CALL", "CODE_TASK", "CONDITION", "TOOL" -> "output";
             case "HUMAN_REVIEW" -> "result";
+            case "REPLY" -> "reply";
             case "END" -> "output";
             default -> null;
         };
+        return StringUtils.hasText(fallback) ? List.of(fallback) : List.of();
     }
 }

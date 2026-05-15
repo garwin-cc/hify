@@ -15,6 +15,7 @@ import com.hify.workflow.engine.executor.ConditionNodeConfig;
 import com.hify.workflow.engine.executor.LlmNodeConfig;
 import com.hify.workflow.engine.executor.NodeExecutor;
 import com.hify.workflow.engine.executor.NodeExecutorRegistry;
+import com.hify.workflow.engine.executor.ReplyNodeExecutor;
 import com.hify.workflow.infra.WorkflowEdgeMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
 import com.hify.workflow.infra.WorkflowNodeRunMapper;
@@ -489,6 +490,42 @@ class WorkflowEngineTest {
         });
     }
 
+    @Test
+    void publishesNodeReplyEventAndContinuesWorkflowWhenReplyNodeExecutes() {
+        RecordingWorkflowEventPublisher eventPublisher = new RecordingWorkflowEventPublisher();
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("reply", "REPLY", "{\"content\":\"处理中：{{start.userMessage}}\"}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"llm.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "reply", null, 0),
+                edge("reply", "llm", null, 0),
+                edge("llm", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new ReplyNodeExecutor(), new StubLlmExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                versionMapper,
+                new ObjectMapper(),
+                eventPublisher,
+                reviewHandler);
+
+        String output = engine.execute(10L, "hello");
+
+        assertThat(output).isEqualTo("answer: hello");
+        assertThat(eventPublisher.nodeEvents).anySatisfy(event -> {
+            assertThat(event.eventType()).isEqualTo("NODE_REPLY");
+            assertThat(event.nodeKey()).isEqualTo("reply");
+            assertThat(event.payload()).containsEntry("reply", "处理中：hello");
+        });
+    }
+
     private static WorkflowNodePo node(String key, String type, String config) {
         WorkflowNodePo po = new WorkflowNodePo();
         po.setWorkflowId(10L);
@@ -655,6 +692,23 @@ class WorkflowEngineTest {
         @Override
         public void publishNodeEvent(Long workflowRunId, String eventType, String nodeKey, String status, Map<String, Object> payload) {
         }
+    }
+
+    private static class RecordingWorkflowEventPublisher implements WorkflowEventPublisher {
+
+        private final List<NodeEvent> nodeEvents = new ArrayList<>();
+
+        @Override
+        public void publishRunEvent(Long workflowRunId, String eventType, String status, Map<String, Object> payload) {
+        }
+
+        @Override
+        public void publishNodeEvent(Long workflowRunId, String eventType, String nodeKey, String status, Map<String, Object> payload) {
+            nodeEvents.add(new NodeEvent(eventType, nodeKey, status, payload));
+        }
+    }
+
+    private record NodeEvent(String eventType, String nodeKey, String status, Map<String, Object> payload) {
     }
 
     private static class RecordingWorkflowReviewHandler implements WorkflowReviewHandler {

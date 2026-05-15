@@ -33,6 +33,38 @@ class WorkflowVariableServiceTest {
         });
     }
 
+    @Test
+    void should_expose_assignment_variables_when_variable_assigner_has_multiple_assignments() {
+        WorkflowNodePo assignNode = new WorkflowNodePo();
+        assignNode.setWorkflowId(7L);
+        assignNode.setNodeKey("assign");
+        assignNode.setNodeType("VARIABLE_ASSIGNER");
+        assignNode.setName("变量赋值");
+        assignNode.setConfig("""
+                {
+                  "assignments": {
+                    "summary": "{{start.userMessage}}",
+                    "status": "READY"
+                  }
+                }
+                """);
+        WorkflowNodeMapper workflowNodeMapper = mapper(List.of(assignNode));
+        WorkflowVariableService service = new WorkflowVariableService(workflowNodeMapper, new ObjectMapper());
+
+        List<WorkflowVariableResp> variables = service.listVariables(7L);
+
+        assertThat(variables).anySatisfy(variable -> {
+            assertThat(variable.getNodeKey()).isEqualTo("assign");
+            assertThat(variable.getVariable()).isEqualTo("summary");
+            assertThat(variable.getExpression()).isEqualTo("{{assign.summary}}");
+        });
+        assertThat(variables).anySatisfy(variable -> {
+            assertThat(variable.getNodeKey()).isEqualTo("assign");
+            assertThat(variable.getVariable()).isEqualTo("status");
+            assertThat(variable.getExpression()).isEqualTo("{{assign.status}}");
+        });
+    }
+
     private static WorkflowNodeMapper mapper(List<WorkflowNodePo> nodes) {
         return (WorkflowNodeMapper) Proxy.newProxyInstance(
                 WorkflowNodeMapper.class.getClassLoader(),

@@ -61,24 +61,39 @@ public class LlmHttpClient {
      * 同步 POST，自定义超时时间。长任务工作流可以显式传入更长超时。
      */
     public String post(String url, Map<String, String> headers, String body, int timeoutSeconds) {
+        return request("POST", url, headers, body, timeoutSeconds);
+    }
+
+    /**
+     * 同步 HTTP 请求，自定义方法和超时时间。
+     */
+    public String request(String method, String url, Map<String, String> headers, String body, int timeoutSeconds) {
         OkHttpClient client = streamClient.newBuilder()
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .callTimeout(timeoutSeconds + 5L, TimeUnit.SECONDS)
                 .build();
 
+        String httpMethod = method == null || method.isBlank()
+                ? "GET"
+                : method.toUpperCase(java.util.Locale.ROOT);
         Request.Builder builder = new Request.Builder().url(url);
         headers.forEach(builder::header);
-        Request request = builder.post(RequestBody.create(body, JSON)).build();
+        if ("GET".equals(httpMethod)) {
+            builder.get();
+        } else {
+            builder.method(httpMethod, RequestBody.create(body == null ? "" : body, JSON));
+        }
+        Request request = builder.build();
 
         long start = System.currentTimeMillis();
         try (Response response = client.newCall(request).execute()) {
             int status = response.code();
-            log.info("LLM POST {} status={} elapsed={}ms", url, status, elapsed(start));
+            log.info("LLM {} {} status={} elapsed={}ms", httpMethod, url, status, elapsed(start));
             if (!response.isSuccessful()) {
                 String errorBody = readBody(response);
-                log.warn("LLM POST {} status={} body={} elapsed={}ms",
-                        url, status, abbreviate(errorBody), elapsed(start));
+                log.warn("LLM {} {} status={} body={} elapsed={}ms",
+                        httpMethod, url, status, abbreviate(errorBody), elapsed(start));
                 throw classify(status, errorBody, null);
             }
             ResponseBody responseBody = response.body();
@@ -86,11 +101,11 @@ public class LlmHttpClient {
         } catch (LlmApiException e) {
             throw e;
         } catch (SocketTimeoutException e) {
-            log.warn("LLM POST {} timeout elapsed={}ms", url, elapsed(start));
+            log.warn("LLM {} {} timeout elapsed={}ms", httpMethod, url, elapsed(start));
             throw new LlmApiException(LlmApiException.Type.TIMEOUT,
                     "LLM 请求超时: " + url, e);
         } catch (IOException e) {
-            log.warn("LLM POST {} error elapsed={}ms: {}", url, elapsed(start), e.getMessage());
+            log.warn("LLM {} {} error elapsed={}ms: {}", httpMethod, url, elapsed(start), e.getMessage());
             throw new LlmApiException(LlmApiException.Type.UNKNOWN,
                     "LLM 请求异常: " + url, e);
         }
@@ -165,36 +180,7 @@ public class LlmHttpClient {
      * @throws LlmApiException TIMEOUT / AUTH_FAILED / RATE_LIMITED / UNKNOWN
      */
     public String get(String url, Map<String, String> headers, int timeoutSeconds) {
-        OkHttpClient client = streamClient.newBuilder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                .callTimeout(timeoutSeconds + 5L, TimeUnit.SECONDS)
-                .build();
-
-        Request.Builder builder = new Request.Builder().url(url).get();
-        headers.forEach(builder::header);
-
-        long start = System.currentTimeMillis();
-        try (Response response = client.newCall(builder.build()).execute()) {
-            int status = response.code();
-            log.info("LLM GET {} status={} elapsed={}ms", url, status, elapsed(start));
-            if (!response.isSuccessful()) {
-                String errorBody = readBody(response);
-                log.warn("LLM GET {} status={} body={} elapsed={}ms",
-                        url, status, abbreviate(errorBody), elapsed(start));
-                throw classify(status, errorBody, null);
-            }
-            ResponseBody responseBody = response.body();
-            return responseBody != null ? responseBody.string() : "";
-        } catch (LlmApiException e) {
-            throw e;
-        } catch (SocketTimeoutException e) {
-            log.warn("LLM GET {} timeout elapsed={}ms", url, elapsed(start));
-            throw new LlmApiException(LlmApiException.Type.TIMEOUT, "GET 请求超时: " + url, e);
-        } catch (IOException e) {
-            log.warn("LLM GET {} error elapsed={}ms: {}", url, elapsed(start), e.getMessage());
-            throw new LlmApiException(LlmApiException.Type.UNKNOWN, "GET 请求异常: " + url, e);
-        }
+        return request("GET", url, headers, null, timeoutSeconds);
     }
 
     // ------------------------------------------------------------------ 私有方法

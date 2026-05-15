@@ -170,6 +170,7 @@ public class WorkflowEngine {
                     }
                     checkTimeout(workflowRun);
                     updateNodeRunSuccess(nodeRun, ctx, nodeStartedAt);
+                    publishReplyEventIfNeeded(workflowRun.getId(), current, ctx, nodeStartedAt);
                     workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_SUCCEEDED", currentKey, STATUS_SUCCESS,
                             Map.of("nodeType", current.getNodeType(), "elapsedMs", elapsed(nodeStartedAt)));
                     currentKey = findNext(current, edgeMap, ctx);
@@ -214,6 +215,17 @@ public class WorkflowEngine {
         return workflowNodeMapper.selectList(Wrappers.lambdaQuery(WorkflowNodePo.class)
                 .eq(WorkflowNodePo::getWorkflowId, workflowId)
                 .orderByAsc(WorkflowNodePo::getId));
+    }
+
+    private void publishReplyEventIfNeeded(Long workflowRunId, WorkflowNodePo node, ExecutionContext ctx, long nodeStartedAt) {
+        if (!"REPLY".equalsIgnoreCase(node.getNodeType())) {
+            return;
+        }
+        Object reply = ctx.get(node.getNodeKey(), "reply");
+        workflowEventPublisher.publishNodeEvent(workflowRunId, "NODE_REPLY", node.getNodeKey(), STATUS_SUCCESS,
+                Map.of("nodeType", node.getNodeType(),
+                        "reply", reply == null ? "" : reply,
+                        "elapsedMs", elapsed(nodeStartedAt)));
     }
 
     private List<WorkflowEdgePo> loadEdges(Long workflowId) {

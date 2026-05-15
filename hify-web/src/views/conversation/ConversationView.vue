@@ -496,6 +496,10 @@ function appendWorkflowEvent(aiIdx: number, text: string) {
 }
 
 function formatWorkflowEvent(event: WorkflowRunEvent): string {
+  if (event.eventType === 'NODE_REPLY') {
+    const reply = String(event.payload?.reply ?? '')
+    return reply ? `${event.nodeKey}: ${reply}` : `${event.nodeKey}: NODE_REPLY`
+  }
   if (event.nodeKey) {
     return `${event.nodeKey}: ${event.status ?? event.eventType}`
   }

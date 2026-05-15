@@ -124,6 +124,91 @@ class NodeConfigParserTest {
     }
 
     @Test
+    void should_parse_api_call_config_with_body_and_response_json_path() throws Exception {
+        NodeConfig config = parser.parse("API_CALL", new ObjectMapper().readTree("""
+                {
+                  "url": "https://api.example.test/orders",
+                  "method": "PATCH",
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": "{\\"name\\":\\"{{start.userMessage}}\\"}",
+                  "responseJsonPath": "$.data.id",
+                  "outputVariable": "orderId"
+                }
+                """));
+
+        assertThat(config).isInstanceOf(ApiCallNodeConfig.class);
+        ApiCallNodeConfig apiCall = (ApiCallNodeConfig) config;
+        assertThat(apiCall.method()).isEqualTo("PATCH");
+        assertThat(apiCall.body()).contains("start.userMessage");
+        assertThat(apiCall.responseJsonPath()).isEqualTo("$.data.id");
+
+        com.hify.workflow.engine.NodeConfigDef executionConfig = parser.parseExecutionConfig("API_CALL", """
+                {
+                  "url": "https://api.example.test/orders",
+                  "method": "PATCH",
+                  "body": "{\\"name\\":\\"{{start.userMessage}}\\"}",
+                  "responseJsonPath": "$.data.id",
+                  "outputVariable": "orderId"
+                }
+                """);
+
+        assertThat(executionConfig).isInstanceOf(com.hify.workflow.engine.executor.ApiCallConfig.class);
+        com.hify.workflow.engine.executor.ApiCallConfig apiExecutionConfig =
+                (com.hify.workflow.engine.executor.ApiCallConfig) executionConfig;
+        assertThat(apiExecutionConfig.body()).contains("start.userMessage");
+        assertThat(apiExecutionConfig.responseJsonPath()).isEqualTo("$.data.id");
+    }
+
+    @Test
+    void should_parse_reply_execution_config_when_node_type_is_reply() {
+        com.hify.workflow.engine.NodeConfigDef config = parser.parseExecutionConfig("REPLY", """
+                {
+                  "content": "处理中：{{start.userMessage}}"
+                }
+                """);
+
+        assertThat(config).isInstanceOf(com.hify.workflow.engine.executor.ReplyConfig.class);
+        com.hify.workflow.engine.executor.ReplyConfig reply =
+                (com.hify.workflow.engine.executor.ReplyConfig) config;
+        assertThat(reply.content()).contains("start.userMessage");
+    }
+
+    @Test
+    void should_parse_variable_assigner_config_into_typed_record() throws Exception {
+        NodeConfig config = parser.parse("VARIABLE_ASSIGNER", new ObjectMapper().readTree("""
+                {
+                  "assignments": {
+                    "summary": "用户：{{start.userMessage}}",
+                    "status": "READY"
+                  }
+                }
+                """));
+
+        assertThat(config).isInstanceOf(VariableAssignerNodeConfig.class);
+        VariableAssignerNodeConfig assigner = (VariableAssignerNodeConfig) config;
+        assertThat(assigner.assignments()).containsEntry("summary", "用户：{{start.userMessage}}");
+        assertThat(assigner.assignments()).containsEntry("status", "READY");
+    }
+
+    @Test
+    void should_parse_variable_assigner_execution_config_when_node_type_is_variable_assigner() {
+        com.hify.workflow.engine.NodeConfigDef config = parser.parseExecutionConfig("VARIABLE_ASSIGNER", """
+                {
+                  "assignments": {
+                    "summary": "用户：{{start.userMessage}}"
+                  }
+                }
+                """);
+
+        assertThat(config).isInstanceOf(com.hify.workflow.engine.executor.VariableAssignerConfig.class);
+        com.hify.workflow.engine.executor.VariableAssignerConfig assigner =
+                (com.hify.workflow.engine.executor.VariableAssignerConfig) config;
+        assertThat(assigner.assignments()).containsEntry("summary", "用户：{{start.userMessage}}");
+    }
+
+    @Test
     void rejectsUnsupportedNodeType() {
         assertThatThrownBy(() -> parser.parse("UNKNOWN", new ObjectMapper().createObjectNode()))
                 .isInstanceOf(BizException.class)

@@ -15,6 +15,7 @@ public enum WorkflowNodeType {
     CODE_TASK,
     TOOL,
     REPLY,
+    VARIABLE_ASSIGNER,
     END;
 
     public static WorkflowNodeType parse(String value) {

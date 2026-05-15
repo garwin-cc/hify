@@ -448,6 +448,51 @@ public class AgentServiceImpl implements AgentService {
         recordAudit("AGENT_API_KEY_REVOKE", agent, apiKeyAudit(key), apiKeyAudit(key), true, null);
     }
 
+    @Override
+    @Transactional
+    public AgentApiKeyAuthResp authenticateApiKey(String endpointPath, String apiKey) {
+        if (!StringUtils.hasText(endpointPath) || !StringUtils.hasText(apiKey)) {
+            throw new BizException(ErrorCode.UNAUTHORIZED, "API Key 认证失败");
+        }
+        AgentAppPo app = agentAppMapper.selectOne(new LambdaQueryWrapper<AgentAppPo>()
+                .eq(AgentAppPo::getEndpointPath, normalizeEndpointPath(endpointPath))
+                .eq(AgentAppPo::getStatus, "ACTIVE")
+                .last("LIMIT 1"));
+        if (app == null || !Integer.valueOf(1).equals(app.getApiEnabled())) {
+            throw new BizException(ErrorCode.UNAUTHORIZED, "API Key 认证失败");
+        }
+        AgentPo agent = requireAgent(app.getAgentId());
+        if (!Integer.valueOf(1).equals(agent.getEnabled())) {
+            throw new BizException(ErrorCode.FORBIDDEN, "Agent 已禁用");
+        }
+        AgentApiKeyPo key = agentApiKeyMapper.selectOne(new LambdaQueryWrapper<AgentApiKeyPo>()
+                .eq(AgentApiKeyPo::getAgentAppId, app.getId())
+                .eq(AgentApiKeyPo::getKeyHash, sha256(apiKey))
+                .eq(AgentApiKeyPo::getStatus, "ACTIVE")
+                .last("LIMIT 1"));
+        if (key == null) {
+            throw new BizException(ErrorCode.UNAUTHORIZED, "API Key 认证失败");
+        }
+        AgentVersionPo version = agentVersionMapper.selectById(app.getPublishedVersionId());
+        if (version == null || !app.getAgentId().equals(version.getAgentId())
+                || !"PUBLISHED".equals(version.getStatus())) {
+            throw new BizException(ErrorCode.FORBIDDEN, "Agent App 未绑定可用发布版本");
+        }
+        key.setLastUsedAt(LocalDateTime.now());
+        agentApiKeyMapper.updateById(key);
+
+        AgentApiKeyAuthResp resp = new AgentApiKeyAuthResp();
+        resp.setAgentId(agent.getId());
+        resp.setAppId(app.getId());
+        resp.setApiKeyId(key.getId());
+        resp.setProjectId(agent.getProjectId());
+        resp.setAgentVersionId(version.getId());
+        resp.setAgentVersionNo(version.getVersionNo());
+        resp.setEndpointPath(app.getEndpointPath());
+        resp.setAgent(buildDetailResp(agent, version));
+        return resp;
+    }
+
     // ── private helpers ───────────────────────────────────────────────
 
     /**
@@ -703,6 +748,10 @@ public class AgentServiceImpl implements AgentService {
         if (!StringUtils.hasText(endpointPath)) {
             return "/api/agents/" + agentId;
         }
+        return normalizeEndpointPath(endpointPath);
+    }
+
+    private static String normalizeEndpointPath(String endpointPath) {
         String normalized = endpointPath.trim();
         return normalized.startsWith("/") ? normalized : "/" + normalized;
     }
@@ -725,6 +774,10 @@ public class AgentServiceImpl implements AgentService {
         } catch (Exception e) {
             throw new BizException(ErrorCode.INTERNAL_ERROR, "API Key 哈希生成失败");
         }
+    }
+
+    static String sha256ForTest(String value) {
+        return sha256(value);
     }
 
     private static AgentPo buildAgentPo(CreateAgentReq req) {
@@ -782,6 +835,35 @@ public class AgentServiceImpl implements AgentService {
         resp.setEnabled(po.getEnabled());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
+        return resp;
+    }
+
+    private static AgentDetailResp buildDetailResp(AgentPo agent, AgentVersionPo version) {
+        AgentDetailResp resp = new AgentDetailResp();
+        resp.setId(agent.getId());
+        resp.setWorkspaceId(agent.getWorkspaceId());
+        resp.setProjectId(agent.getProjectId());
+        resp.setName(version.getName());
+        resp.setDescription(version.getDescription());
+        resp.setSystemPrompt(version.getSystemPrompt());
+        resp.setModelConfigId(version.getModelConfigId());
+        resp.setWorkflowId(version.getWorkflowId());
+        resp.setKnowledgeBaseIds(safeList(version.getKnowledgeBaseIdsJson()));
+        resp.setTemperature(version.getTemperature());
+        resp.setMaxTokens(version.getMaxTokens());
+        resp.setMaxContextTurns(version.getMaxContextTurns());
+        resp.setMemoryEnabled(version.getMemoryEnabled());
+        resp.setSummaryTriggerMessageCount(version.getSummaryTriggerMessageCount());
+        resp.setSummaryMaxTokens(version.getSummaryMaxTokens());
+        resp.setSummaryModelConfigId(version.getSummaryModelConfigId());
+        resp.setToolIds(safeList(version.getToolIdsJson()));
+        resp.setDraftVersionNo(version.getVersionNo());
+        resp.setPublishedVersionId(version.getId());
+        resp.setPublishStatus("PUBLISHED");
+        resp.setMaxToolRounds(normalizeMaxToolRounds(version.getMaxToolRounds()));
+        resp.setEnabled(agent.getEnabled());
+        resp.setCreatedAt(agent.getCreatedAt());
+        resp.setUpdatedAt(agent.getUpdatedAt());
         return resp;
     }
 

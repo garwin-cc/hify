@@ -44,5 +44,7 @@ public interface ConversationService {
 
     SseEmitter sendMessage(Long agentId, Long sessionId, String content, Long userId, Long appId, Long apiKeyId);
 
+    SseEmitter sendMessageByApiKey(String endpointPath, String apiKey, Long sessionId, String content);
+
     SseEmitter sendMessageToSession(Long sessionId, String content);
 }

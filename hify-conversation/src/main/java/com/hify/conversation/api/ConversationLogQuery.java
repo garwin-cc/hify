@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 public class ConversationLogQuery {
 
     private Long userId;
+    private Long projectId;
     private Long agentId;
     private Long appId;
     private Long apiKeyId;

@@ -12,6 +12,7 @@ public class ConversationLogResp {
     private Long userMessageId;
     private Long assistantMessageId;
     private Long userId;
+    private Long projectId;
     private Long appId;
     private Long apiKeyId;
     private Long agentId;

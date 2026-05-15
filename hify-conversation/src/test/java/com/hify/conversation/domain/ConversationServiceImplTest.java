@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hify.agent.api.AgentDetailResp;
+import com.hify.agent.api.AgentApiKeyAuthResp;
 import com.hify.agent.api.AgentService;
 import com.hify.common.metrics.HifyMetrics;
 import com.hify.common.ratelimit.RateLimitResult;
@@ -314,6 +315,31 @@ class ConversationServiceImplTest {
 
         conversationService.sendMessage(3L, null, "你好", 5L, 6L, 7L);
 
+        verify(sessionMapper, never()).insert(any(ChatSessionPo.class));
+        verify(messageMapper, never()).insert(any(ChatMessagePo.class));
+        verify(llmExecutor, never()).execute(any(Runnable.class));
+    }
+
+    @Test
+    void should_authenticate_api_key_and_use_published_snapshot_when_public_stream_called() {
+        AgentDetailResp publishedAgent = enabledAgent(3L);
+        publishedAgent.setSystemPrompt("published prompt");
+        publishedAgent.setPublishedVersionId(200L);
+        publishedAgent.setDraftVersionNo(3);
+        AgentApiKeyAuthResp auth = new AgentApiKeyAuthResp();
+        auth.setAgentId(3L);
+        auth.setAppId(6L);
+        auth.setApiKeyId(7L);
+        auth.setAgentVersionId(200L);
+        auth.setAgentVersionNo(3);
+        auth.setAgent(publishedAgent);
+        when(agentService.authenticateApiKey("/app/support", "hify_test_key")).thenReturn(auth);
+        when(rateLimitService.check(any())).thenReturn(RateLimitResult.rejected(3));
+        conversationService.setRateLimitService(rateLimitService);
+
+        conversationService.sendMessageByApiKey("/app/support", "hify_test_key", null, "你好");
+
+        verify(agentService, never()).getDetail(3L);
         verify(sessionMapper, never()).insert(any(ChatSessionPo.class));
         verify(messageMapper, never()).insert(any(ChatMessagePo.class));
         verify(llmExecutor, never()).execute(any(Runnable.class));

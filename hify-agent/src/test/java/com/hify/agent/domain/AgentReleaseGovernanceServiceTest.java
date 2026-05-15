@@ -105,6 +105,42 @@ class AgentReleaseGovernanceServiceTest {
                 .hasMessageContaining("已发布");
     }
 
+    @Test
+    void authenticateApiKeyReturnsPublishedVersionSnapshot() {
+        AgentPo draftAgent = agentPo();
+        draftAgent.setSystemPrompt("draft prompt");
+        AgentAppPo app = new AgentAppPo();
+        app.setId(21L);
+        app.setAgentId(100L);
+        app.setPublishedVersionId(200L);
+        app.setEndpointPath("/app/support");
+        app.setApiEnabled(1);
+        app.setStatus("ACTIVE");
+        AgentApiKeyPo key = new AgentApiKeyPo();
+        key.setId(31L);
+        key.setAgentAppId(21L);
+        key.setKeyHash(AgentServiceImpl.sha256ForTest("hify_test_key"));
+        key.setStatus("ACTIVE");
+        AgentVersionPo published = version(3, "PUBLISHED");
+        published.setId(200L);
+        published.setSystemPrompt("published prompt");
+        published.setModelConfigId(99L);
+        when(agentAppMapper.selectOne(any())).thenReturn(app);
+        when(agentMapper.selectById(100L)).thenReturn(draftAgent);
+        when(agentApiKeyMapper.selectOne(any())).thenReturn(key);
+        when(agentVersionMapper.selectById(200L)).thenReturn(published);
+
+        AgentApiKeyAuthResp resp = service.authenticateApiKey("/app/support", "hify_test_key");
+
+        assertThat(resp.getAppId()).isEqualTo(21L);
+        assertThat(resp.getApiKeyId()).isEqualTo(31L);
+        assertThat(resp.getAgentVersionId()).isEqualTo(200L);
+        assertThat(resp.getAgent().getSystemPrompt()).isEqualTo("published prompt");
+        assertThat(resp.getAgent().getModelConfigId()).isEqualTo(99L);
+        verify(agentApiKeyMapper).updateById(key);
+        assertThat(key.getLastUsedAt()).isNotNull();
+    }
+
     private static CreateAgentReq createReq() {
         CreateAgentReq req = new CreateAgentReq();
         req.setName("assistant");

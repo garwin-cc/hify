@@ -1,5 +1,7 @@
 package com.hify.conversation.web;
 
+import com.hify.auth.api.PermissionAction;
+import com.hify.auth.api.RequireProjectPermission;
 import com.hify.conversation.api.ConversationService;
 import com.hify.conversation.api.SendMessageReq;
 import com.hify.common.web.Result;
@@ -58,6 +60,7 @@ public class ConversationController {
     }
 
     @GetMapping("/logs")
+    @RequireProjectPermission(action = PermissionAction.READ)
     public Result<CursorPageResp<ConversationLogResp>> listConversationLogs(ConversationLogQuery query) {
         return Result.ok(conversationService.listConversationLogs(query));
     }

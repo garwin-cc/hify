@@ -57,7 +57,8 @@ public class AuthInterceptor implements HandlerInterceptor {
                     throw new BizException(ErrorCode.FORBIDDEN);
                 }
                 RequireProjectPermission requireProjectPermission = findRequireProjectPermission(handlerMethod);
-                if (projectPermissionEnabled && requireProjectPermission != null && permissionService != null) {
+                if (projectPermissionEnabled && requireProjectPermission != null && permissionService != null
+                        && user.getRole() != UserRole.ADMIN) {
                     Long projectId = resolveProjectId(request, requireProjectPermission.projectIdParam());
                     if (!permissionService.canAccessProject(user, projectId, requireProjectPermission.action())) {
                         throw new BizException(ErrorCode.FORBIDDEN);
@@ -80,6 +81,7 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     private boolean isPublicPath(String path) {
         return path.startsWith("/api/v1/auth/login")
+                || path.startsWith("/api/v1/public/")
                 || path.startsWith("/api/v1/health")
                 || path.startsWith("/actuator/");
     }

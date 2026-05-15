@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hify.agent.api.AgentApiKeyAuthResp;
 import com.hify.agent.api.AgentDetailResp;
 import com.hify.agent.api.AgentService;
 import com.hify.common.exception.BizException;
@@ -240,6 +241,7 @@ public class ConversationServiceImpl implements ConversationService {
                 Wrappers.lambdaQuery(ConversationTracePo.class)
                         .eq(q.getUserId() != null, ConversationTracePo::getUserId, q.getUserId())
                         .eq(q.getAgentId() != null, ConversationTracePo::getAgentId, q.getAgentId())
+                        .eq(q.getProjectId() != null, ConversationTracePo::getProjectId, q.getProjectId())
                         .eq(q.getAppId() != null, ConversationTracePo::getAppId, q.getAppId())
                         .eq(q.getApiKeyId() != null, ConversationTracePo::getApiKeyId, q.getApiKeyId())
                         .eq(q.getModelConfigId() != null, ConversationTracePo::getModelConfigId, q.getModelConfigId())
@@ -364,9 +366,21 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     public SseEmitter sendMessage(Long agentId, Long sessionId, String content, Long userId, Long appId, Long apiKeyId) {
+        AgentDetailResp agent = loadAgent(agentId);
+        return sendMessage(agent, sessionId, content, userId, appId, apiKeyId);
+    }
+
+    @Override
+    public SseEmitter sendMessageByApiKey(String endpointPath, String apiKey, Long sessionId, String content) {
+        AgentApiKeyAuthResp auth = agentService.authenticateApiKey(endpointPath, apiKey);
+        return sendMessage(auth.getAgent(), sessionId, content, 0L, auth.getAppId(), auth.getApiKeyId());
+    }
+
+    private SseEmitter sendMessage(AgentDetailResp agent, Long sessionId, String content,
+                                   Long userId, Long appId, Long apiKeyId) {
+        Long agentId = agent.getId();
         String traceId = TraceContext.ensureTraceId();
         TraceContext.put("agentId", agentId);
-        AgentDetailResp agent = loadAgent(agentId);
         ConversationRequestContext requestContext = new ConversationRequestContext(
                 userId == null ? 0L : userId, appId, apiKeyId);
         RateLimitResult rateLimit = checkConversationRateLimit(agentId, requestContext);
@@ -997,6 +1011,7 @@ public class ConversationServiceImpl implements ConversationService {
             po.setTraceId(traceId);
             po.setSessionId(session.getId());
             po.setUserId(session.getUserId());
+            po.setProjectId(agent.getProjectId());
             po.setAppId(session.getAppId());
             po.setApiKeyId(session.getApiKeyId());
             po.setUserMessageId(userMsgId);
@@ -1864,6 +1879,7 @@ public class ConversationServiceImpl implements ConversationService {
         resp.setUserMessageId(po.getUserMessageId());
         resp.setAssistantMessageId(po.getAssistantMessageId());
         resp.setUserId(po.getUserId());
+        resp.setProjectId(po.getProjectId());
         resp.setAppId(po.getAppId());
         resp.setApiKeyId(po.getApiKeyId());
         resp.setAgentId(po.getAgentId());

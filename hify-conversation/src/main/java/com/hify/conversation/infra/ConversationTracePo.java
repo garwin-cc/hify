@@ -15,6 +15,7 @@ public class ConversationTracePo extends BaseEntity {
     private String traceId;
     private Long sessionId;
     private Long userId;
+    private Long projectId;
     private Long appId;
     private Long apiKeyId;
     private Long userMessageId;

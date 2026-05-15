@@ -39,4 +39,6 @@ public interface AgentService {
     List<AgentApiKeyResp> listApiKeys(Long appId);
 
     void revokeApiKey(Long appId, Long keyId);
+
+    AgentApiKeyAuthResp authenticateApiKey(String endpointPath, String apiKey);
 }

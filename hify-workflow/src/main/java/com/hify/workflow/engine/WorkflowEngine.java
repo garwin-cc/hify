@@ -8,6 +8,7 @@ import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.http.LlmApiException;
 import com.hify.common.log.TraceContext;
+import com.hify.common.metrics.HifyMetrics;
 import com.hify.workflow.domain.WorkflowEdgePo;
 import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
@@ -48,6 +49,12 @@ public class WorkflowEngine {
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_TIMEOUT = "TIMEOUT";
     private static final String STATUS_WAITING = "WAITING";
+    private HifyMetrics hifyMetrics;
+
+    @Autowired(required = false)
+    public void setHifyMetrics(HifyMetrics hifyMetrics) {
+        this.hifyMetrics = hifyMetrics;
+    }
     private static final String RUN_MODE_SYNC = "SYNC";
     private static final int MAX_STEPS = 50;
 
@@ -563,6 +570,7 @@ public class WorkflowEngine {
         } catch (Exception e) {
             log.warn("failed to update workflow run success id={}: {}", po.getId(), e.getMessage());
         }
+        recordWorkflowMetric(STATUS_SUCCESS, po.getElapsedMs());
     }
 
     private void updateWorkflowRunWaiting(WorkflowRunPo po, String currentNodeKey, ExecutionContext ctx) {
@@ -574,6 +582,7 @@ public class WorkflowEngine {
         } catch (Exception e) {
             log.warn("failed to update workflow run waiting id={}: {}", po.getId(), e.getMessage());
         }
+        recordWorkflowMetric(STATUS_WAITING, 0);
     }
 
     private void updateWorkflowRunFailed(WorkflowRunPo po, Exception exception, long startedAt) {
@@ -585,6 +594,13 @@ public class WorkflowEngine {
             workflowRunMapper.updateById(po);
         } catch (Exception e) {
             log.warn("failed to update workflow run failed id={}: {}", po.getId(), e.getMessage());
+        }
+        recordWorkflowMetric(po.getStatus(), po.getElapsedMs());
+    }
+
+    private void recordWorkflowMetric(String status, Integer elapsedMs) {
+        if (hifyMetrics != null) {
+            hifyMetrics.recordWorkflowRun(status, elapsedMs == null ? 0L : elapsedMs);
         }
     }
 

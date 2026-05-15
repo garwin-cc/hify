@@ -14,6 +14,7 @@ import com.hify.common.http.LlmApiException;
 import com.hify.common.log.TraceContext;
 import com.hify.common.metrics.HifyMetrics;
 import com.hify.common.ratelimit.RateLimitDimension;
+import com.hify.common.ratelimit.RateLimitQuotaService;
 import com.hify.common.ratelimit.RateLimitResult;
 import com.hify.common.ratelimit.RateLimitRule;
 import com.hify.common.ratelimit.RateLimitService;
@@ -128,6 +129,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final HifyMetrics       hifyMetrics;
     private final ToolArgumentSchemaValidator toolArgumentSchemaValidator = new ToolArgumentSchemaValidator();
     private RateLimitService rateLimitService;
+    private RateLimitQuotaService rateLimitQuotaService;
 
     @Qualifier("llmExecutor")
     private final ThreadPoolExecutor llmExecutor;
@@ -142,6 +144,11 @@ public class ConversationServiceImpl implements ConversationService {
     @Autowired(required = false)
     public void setRateLimitService(RateLimitService rateLimitService) {
         this.rateLimitService = rateLimitService;
+    }
+
+    @Autowired(required = false)
+    public void setRateLimitQuotaService(RateLimitQuotaService rateLimitQuotaService) {
+        this.rateLimitQuotaService = rateLimitQuotaService;
     }
 
     @Autowired(required = false)
@@ -406,9 +413,12 @@ public class ConversationServiceImpl implements ConversationService {
 
         SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS);
         AtomicBoolean cancelled = new AtomicBoolean(false);
+        AtomicBoolean sseClosed = new AtomicBoolean(false);
+        hifyMetrics.incrementSseActiveConnections();
 
         // SseEmitter 自身超时：OkHttp 未及时抛出 TIMEOUT 时的最后兜底
         emitter.onTimeout(() -> {
+            closeSseMetric(sseClosed);
             log.warn("SSE emitter timeout traceId={} sessionId={} msgId={}", traceId, session.getId(), assistantMsgId);
             cancelled.set(true);
             markMessageError(assistantMsgId, ErrorCode.LLM_TIMEOUT.name(), ErrorCode.LLM_TIMEOUT.getMessage(), null, false);
@@ -418,10 +428,12 @@ public class ConversationServiceImpl implements ConversationService {
             emitter.complete();
         });
 
-        emitter.onError(ex ->
+        emitter.onError(ex -> {
+            closeSseMetric(sseClosed);
             log.debug("SSE emitter error traceId={} sessionId={} msgId={}: {}",
-                    traceId, session.getId(), assistantMsgId, ex.getMessage())
-        );
+                    traceId, session.getId(), assistantMsgId, ex.getMessage());
+        });
+        emitter.onCompletion(() -> closeSseMetric(sseClosed));
 
         ThreadPoolExecutor streamExecutor = streamExecutor();
         if (isExecutorSaturated(streamExecutor)) {
@@ -1505,6 +1517,9 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     private RateLimitRule rateRule(RateLimitDimension dimension, String key, int limit) {
+        if (rateLimitQuotaService != null) {
+            return rateLimitQuotaService.resolve(dimension, key, limit, Duration.ofMinutes(1), true);
+        }
         return RateLimitRule.builder()
                 .dimension(dimension)
                 .key(key)
@@ -1524,6 +1539,12 @@ public class ConversationServiceImpl implements ConversationService {
         }
         return executor.getActiveCount() >= executor.getMaximumPoolSize()
                 && executor.getQueue().remainingCapacity() == 0;
+    }
+
+    private void closeSseMetric(AtomicBoolean sseClosed) {
+        if (sseClosed.compareAndSet(false, true)) {
+            hifyMetrics.decrementSseActiveConnections();
+        }
     }
 
     private SseEmitter rejectedEmitter(int code, String message) {
@@ -1615,7 +1636,10 @@ public class ConversationServiceImpl implements ConversationService {
         req.setSourceType("CONVERSATION");
         req.setSourceId("agent:" + agent.getId());
         req.setIncludeTrace(true);
+        long ragStartedAt = System.currentTimeMillis();
         List<KnowledgeSearchResp> chunks = knowledgeService.searchSimilar(req);
+        hifyMetrics.recordRagRetrieval("VECTOR", chunks.isEmpty() ? "empty" : "hit",
+                System.currentTimeMillis() - ragStartedAt);
         saveRagTrace(traceId, chunks);
         log.info("rag candidates agentId={} knowledgeBaseIds={} candidates={}",
                 agent.getId(), knowledgeBaseIds, chunks.stream()

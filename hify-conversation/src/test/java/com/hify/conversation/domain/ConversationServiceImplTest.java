@@ -7,7 +7,10 @@ import com.hify.agent.api.AgentDetailResp;
 import com.hify.agent.api.AgentApiKeyAuthResp;
 import com.hify.agent.api.AgentService;
 import com.hify.common.metrics.HifyMetrics;
+import com.hify.common.ratelimit.RateLimitDimension;
+import com.hify.common.ratelimit.RateLimitQuotaService;
 import com.hify.common.ratelimit.RateLimitResult;
+import com.hify.common.ratelimit.RateLimitRule;
 import com.hify.common.ratelimit.RateLimitService;
 import com.hify.conversation.api.ConversationLogQuery;
 import com.hify.conversation.api.ConversationLogResp;
@@ -43,6 +46,7 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.lang.reflect.Method;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -95,6 +99,9 @@ class ConversationServiceImplTest {
 
     @Mock
     private RateLimitService rateLimitService;
+
+    @Mock
+    private RateLimitQuotaService rateLimitQuotaService;
 
     @Mock
     private HifyMetrics hifyMetrics;
@@ -318,6 +325,30 @@ class ConversationServiceImplTest {
         verify(sessionMapper, never()).insert(any(ChatSessionPo.class));
         verify(messageMapper, never()).insert(any(ChatMessagePo.class));
         verify(llmExecutor, never()).execute(any(Runnable.class));
+    }
+
+    @Test
+    void sendMessageUsesQuotaResolverForAgentLimit() {
+        AgentDetailResp agent = enabledAgent(3L);
+        RateLimitRule agentRule = RateLimitRule.builder()
+                .dimension(RateLimitDimension.AGENT)
+                .key("3")
+                .limit(5)
+                .window(Duration.ofSeconds(10))
+                .failOpen(false)
+                .build();
+        when(agentService.getDetail(3L)).thenReturn(agent);
+        when(rateLimitQuotaService.resolve(eq(RateLimitDimension.AGENT), eq("3"), eq(120),
+                any(Duration.class), eq(true))).thenReturn(agentRule);
+        when(rateLimitService.check(agentRule)).thenReturn(RateLimitResult.rejected(10));
+        conversationService.setRateLimitService(rateLimitService);
+        conversationService.setRateLimitQuotaService(rateLimitQuotaService);
+
+        conversationService.sendMessage(3L, null, "你好", 5L, 6L, 7L);
+
+        verify(rateLimitService).check(agentRule);
+        verify(sessionMapper, never()).insert(any(ChatSessionPo.class));
+        verify(messageMapper, never()).insert(any(ChatMessagePo.class));
     }
 
     @Test

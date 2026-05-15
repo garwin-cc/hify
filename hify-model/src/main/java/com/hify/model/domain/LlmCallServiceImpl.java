@@ -5,6 +5,11 @@ import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.log.TraceContext;
 import com.hify.common.metrics.HifyMetrics;
+import com.hify.common.ratelimit.RateLimitDimension;
+import com.hify.common.ratelimit.RateLimitQuotaService;
+import com.hify.common.ratelimit.RateLimitResult;
+import com.hify.common.ratelimit.RateLimitRule;
+import com.hify.common.ratelimit.RateLimitService;
 import com.hify.common.resilience.CircuitBreakerService;
 import com.hify.model.api.ChatRequest;
 import com.hify.model.api.ChatResponse;
@@ -25,6 +30,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +49,11 @@ public class LlmCallServiceImpl implements LlmCallService {
     private final LlmFallbackProperties fallbackProperties;
     private ModelDefaultPolicyService modelDefaultPolicyService;
     private LlmUsageStatsService llmUsageStatsService;
+    private RateLimitService rateLimitService;
+    private RateLimitQuotaService rateLimitQuotaService;
+
+    private static final int DEFAULT_PROVIDER_LIMIT_PER_MINUTE = 600;
+    private static final int DEFAULT_MODEL_LIMIT_PER_MINUTE = 600;
 
     @Autowired(required = false)
     public void setModelDefaultPolicyService(ModelDefaultPolicyService modelDefaultPolicyService) {
@@ -54,10 +65,21 @@ public class LlmCallServiceImpl implements LlmCallService {
         this.llmUsageStatsService = llmUsageStatsService;
     }
 
+    @Autowired(required = false)
+    public void setRateLimitService(RateLimitService rateLimitService) {
+        this.rateLimitService = rateLimitService;
+    }
+
+    @Autowired(required = false)
+    public void setRateLimitQuotaService(RateLimitQuotaService rateLimitQuotaService) {
+        this.rateLimitQuotaService = rateLimitQuotaService;
+    }
+
     @Override
     public ChatResponse chat(Long modelConfigId, ChatRequest request) {
         ModelConfigPo config   = requireModelConfig(modelConfigId);
         ProviderPo    provider = requireProvider(config.getProviderId());
+        checkLlmRateLimit(provider, config);
         ProviderAdapter adapter = adapterFactory.getAdapter(provider.getType());
         applyModelDefaults(request, config);
         long start = System.currentTimeMillis();
@@ -74,6 +96,7 @@ public class LlmCallServiceImpl implements LlmCallService {
                     System.currentTimeMillis() - start, null);
             hifyMetrics.recordLlmCall(provider.getType(), config.getModelId(), "success",
                     System.currentTimeMillis() - start);
+            recordTokens(provider, config, response);
             return response;
         } catch (Exception e) {
             recordStat(request, provider, config, "CHAT", null, false, false,
@@ -96,6 +119,7 @@ public class LlmCallServiceImpl implements LlmCallService {
         ModelConfigPo config   = requireModelConfig(modelConfigId);
         ProviderPo    provider = requireProvider(config.getProviderId());
 
+        checkLlmRateLimit(provider, config);
         applyModelDefaults(request, config);
         long start = System.currentTimeMillis();
         log.info("llm stream start modelConfigId={} model={} provider={}",
@@ -110,6 +134,7 @@ public class LlmCallServiceImpl implements LlmCallService {
                     System.currentTimeMillis() - start, null);
             hifyMetrics.recordLlmCall(provider.getType(), config.getModelId(), "success",
                     System.currentTimeMillis() - start);
+            recordTokens(provider, config, completed.get());
         } catch (Exception e) {
             log.warn("llm stream failed modelConfigId={} model={} provider={} elapsedMs={} message={}",
                     modelConfigId, config.getModelId(), provider.getType(),
@@ -176,6 +201,7 @@ public class LlmCallServiceImpl implements LlmCallService {
         if (fallback == null) {
             return null;
         }
+        checkLlmRateLimit(fallback.provider(), fallback.modelConfig());
         applyModelDefaults(request, fallback.modelConfig());
         ProviderAdapter fallbackAdapter = adapterFactory.getAdapter(fallback.provider().getType());
         log.warn("llm chat fallback primaryProvider={} fallbackProvider={} message={}",
@@ -186,6 +212,9 @@ public class LlmCallServiceImpl implements LlmCallService {
                     () -> fallbackAdapter.chat(fallback.provider(), request));
             recordStat(request, fallback.provider(), fallback.modelConfig(), "CHAT", response, true, true,
                     System.currentTimeMillis() - start, null);
+            hifyMetrics.recordLlmCall(fallback.provider().getType(), fallback.modelConfig().getModelId(),
+                    "fallback_success", System.currentTimeMillis() - start);
+            recordTokens(fallback.provider(), fallback.modelConfig(), response);
             return response;
         } catch (Exception e) {
             recordStat(request, fallback.provider(), fallback.modelConfig(), "CHAT", null, false, true,
@@ -200,6 +229,7 @@ public class LlmCallServiceImpl implements LlmCallService {
         if (fallback == null) {
             return false;
         }
+        checkLlmRateLimit(fallback.provider(), fallback.modelConfig());
         applyModelDefaults(request, fallback.modelConfig());
         ProviderAdapter fallbackAdapter = adapterFactory.getAdapter(fallback.provider().getType());
         log.warn("llm stream fallback primaryProvider={} fallbackProvider={} message={}",
@@ -213,6 +243,9 @@ public class LlmCallServiceImpl implements LlmCallService {
             });
             recordStat(request, fallback.provider(), fallback.modelConfig(), "STREAM", completed.get(), true, true,
                     System.currentTimeMillis() - start, null);
+            hifyMetrics.recordLlmCall(fallback.provider().getType(), fallback.modelConfig().getModelId(),
+                    "fallback_success", System.currentTimeMillis() - start);
+            recordTokens(fallback.provider(), fallback.modelConfig(), completed.get());
         } catch (Exception e) {
             recordStat(request, fallback.provider(), fallback.modelConfig(), "STREAM", completed.get(), false, true,
                     System.currentTimeMillis() - start, e);
@@ -242,6 +275,37 @@ public class LlmCallServiceImpl implements LlmCallService {
             });
             return Boolean.TRUE;
         });
+    }
+
+    private void checkLlmRateLimit(ProviderPo provider, ModelConfigPo config) {
+        if (rateLimitService == null) {
+            return;
+        }
+        checkRateLimit(rule(RateLimitDimension.PROVIDER, String.valueOf(provider.getId()),
+                DEFAULT_PROVIDER_LIMIT_PER_MINUTE));
+        checkRateLimit(rule(RateLimitDimension.MODEL, config.getModelId(), DEFAULT_MODEL_LIMIT_PER_MINUTE));
+    }
+
+    private void checkRateLimit(RateLimitRule rule) {
+        RateLimitResult result = rateLimitService.check(rule);
+        if (!result.isAllowed()) {
+            throw new BizException(ErrorCode.TOO_MANY_REQUESTS,
+                    ErrorCode.TOO_MANY_REQUESTS.getMessage() + "，请 "
+                            + result.getRetryAfterSeconds() + " 秒后重试");
+        }
+    }
+
+    private RateLimitRule rule(RateLimitDimension dimension, String key, int limit) {
+        if (rateLimitQuotaService != null) {
+            return rateLimitQuotaService.resolve(dimension, key, limit, Duration.ofMinutes(1), true);
+        }
+        return RateLimitRule.builder()
+                .dimension(dimension)
+                .key(key)
+                .limit(limit)
+                .window(Duration.ofMinutes(1))
+                .failOpen(true)
+                .build();
     }
 
     private FallbackTarget resolveFallback(ProviderPo primaryProvider, ChatRequest request) {
@@ -332,6 +396,14 @@ public class LlmCallServiceImpl implements LlmCallService {
                 .errorCode(errorCode(error))
                 .errorMessage(error == null ? "" : error.getMessage())
                 .build());
+    }
+
+    private void recordTokens(ProviderPo provider, ModelConfigPo config, ChatResponse response) {
+        if (response == null) {
+            return;
+        }
+        hifyMetrics.recordLlmTokens(provider.getType(), config.getModelId(),
+                response.getInputTokens(), response.getOutputTokens());
     }
 
     private static String errorCode(Exception error) {

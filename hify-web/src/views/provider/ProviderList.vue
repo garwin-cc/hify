@@ -36,9 +36,19 @@
         <!-- 健康状态 -->
         <template #health="{ row }">
           <div class="health-cell">
-            <el-tag size="small" :type="healthTagType(row.healthStatus)" class="health-tag">
-              {{ healthLabel(row.healthStatus) }}
-            </el-tag>
+            <el-popover placement="bottom" :width="320" trigger="hover">
+              <template #reference>
+                <el-tag size="small" :type="healthTagType(row.healthStatus)" class="health-tag">
+                  {{ healthLabel(row.healthStatus) }}
+                </el-tag>
+              </template>
+              <div class="health-popover">
+                <div><span>最近检测</span><strong>{{ formatDateTime(row.lastCheckAt) }}</strong></div>
+                <div><span>连续失败</span><strong>{{ row.failCount ?? 0 }} 次</strong></div>
+                <div><span>告警状态</span><strong>{{ row.alertStatus || '-' }}</strong></div>
+                <div v-if="row.errorMessage"><span>失败原因</span><strong>{{ row.errorMessage }}</strong></div>
+              </div>
+            </el-popover>
             <span v-if="row.latencyMs !== null" class="latency-text">{{ row.latencyMs }}ms</span>
           </div>
         </template>
@@ -310,6 +320,10 @@ function healthLabel(status: string | null): string {
   return HEALTH_LABEL[status ?? ''] ?? '未检测'
 }
 
+function formatDateTime(value: string | null): string {
+  return value ? value.replace('T', ' ').slice(0, 19) : '-'
+}
+
 // ── 列配置 ────────────────────────────────────────────────────────────
 
 const { isNarrow } = useBreakpoint()
@@ -553,6 +567,29 @@ async function handleDelete(row: ProviderListItem) {
 
 .health-tag {
   flex-shrink: 0;
+}
+
+.health-popover {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.health-popover div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.health-popover span {
+  color: var(--el-text-color-secondary);
+}
+
+.health-popover strong {
+  min-width: 0;
+  color: var(--el-text-color-primary);
+  font-weight: 500;
+  word-break: break-word;
 }
 
 .latency-text {

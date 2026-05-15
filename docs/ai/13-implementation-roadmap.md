@@ -239,17 +239,20 @@
 - `hify-common` 新增基于 Redis 的统一限流/配额组件
 - 支持维度：用户、应用、API Key、Provider、模型
 - 超额返回标准 429 响应
+- 已落地后端基础闭环：`t_rate_limit_quota` 解析为统一 `RateLimitRule`，对话链路支持 AGENT / USER / APP / API_KEY 表驱动配额，LLM 调用支持 PROVIDER / MODEL 维度配额。
 
 ### 7-3 Provider 健康看板
 
 - 定时任务定期探测所有启用的 Provider（`t_provider_health` 表已有）
 - 前端 Provider 列表展示实时健康状态（UP / DEGRADED / DOWN）
 - Provider DOWN 时触发告警（邮件/Webhook，可配置）
+- 已落地 Webhook 告警基础能力：连续失败达到阈值后状态转为 DOWN，并在 `hify.provider-health.alert.enabled=true` 且配置 `webhook-url` 时发送告警事件。Provider 列表补充最近检测、连续失败、告警状态和失败原因。
 
 ### 7-4 Prometheus / Grafana 面板
 
 - 补全 `hify_` 前缀指标：LLM Token 用量、RAG 检索延迟、MCP 调用量/失败率、Workflow 运行数/成功率、SSE 活跃连接数
 - 提供 Grafana Dashboard JSON 模板，开箱可导入
+- 已落地 `hify_sse_active_connections`、`hify_llm_tokens_total`、`hify_rag_retrievals_total`、`hify_rag_retrieval_latency_seconds`、`hify_workflow_runs_total`、`hify_workflow_run_latency_seconds`，并接入对话 SSE、RAG 检索、LLM 调用和 Workflow run 状态变更。
 
 ### 7-5 后台 Job 管理
 
@@ -258,6 +261,7 @@
 - 文档处理超时任务恢复（PROCESSING 超阈值自动重置为 FAILED）
 - 工作流运行超时检测
 - RAG 向量孤儿 chunk 清理（文档删除后 pgvector 残留）
+- 已落地 app 侧统一 Job 日志：过期 Session、运行/审计/Job 日志清理、知识库 PROCESSING 超时恢复、Workflow RUNNING/WAITING 超时失败化、pgvector 孤儿 chunk 清理。
 
 ---
 
@@ -270,7 +274,7 @@ Stage 3  API_CALL增强 → REPLY → ITERATION → 变量赋值     ← 节点�
 Stage 4  项目权限激活 → 应用发布 → 日志中心              ← 生产化基础
 Stage 5  混合检索 → Rerank → 元数据过滤 → 重建索引       ← RAG质量
 Stage 6  SSRF防护 → 参数校验 → 工具超时                  ← 安全加固
-Stage 7  SSO → 限流配额 → Provider看板 → 监控 → Job      ← 规模化运营
+Stage 7  限流配额 → Provider看板 → Job → 监控 → SSO      ← 规模化运营
 ```
 
 ---

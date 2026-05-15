@@ -60,4 +60,81 @@ class AppMaintenanceJobTest extends HifyMockIntegrationTest {
         assertThat(logCount).isEqualTo(1);
         assertThat(error).contains("broken maintenance");
     }
+
+    @Test
+    void should_markTimedOutKnowledgeDocumentsFailedAndRecordJobLog() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS t_knowledge_document (
+                    id BIGINT PRIMARY KEY,
+                    parse_status VARCHAR(32) NOT NULL,
+                    process_stage VARCHAR(64) NOT NULL DEFAULT '',
+                    process_progress INT NOT NULL DEFAULT 0,
+                    error_code VARCHAR(64) NOT NULL DEFAULT '',
+                    error_message VARCHAR(1000) NOT NULL DEFAULT '',
+                    failed_stage VARCHAR(64) NOT NULL DEFAULT '',
+                    retryable TINYINT NOT NULL DEFAULT 0,
+                    cancel_requested TINYINT NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMP NOT NULL,
+                    deleted TINYINT NOT NULL DEFAULT 0
+                )
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO t_knowledge_document
+                (id, parse_status, process_stage, process_progress, updated_at, deleted)
+                VALUES (9201, 'PROCESSING', 'EMBEDDING', 40, ?, 0)
+                """, LocalDateTime.now().minusHours(2));
+
+        int affected = appMaintenanceJob.recoverTimedOutKnowledgeDocuments();
+
+        String status = jdbcTemplate.queryForObject(
+                "SELECT parse_status FROM t_knowledge_document WHERE id = 9201",
+                String.class);
+        String errorCode = jdbcTemplate.queryForObject(
+                "SELECT error_code FROM t_knowledge_document WHERE id = 9201",
+                String.class);
+        Integer logCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM t_app_job_run_log WHERE job_name = 'KNOWLEDGE_PROCESSING_TIMEOUT_RECOVERY' AND status = 'SUCCESS'",
+                Integer.class);
+
+        assertThat(affected).isEqualTo(1);
+        assertThat(status).isEqualTo("FAILED");
+        assertThat(errorCode).isEqualTo("TASK_TIMEOUT");
+        assertThat(logCount).isEqualTo(1);
+    }
+
+    @Test
+    void should_markTimedOutWorkflowRunsFailedAndRecordJobLog() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS t_workflow_run (
+                    id BIGINT PRIMARY KEY,
+                    status VARCHAR(32) NOT NULL,
+                    error VARCHAR(1000),
+                    timeout_at TIMESTAMP,
+                    finished_at TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL,
+                    deleted TINYINT NOT NULL DEFAULT 0
+                )
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO t_workflow_run (id, status, timeout_at, updated_at, deleted)
+                VALUES (9301, 'RUNNING', ?, ?, 0)
+                """, LocalDateTime.now().minusMinutes(5), LocalDateTime.now().minusMinutes(10));
+
+        int affected = appMaintenanceJob.markTimedOutWorkflowRunsFailed();
+
+        String status = jdbcTemplate.queryForObject(
+                "SELECT status FROM t_workflow_run WHERE id = 9301",
+                String.class);
+        String error = jdbcTemplate.queryForObject(
+                "SELECT error FROM t_workflow_run WHERE id = 9301",
+                String.class);
+        Integer logCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM t_app_job_run_log WHERE job_name = 'WORKFLOW_TIMEOUT_CHECK' AND status = 'SUCCESS'",
+                Integer.class);
+
+        assertThat(affected).isEqualTo(1);
+        assertThat(status).isEqualTo("FAILED");
+        assertThat(error).contains("运行超时");
+        assertThat(logCount).isEqualTo(1);
+    }
 }

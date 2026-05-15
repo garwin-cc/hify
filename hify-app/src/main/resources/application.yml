@@ -111,6 +111,11 @@ hify:
       CLAUDE: OPENAI
       DEEPSEEK: OPENAI
       GEMINI: OLLAMA
+  provider-health:
+    alert:
+      enabled: ${HIFY_PROVIDER_HEALTH_ALERT_ENABLED:false}
+      webhook-url: ${HIFY_PROVIDER_HEALTH_ALERT_WEBHOOK_URL:}
+      timeout-seconds: ${HIFY_PROVIDER_HEALTH_ALERT_TIMEOUT_SECONDS:3}
   postgres:
     url: jdbc:postgresql://localhost:5433/hify_vector
     username: hify
@@ -137,6 +142,8 @@ hify:
     runtime-log-retention-days: 90
     audit-log-retention-days: 180
     job-log-retention-days: 30
+    knowledge-processing-timeout-minutes: ${HIFY_KNOWLEDGE_PROCESSING_TIMEOUT_MINUTES:60}
+    workflow-run-timeout-grace-minutes: ${HIFY_WORKFLOW_RUN_TIMEOUT_GRACE_MINUTES:0}
 
 # ── 日志级别（格式和滚动策略由 logback-spring.xml 管理）────────────────────
 logging:

@@ -46,6 +46,7 @@ public class SystemInitializationRunner implements ApplicationRunner {
                 new QuotaSeed("APP", 300, "默认应用调用频率"),
                 new QuotaSeed("API_KEY", 120, "默认 API Key 调用频率"),
                 new QuotaSeed("PROVIDER", 600, "默认 Provider 调用频率"),
+                new QuotaSeed("MODEL", 600, "默认模型调用频率"),
                 new QuotaSeed("AGENT", 120, "默认 Agent 调用频率")
         );
         for (QuotaSeed seed : seeds) {

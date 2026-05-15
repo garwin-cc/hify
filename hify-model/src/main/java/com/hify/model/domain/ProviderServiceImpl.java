@@ -336,7 +336,12 @@ public class ProviderServiceImpl implements ProviderService {
         item.setCreatedAt(po.getCreatedAt());
         if (health != null) {
             item.setHealthStatus(health.getStatus());
+            item.setLastCheckAt(health.getLastCheckAt());
+            item.setLastErrorAt(health.getLastErrorAt());
+            item.setAlertStatus(health.getAlertStatus());
+            item.setFailCount(health.getFailCount());
             item.setLatencyMs(health.getLatencyMs());
+            item.setErrorMessage(health.getErrorMessage());
         }
         List<ModelConfigResp> modelResps = models.stream()
                 .map(ProviderServiceImpl::toModelConfigResp).toList();

@@ -35,6 +35,8 @@ public class ProviderHealthCheckJob {
     private final CacheManager           cacheManager;
     private final ThreadPoolExecutor     asyncExecutor;
     private TaskQueue backgroundTaskQueue;
+    private ProviderHealthAlertNotifier alertNotifier = event -> {
+    };
 
     public ProviderHealthCheckJob(ProviderMapper providerMapper,
                                   ProviderHealthMapper providerHealthMapper,
@@ -51,6 +53,11 @@ public class ProviderHealthCheckJob {
     @Autowired(required = false)
     public void setBackgroundTaskQueue(@Qualifier("backgroundTaskQueue") TaskQueue backgroundTaskQueue) {
         this.backgroundTaskQueue = backgroundTaskQueue;
+    }
+
+    @Autowired(required = false)
+    public void setAlertNotifier(ProviderHealthAlertNotifier alertNotifier) {
+        this.alertNotifier = alertNotifier;
     }
 
     @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)
@@ -87,7 +94,7 @@ public class ProviderHealthCheckJob {
         try {
             ConnectivityTestResult result =
                     providerAdapterFactory.getAdapter(provider.getType()).testConnection(provider);
-            updateHealth(id, result);
+            updateHealth(provider, result);
             evictDetailCache(id);
             log.info("health check id={} type={} success={} latency={}ms",
                     id, provider.getType(), result.isSuccess(), result.getLatencyMs());
@@ -98,7 +105,8 @@ public class ProviderHealthCheckJob {
 
     // ── 健康状态更新（fail_count 累计，连续 3 次才标记 DOWN）────────────
 
-    private void updateHealth(Long providerId, ConnectivityTestResult result) {
+    private void updateHealth(ProviderPo provider, ConnectivityTestResult result) {
+        Long providerId = provider.getId();
         LocalDateTime now = LocalDateTime.now();
 
         ProviderHealthPo health = providerHealthMapper.selectByProviderId(providerId);
@@ -126,6 +134,7 @@ public class ProviderHealthCheckJob {
             health.setErrorMessage("");
         } else {
             int failCount = (health.getFailCount() == null ? 0 : health.getFailCount()) + 1;
+            boolean shouldAlert = failCount >= FAIL_THRESHOLD && !"OPEN".equals(health.getAlertStatus());
             health.setFailCount(failCount);
             health.setLastErrorAt(now);
             health.setErrorMessage(result.getErrorMessage());
@@ -138,9 +147,28 @@ public class ProviderHealthCheckJob {
             } else {
                 health.setStatus("DEGRADED");
             }
+            if (shouldAlert) {
+                sendDownAlert(provider, health);
+            }
         }
 
         providerHealthMapper.upsert(health);
+    }
+
+    private void sendDownAlert(ProviderPo provider, ProviderHealthPo health) {
+        try {
+            alertNotifier.notify(new ProviderHealthAlertEvent(
+                    provider.getId(),
+                    provider.getName(),
+                    provider.getType(),
+                    health.getStatus(),
+                    health.getFailCount(),
+                    health.getLatencyMs(),
+                    health.getErrorMessage()
+            ));
+        } catch (Exception e) {
+            log.warn("provider health alert failed providerId={} message={}", provider.getId(), e.getMessage());
+        }
     }
 
     private static int nullToZero(Integer value) {

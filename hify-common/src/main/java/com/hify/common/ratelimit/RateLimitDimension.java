@@ -6,6 +6,7 @@ public enum RateLimitDimension {
     APP,
     API_KEY,
     PROVIDER,
+    MODEL,
     IP,
     GLOBAL
 }

@@ -24,7 +24,12 @@ export interface ProviderListItem {
   sortOrder: number
   createdAt: string
   healthStatus: string | null   // UP / DOWN / DEGRADED / UNKNOWN / null
+  lastCheckAt: string | null
+  lastErrorAt: string | null
+  alertStatus: string | null
+  failCount: number | null
   latencyMs: number | null
+  errorMessage: string | null
   modelCount: number            // enabled models count
   models: ModelConfig[]         // all models (for expand)
 }

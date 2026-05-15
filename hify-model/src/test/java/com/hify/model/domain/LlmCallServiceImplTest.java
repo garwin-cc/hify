@@ -2,6 +2,13 @@ package com.hify.model.domain;
 
 import com.hify.common.http.LlmApiException;
 import com.hify.common.metrics.HifyMetrics;
+import com.hify.common.exception.BizException;
+import com.hify.common.exception.ErrorCode;
+import com.hify.common.ratelimit.RateLimitDimension;
+import com.hify.common.ratelimit.RateLimitQuotaService;
+import com.hify.common.ratelimit.RateLimitResult;
+import com.hify.common.ratelimit.RateLimitRule;
+import com.hify.common.ratelimit.RateLimitService;
 import com.hify.common.resilience.CircuitBreakerService;
 import com.hify.model.api.ChatRequest;
 import com.hify.model.api.ChatResponse;
@@ -22,16 +29,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class LlmCallServiceImplTest {
@@ -54,12 +65,16 @@ class LlmCallServiceImplTest {
     private ModelDefaultPolicyService modelDefaultPolicyService;
     @Mock
     private LlmUsageStatsService llmUsageStatsService;
+    @Mock
+    private RateLimitService rateLimitService;
+    @Mock
+    private RateLimitQuotaService rateLimitQuotaService;
 
     private LlmCallServiceImpl llmCallService;
 
     @BeforeEach
     void setUp() {
-        when(circuitBreakerService.execute(any(), any())).thenAnswer(invocation -> {
+        lenient().when(circuitBreakerService.execute(any(), any())).thenAnswer(invocation -> {
             Supplier<?> supplier = invocation.getArgument(1);
             return supplier.get();
         });
@@ -72,6 +87,32 @@ class LlmCallServiceImplTest {
                 new LlmFallbackProperties(Map.of("OPENAI", "OLLAMA")));
         llmCallService.setModelDefaultPolicyService(modelDefaultPolicyService);
         llmCallService.setLlmUsageStatsService(llmUsageStatsService);
+    }
+
+    @Test
+    void chatRejectsBeforeProviderCallWhenProviderQuotaExceeded() {
+        ModelConfigPo model = model(10L, 1L, "gpt-4o", "CHAT");
+        ProviderPo provider = provider(1L, "OPENAI");
+        RateLimitRule providerRule = RateLimitRule.builder()
+                .dimension(RateLimitDimension.PROVIDER)
+                .key("1")
+                .limit(1)
+                .window(Duration.ofSeconds(60))
+                .failOpen(true)
+                .build();
+        when(modelConfigMapper.selectOne(any())).thenReturn(model);
+        when(providerMapper.selectOne(any())).thenReturn(provider);
+        when(rateLimitQuotaService.resolve(eq(RateLimitDimension.PROVIDER), eq("1"), eq(600),
+                any(Duration.class), eq(true))).thenReturn(providerRule);
+        when(rateLimitService.check(providerRule)).thenReturn(RateLimitResult.rejected(30));
+        llmCallService.setRateLimitService(rateLimitService);
+        llmCallService.setRateLimitQuotaService(rateLimitQuotaService);
+
+        assertThatThrownBy(() -> llmCallService.chat(10L, ChatRequest.builder().messages(List.of()).build()))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining(ErrorCode.TOO_MANY_REQUESTS.getMessage());
+
+        verify(adapterFactory, never()).getAdapter(any());
     }
 
     @Test

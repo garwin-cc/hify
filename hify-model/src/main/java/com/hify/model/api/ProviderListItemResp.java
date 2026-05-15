@@ -16,7 +16,12 @@ public class ProviderListItemResp {
     private LocalDateTime createdAt;
     /** UP / DOWN / DEGRADED / UNKNOWN / null（从未检测） */
     private String healthStatus;
+    private LocalDateTime lastCheckAt;
+    private LocalDateTime lastErrorAt;
+    private String alertStatus;
+    private Integer failCount;
     private Integer latencyMs;
+    private String errorMessage;
     /** 已启用的模型数量 */
     private int modelCount;
     /** 该供应商下所有模型（含禁用），用于前端展开列表 */

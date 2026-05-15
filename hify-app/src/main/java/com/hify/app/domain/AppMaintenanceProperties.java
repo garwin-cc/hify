@@ -14,4 +14,6 @@ public class AppMaintenanceProperties {
     private int runtimeLogRetentionDays = 90;
     private int auditLogRetentionDays = 180;
     private int jobLogRetentionDays = 30;
+    private int knowledgeProcessingTimeoutMinutes = 60;
+    private int workflowRunTimeoutGraceMinutes = 0;
 }

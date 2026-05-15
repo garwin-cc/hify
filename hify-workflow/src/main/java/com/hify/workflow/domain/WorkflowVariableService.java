@@ -64,7 +64,7 @@ public class WorkflowVariableService {
         return switch (node.getNodeType().toUpperCase()) {
             case "LLM" -> "answer";
             case "KNOWLEDGE" -> "chunks";
-            case "API_CALL", "CODE_TASK", "CONDITION" -> "output";
+            case "API_CALL", "CODE_TASK", "CONDITION", "TOOL" -> "output";
             case "HUMAN_REVIEW" -> "result";
             case "END" -> "output";
             default -> null;

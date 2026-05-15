@@ -174,7 +174,7 @@ public class WorkflowEngine {
                             Map.of("nodeType", current.getNodeType(), "elapsedMs", elapsed(nodeStartedAt)));
                     currentKey = findNext(current, edgeMap, ctx);
                 } catch (Exception e) {
-                    updateNodeRunFailed(nodeRun, e, nodeStartedAt);
+                    updateNodeRunFailed(nodeRun, ctx, e, nodeStartedAt);
                     workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_FAILED", currentKey, STATUS_FAILED,
                             Map.of("nodeType", current.getNodeType(), "error", shortError(e), "elapsedMs", elapsed(nodeStartedAt)));
                     String failureNext = handleFailureStrategy(workflowRun, current, edgeMap, ctx, nodeRun, runtimePolicy, e, nodeStartedAt);
@@ -519,8 +519,9 @@ public class WorkflowEngine {
         }
     }
 
-    private void updateNodeRunFailed(WorkflowNodeRunPo po, Exception exception, long startedAt) {
+    private void updateNodeRunFailed(WorkflowNodeRunPo po, ExecutionContext ctx, Exception exception, long startedAt) {
         po.setStatus(STATUS_FAILED);
+        po.setOutputs(toJson(ctx.snapshot()));
         po.setError(shortError(exception));
         po.setElapsedMs(elapsed(startedAt));
         po.setFinishedAt(LocalDateTime.now());

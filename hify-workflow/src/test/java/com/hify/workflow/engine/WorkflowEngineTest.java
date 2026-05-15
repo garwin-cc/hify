@@ -185,6 +185,7 @@ class WorkflowEngineTest {
             assertThat(run.getNodeKey()).isEqualTo("llm");
             assertThat(run.getStatus()).isEqualTo("FAILED");
             assertThat(run.getError()).contains("boom");
+            assertThat(run.getOutputs()).contains("start.userMessage");
         });
         assertThat(updatedRuns).anySatisfy(run -> {
             assertThat(run.getStatus()).isEqualTo("FAILED");

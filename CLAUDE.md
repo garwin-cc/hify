@@ -16,13 +16,14 @@ Hify 是一个简化版内部 AI Agent 平台，基于 Dify 思路设计，面�
 
 > AI 接到实现任务时，先对照本节确认当前处于哪个 Stage，再查路由表读对应规范文件。
 
-**当前处于 Stage 1（立即执行）**，三项任务并行推进：
+**当前处于 Stage 2（P0 稳定性）**，按顺序补齐稳定闭环：
 
-1. **权限漏洞修复**：EDITOR 无法查看 MCP 工具列表（`McpController` GET 接口降为 EDITOR 可访问）；VIEWER 无法提交 HUMAN_REVIEW（产品层明确审核者须为 EDITOR+，前端和文档说明）。
-2. **CONDITION 节点增强**：扩展表达式支持数值比较（`>` `<` `>=` `<=`）、字符串包含（`contains` `startsWith` `endsWith`）、空值判断（`isEmpty` `isNotEmpty`）、AND/OR 多条件组合。
-3. **TOOL 节点执行器**：枚举和配置类已就位，新增 `ToolNodeExecutor` 复用 `McpClientService.callTool`，使工作流可直接调用 MCP 工具。
+1. **RAG 任务可靠性**：文档处理状态、失败原因、取消、重试、恢复和脏 chunk 清理必须可解释。
+2. **Workflow 运行排障**：失败 run 必须能定位失败节点、输入输出、外部调用和错误原因。
+3. **对话运行可观测**：traceId 贯穿 RAG、MCP、LLM、Workflow、SSE 和消息落库。
+4. **Agent 会话摘要记忆**：默认关闭，开启后摘要失败不能阻断对话。
 
-Stage 1 完成后进入 **Stage 2（P0 稳定性）**：RAG 任务可靠性 → 对话运行可观测 → Workflow 运行排障 → Agent 会话摘要记忆。
+Stage 1 已完成：权限漏洞修复、CONDITION 节点增强、TOOL 节点执行器。
 
 完整路线图（7 个 Stage、不做功能列表、工作流节点现状速查）见 [`docs/ai/13-implementation-roadmap.md`](docs/ai/13-implementation-roadmap.md)。
 

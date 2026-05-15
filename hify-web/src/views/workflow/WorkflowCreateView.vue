@@ -232,11 +232,15 @@
                   :key="action"
                   :type="action === 'APPROVE' ? 'primary' : 'danger'"
                   plain
+                  :disabled="!canSubmitReview"
                   @click="handleReviewAction(action)"
                 >
                   {{ action === 'APPROVE' ? '通过' : action === 'REJECT' ? '拒绝' : action }}
                 </el-button>
               </div>
+              <p v-if="!canSubmitReview" class="review-card__hint">
+                人工审核需 EDITOR 及以上角色处理。
+              </p>
             </div>
             <div v-if="latestRun.output" class="run-summary__block">
               <span>输出</span>
@@ -406,6 +410,21 @@
               </el-form-item>
               <el-form-item label="输出变量">
                 <el-input v-model="selectedConfig.outputVariable" placeholder="response" />
+              </el-form-item>
+            </template>
+
+            <template v-else-if="selectedNode.nodeType === 'TOOL'">
+              <el-form-item label="MCP Server ID">
+                <el-input-number v-model="selectedConfig.mcpServerId" :min="1" controls-position="right" />
+              </el-form-item>
+              <el-form-item label="工具名称">
+                <el-input v-model="selectedConfig.toolName" placeholder="search" />
+              </el-form-item>
+              <el-form-item label="参数映射 JSON">
+                <el-input v-model="selectedConfig.inputMappingText" type="textarea" :rows="6" />
+              </el-form-item>
+              <el-form-item label="输出变量">
+                <el-input v-model="selectedConfig.outputVariable" placeholder="result" />
               </el-form-item>
             </template>
 
@@ -779,9 +798,10 @@ import {
 } from '@/api/workflow'
 import { getModelGroups, type ModelGroup } from '@/api/agent'
 import { subscribeSse } from '@/api/sse'
+import { useAuthStore } from '@/stores/auth'
 import { notifySuccess } from '@/utils/notify'
 
-type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'END'
+type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'TOOL' | 'END'
 type NodeConfig = Record<string, any>
 type ValidationIssue = {
   key: string
@@ -793,6 +813,7 @@ type ValidationIssue = {
 
 const router = useRouter()
 const route = useRoute()
+const auth = useAuthStore()
 const submitting = ref(false)
 const runningWorkflow = ref(false)
 const loadingDetail = ref(false)
@@ -821,6 +842,7 @@ const workflowVariables = ref<WorkflowVariable[]>([])
 const workflowVersionDiff = ref<WorkflowVersionDiff | null>(null)
 const loadingWorkflowMeta = ref(false)
 const latestRunEvents = ref<WorkflowRunEvent[]>([])
+const canSubmitReview = computed(() => auth.isEditor)
 const templateDialogVisible = ref(false)
 const publishDialogVisible = ref(false)
 const diffDialogVisible = ref(false)
@@ -954,6 +976,12 @@ const selectedConfig = computed<NodeConfig>(() => {
       config.headersText = JSON.stringify(config.headers ?? {}, null, 2)
     }
   }
+  if (selectedNode.value.nodeType === 'TOOL') {
+    const config = selectedNode.value.config as NodeConfig
+    if (config.inputMappingText == null) {
+      config.inputMappingText = JSON.stringify(config.inputMapping ?? {}, null, 2)
+    }
+  }
   return selectedNode.value.config as NodeConfig
 })
 const previewJson = computed(() => JSON.stringify(normalizedConfig(), null, 2))
@@ -1003,6 +1031,15 @@ function normalizeNodeConfig(node: WorkflowNode) {
       config.headers = {}
     }
     delete config.headersText
+  }
+  if (node.nodeType === 'TOOL') {
+    const inputMappingText = typeof config.inputMappingText === 'string' ? config.inputMappingText : '{}'
+    try {
+      config.inputMapping = JSON.parse(inputMappingText || '{}')
+    } catch {
+      config.inputMapping = {}
+    }
+    delete config.inputMappingText
   }
   return config
 }
@@ -1159,6 +1196,22 @@ function buildValidationIssues(): ValidationIssue[] {
         issues.push({ key: `api-headers-${node.nodeKey}`, level: 'error', message: `API 节点「${node.name}」的 Headers JSON 不合法`, nodeKey: node.nodeKey })
       }
     }
+    if (node.nodeType === 'TOOL') {
+      if (!config.mcpServerId) {
+        issues.push({ key: `tool-mcp-server-${node.nodeKey}`, level: 'error', message: `工具节点「${node.name}」缺少 MCP Server ID`, nodeKey: node.nodeKey })
+      }
+      if (!String(config.toolName ?? '').trim()) {
+        issues.push({ key: `tool-name-${node.nodeKey}`, level: 'error', message: `工具节点「${node.name}」缺少工具名称`, nodeKey: node.nodeKey })
+      }
+      if (!String(config.outputVariable ?? '').trim()) {
+        issues.push({ key: `tool-output-${node.nodeKey}`, level: 'error', message: `工具节点「${node.name}」缺少输出变量`, nodeKey: node.nodeKey })
+      }
+      try {
+        JSON.parse(String(config.inputMappingText ?? '{}') || '{}')
+      } catch {
+        issues.push({ key: `tool-input-${node.nodeKey}`, level: 'error', message: `工具节点「${node.name}」的参数映射 JSON 不合法`, nodeKey: node.nodeKey })
+      }
+    }
     if (node.nodeType === 'CODE_TASK') {
       if (!String(config.task ?? '').trim()) {
         issues.push({ key: `code-task-${node.nodeKey}`, level: 'error', message: `代码任务节点「${node.name}」缺少任务描述`, nodeKey: node.nodeKey })
@@ -1216,6 +1269,7 @@ function defaultConfig(type: NodeType): NodeConfig {
   if (type === 'KNOWLEDGE') return { knowledgeBaseId: undefined, query: '{{start.userMessage}}', topK: 3, outputVariable: 'context' }
   if (type === 'HUMAN_REVIEW') return { title: '人工审核', content: '{{start.userMessage}}', actions: ['APPROVE', 'REJECT'], allowEdit: false, outputVariable: 'result' }
   if (type === 'CODE_TASK') return { task: '{{start.userMessage}}', executor: 'MCP', mcpServerId: undefined, toolName: 'code_worker', timeoutSeconds: 600, outputVariable: 'result' }
+  if (type === 'TOOL') return { mcpServerId: undefined, toolName: '', inputMappingText: '{\n  "query": "{{start.userMessage}}"\n}', outputVariable: 'result' }
   if (type === 'END') return { outputVariable: '' }
   return {}
 }
@@ -1747,6 +1801,10 @@ function clearReviewTask() {
 
 async function handleReviewAction(action: string) {
   if (!latestRun.value) return
+  if (!canSubmitReview.value) {
+    ElMessage.warning('人工审核需 EDITOR 及以上角色处理')
+    return
+  }
   runningWorkflow.value = true
   try {
     latestRun.value = await submitWorkflowReview(latestRun.value.id, {

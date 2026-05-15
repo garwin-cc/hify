@@ -4,7 +4,7 @@
       title="MCP 工具"
       description="接入外部 MCP Server，测试连通性后同步工具列表，供 Agent 绑定调用"
     >
-      <template #actions>
+      <template v-if="auth.isAdmin" #actions>
         <el-button type="primary" @click="handleCreate">
           <el-icon style="margin-right: 4px"><Plus /></el-icon>
           新增 MCP Server
@@ -75,15 +75,18 @@
         </template>
 
         <template #actions="{ row }">
-          <el-button size="small" @click="handleEdit(row)">编辑</el-button>
-          <el-button
-            size="small"
-            :loading="testingIds.has(row.id)"
-            @click="handleTest(row)"
-          >
-            测试
-          </el-button>
-          <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
+          <template v-if="auth.isAdmin">
+            <el-button size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-button
+              size="small"
+              :loading="testingIds.has(row.id)"
+              @click="handleTest(row)"
+            >
+              测试
+            </el-button>
+            <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
+          </template>
+          <el-tag v-else size="small" type="info">只读</el-tag>
         </template>
       </HifyTable>
     </div>
@@ -182,6 +185,7 @@ import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import HifyTable, { type HifyColumn } from '@/components/HifyTable.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useAuthStore } from '@/stores/auth'
 import { notifySuccess } from '@/utils/notify'
 import {
   createMcpServer,
@@ -198,6 +202,7 @@ import {
 const tableRef = ref<{ refresh: () => void }>()
 const formRef = ref<FormInstance>()
 const { confirm } = useConfirm()
+const auth = useAuthStore()
 
 const filterName = ref('')
 const dialogVisible = ref(false)

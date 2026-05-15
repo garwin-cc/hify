@@ -80,6 +80,7 @@ const router = createRouter({
       path: '/mcp',
       name: 'McpTools',
       component: () => import('@/views/mcp/McpView.vue'),
+      meta: { roles: ['ADMIN', 'EDITOR'] },
     },
     {
       path: '/logs',

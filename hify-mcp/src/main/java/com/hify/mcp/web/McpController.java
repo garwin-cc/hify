@@ -18,11 +18,13 @@ public class McpController {
     private final McpService mcpService;
 
     @GetMapping
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public PageResult<McpServerListItemResp> list(McpServerQuery query) {
         return mcpService.list(query);
     }
 
     @GetMapping("/{id}")
+    @RequireRole({UserRole.ADMIN, UserRole.EDITOR})
     public Result<McpServerDetailResp> get(@PathVariable Long id) {
         return Result.ok(mcpService.getById(id));
     }

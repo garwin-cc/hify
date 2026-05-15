@@ -69,6 +69,8 @@ public class NodeConfigParser {
                         com.hify.workflow.engine.executor.EndNodeConfig.class);
                 case LLM -> objectMapper.treeToValue(safeConfig,
                         com.hify.workflow.engine.executor.LlmNodeConfig.class);
+                case TOOL -> objectMapper.treeToValue(safeConfig,
+                        com.hify.workflow.engine.executor.ToolConfig.class);
                 case CONDITION -> objectMapper.treeToValue(safeConfig,
                         com.hify.workflow.engine.executor.ConditionNodeConfig.class);
                 case API_CALL -> objectMapper.treeToValue(safeConfig,
@@ -79,7 +81,7 @@ public class NodeConfigParser {
                         com.hify.workflow.engine.executor.HumanReviewConfig.class);
                 case CODE_TASK -> objectMapper.treeToValue(safeConfig,
                         com.hify.workflow.engine.executor.CodeTaskConfig.class);
-                case TOOL, REPLY -> throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                case REPLY -> throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
                         "暂不支持执行节点类型: " + nodeType);
             };
         } catch (JsonProcessingException | IllegalArgumentException e) {

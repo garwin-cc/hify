@@ -82,6 +82,48 @@ class NodeConfigParserTest {
     }
 
     @Test
+    void should_parse_tool_config_into_typed_record() throws Exception {
+        NodeConfig config = parser.parse("TOOL", new ObjectMapper().readTree("""
+                {
+                  "mcpServerId": 7,
+                  "toolName": "search",
+                  "inputMapping": {
+                    "query": "{{start.userMessage}}"
+                  },
+                  "outputVariable": "result"
+                }
+                """));
+
+        assertThat(config).isInstanceOf(ToolNodeConfig.class);
+        ToolNodeConfig tool = (ToolNodeConfig) config;
+        assertThat(tool.mcpServerId()).isEqualTo(7L);
+        assertThat(tool.toolName()).isEqualTo("search");
+        assertThat(tool.inputMapping()).containsEntry("query", "{{start.userMessage}}");
+        assertThat(tool.outputVariable()).isEqualTo("result");
+    }
+
+    @Test
+    void should_parse_tool_execution_config_when_node_type_is_tool() throws Exception {
+        com.hify.workflow.engine.NodeConfigDef config = parser.parseExecutionConfig("TOOL", """
+                {
+                  "mcpServerId": 7,
+                  "toolName": "search",
+                  "inputMapping": {
+                    "query": "{{start.userMessage}}"
+                  },
+                  "outputVariable": "result"
+                }
+                """);
+
+        assertThat(config).isInstanceOf(com.hify.workflow.engine.executor.ToolConfig.class);
+        com.hify.workflow.engine.executor.ToolConfig tool =
+                (com.hify.workflow.engine.executor.ToolConfig) config;
+        assertThat(tool.mcpServerId()).isEqualTo(7L);
+        assertThat(tool.toolName()).isEqualTo("search");
+        assertThat(tool.outputVariable()).isEqualTo("result");
+    }
+
+    @Test
     void rejectsUnsupportedNodeType() {
         assertThatThrownBy(() -> parser.parse("UNKNOWN", new ObjectMapper().createObjectNode()))
                 .isInstanceOf(BizException.class)

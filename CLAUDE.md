@@ -12,6 +12,20 @@ Hify 是一个简化版内部 AI Agent 平台，基于 Dify 思路设计，面�
 - 架构模式：Maven 多模块的模块化单体，后端包名统一在 `com.hify` 下。
 - 产品边界：不追求完整复制 Dify/Coze/n8n，优先保证 RAG 可解释、Workflow 可调试、Agent 工具调用可控可审计、部署形态清晰。
 
+## 当前建设阶段
+
+> AI 接到实现任务时，先对照本节确认当前处于哪个 Stage，再查路由表读对应规范文件。
+
+**当前处于 Stage 1（立即执行）**，三项任务并行推进：
+
+1. **权限漏洞修复**：EDITOR 无法查看 MCP 工具列表（`McpController` GET 接口降为 EDITOR 可访问）；VIEWER 无法提交 HUMAN_REVIEW（产品层明确审核者须为 EDITOR+，前端和文档说明）。
+2. **CONDITION 节点增强**：扩展表达式支持数值比较（`>` `<` `>=` `<=`）、字符串包含（`contains` `startsWith` `endsWith`）、空值判断（`isEmpty` `isNotEmpty`）、AND/OR 多条件组合。
+3. **TOOL 节点执行器**：枚举和配置类已就位，新增 `ToolNodeExecutor` 复用 `McpClientService.callTool`，使工作流可直接调用 MCP 工具。
+
+Stage 1 完成后进入 **Stage 2（P0 稳定性）**：RAG 任务可靠性 → 对话运行可观测 → Workflow 运行排障 → Agent 会话摘要记忆。
+
+完整路线图（7 个 Stage、不做功能列表、工作流节点现状速查）见 [`docs/ai/13-implementation-roadmap.md`](docs/ai/13-implementation-roadmap.md)。
+
 ## 模块速览
 
 | 模块 | 职责 |
@@ -56,6 +70,7 @@ Hify 是一个简化版内部 AI Agent 平台，基于 Dify 思路设计，面�
 | 核心链路、风险集中区域、系统分析 | [`docs/ai/10-system-analysis.md`](docs/ai/10-system-analysis.md) |
 | 单元测试规范、测试优先级、Mock 策略、测试清单 | [`docs/ai/11-testing.md`](docs/ai/11-testing.md) |
 | P0 后续建设重点和执行建议 | [`docs/ai/12-p0-backlog.md`](docs/ai/12-p0-backlog.md) |
+| 分阶段实现路径、不做功能列表、工作流节点现状速查 | [`docs/ai/13-implementation-roadmap.md`](docs/ai/13-implementation-roadmap.md) |
 
 ## 常用验证命令
 

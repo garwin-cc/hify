@@ -23,30 +23,33 @@ class HealthControllerIntegrationTest extends HifyMockIntegrationTest {
     void should_returnLivenessWithoutDependencyComponents() throws Exception {
         JsonNode root = getJson("/api/v1/health/liveness");
 
-        assertThat(root.path("status").asText()).isEqualTo("UP");
-        assertThat(root.path("components").isObject()).isTrue();
-        assertThat(root.path("components").size()).isZero();
+        JsonNode data = assertOkResult(root);
+        assertThat(data.path("status").asText()).isEqualTo("UP");
+        assertThat(data.path("components").isObject()).isTrue();
+        assertThat(data.path("components").size()).isZero();
     }
 
     @Test
     void should_returnReadinessWithCoreDependencyComponents() throws Exception {
         JsonNode root = getJson("/api/v1/health/readiness");
+        JsonNode data = assertOkResult(root);
 
-        assertThat(root.path("components").has("mysql")).isTrue();
-        assertThat(root.path("components").has("redis")).isTrue();
-        assertThat(root.path("components").has("pgvector")).isTrue();
-        assertThat(root.path("components").has("providerSummary")).isFalse();
+        assertThat(data.path("components").has("mysql")).isTrue();
+        assertThat(data.path("components").has("redis")).isTrue();
+        assertThat(data.path("components").has("pgvector")).isTrue();
+        assertThat(data.path("components").has("providerSummary")).isFalse();
     }
 
     @Test
     void should_returnDeepHealthWithProviderSummary() throws Exception {
         JsonNode root = getJson("/api/v1/health/deep");
+        JsonNode data = assertOkResult(root);
 
-        assertThat(root.path("components").has("mysql")).isTrue();
-        assertThat(root.path("components").has("redis")).isTrue();
-        assertThat(root.path("components").has("pgvector")).isTrue();
-        assertThat(root.path("components").has("providerSummary")).isTrue();
-        assertThat(root.path("components").path("providerSummary").path("status").asText()).isNotBlank();
+        assertThat(data.path("components").has("mysql")).isTrue();
+        assertThat(data.path("components").has("redis")).isTrue();
+        assertThat(data.path("components").has("pgvector")).isTrue();
+        assertThat(data.path("components").has("providerSummary")).isTrue();
+        assertThat(data.path("components").path("providerSummary").path("status").asText()).isNotBlank();
     }
 
     private JsonNode getJson(String path) throws Exception {
@@ -56,5 +59,12 @@ class HealthControllerIntegrationTest extends HifyMockIntegrationTest {
                 .getResponse()
                 .getContentAsString();
         return objectMapper.readTree(response);
+    }
+
+    private JsonNode assertOkResult(JsonNode root) {
+        assertThat(root.path("code").asInt()).isEqualTo(200);
+        assertThat(root.path("message").asText()).isEqualTo("ok");
+        assertThat(root.path("data").isObject()).isTrue();
+        return root.path("data");
     }
 }

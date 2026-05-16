@@ -212,9 +212,9 @@ public class ProviderServiceImpl implements ProviderService {
         ProviderPo po = findOrThrow(providerId);
         ProviderAdapter adapter = providerAdapterFactory.getAdapter(po.getType());
         ConnectivityTestResult result = adapter.testConnection(po);
-        persistHealth(providerId, result);
+        persistHealthSafely(providerId, result);
         if (result.isSuccess()) {
-            syncDiscoveredModels(po, result.getModelIds());
+            syncDiscoveredModelsSafely(po, result.getModelIds());
         }
         log.info("connectivity test provider id={} type={} success={} latency={}ms",
                 providerId, po.getType(), result.isSuccess(), result.getLatencyMs());
@@ -422,8 +422,27 @@ public class ProviderServiceImpl implements ProviderService {
         providerHealthMapper.upsert(health);
     }
 
+    private void persistHealthSafely(Long providerId, ConnectivityTestResult result) {
+        try {
+            persistHealth(providerId, result);
+        } catch (Exception e) {
+            log.warn("provider health persist failed providerId={} success={} message={}",
+                    providerId, result.isSuccess(), e.getMessage(), e);
+        }
+    }
+
     private static int nullToZero(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private void syncDiscoveredModelsSafely(ProviderPo provider, List<String> modelIds) {
+        try {
+            syncDiscoveredModels(provider, modelIds);
+        } catch (Exception e) {
+            log.warn("provider discovered model sync failed providerId={} type={} modelCount={} message={}",
+                    provider.getId(), provider.getType(), modelIds == null ? 0 : modelIds.size(),
+                    e.getMessage(), e);
+        }
     }
 
     private void syncDiscoveredModels(ProviderPo provider, List<String> modelIds) {

@@ -466,6 +466,28 @@ class ConversationServiceImplTest {
         assertThat(prompt.indexOf("你是医疗助手")).isLessThan(prompt.indexOf("【会话摘要 / 记忆】"));
     }
 
+    @Test
+    void buildSystemPromptAddsMedicalSafetyBoundaryForMedicalAgent() throws Exception {
+        Method buildSystemPrompt = ConversationServiceImpl.class.getDeclaredMethod(
+                "buildSystemPrompt",
+                String.class,
+                com.hify.agent.api.AgentDetailResp.class,
+                List.class,
+                ChatSessionSummaryPo.class);
+        buildSystemPrompt.setAccessible(true);
+        com.hify.agent.api.AgentDetailResp agent = new com.hify.agent.api.AgentDetailResp();
+        agent.setId(7L);
+        agent.setSystemPrompt("你是 HIFY_MEDICAL_ASSISTANT 医生辅助诊断助手");
+        agent.setKnowledgeBaseIds(List.of());
+
+        String prompt = (String) buildSystemPrompt.invoke(nullSafeService(), "trace-1", agent,
+                List.of(ChatMessage.builder().role("user").content("患者胸痛并呼吸困难").build()), null);
+
+        assertThat(prompt).contains("【医疗安全边界】");
+        assertThat(prompt).contains("【红旗症状提醒】");
+        assertThat(prompt).contains("【知识库约束】");
+    }
+
     private ConversationServiceImpl nullSafeService() {
         return conversationService;
     }

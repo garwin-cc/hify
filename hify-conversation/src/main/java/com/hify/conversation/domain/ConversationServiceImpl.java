@@ -128,6 +128,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final ObjectMapper      objectMapper;
     private final HifyMetrics       hifyMetrics;
     private final ToolArgumentSchemaValidator toolArgumentSchemaValidator = new ToolArgumentSchemaValidator();
+    private final MedicalSafetyPromptBuilder medicalSafetyPromptBuilder = new MedicalSafetyPromptBuilder();
     private RateLimitService rateLimitService;
     private RateLimitQuotaService rateLimitQuotaService;
 
@@ -1613,18 +1614,13 @@ public class ConversationServiceImpl implements ConversationService {
                                      ChatSessionSummaryPo summary) {
         String systemPrompt = agent.getSystemPrompt() == null ? "" : agent.getSystemPrompt();
         List<Long> knowledgeBaseIds = agent.getKnowledgeBaseIds();
-        if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
+        String userMessage = latestUserMessage(messages);
+        boolean hasKnowledgeBase = knowledgeBaseIds != null && !knowledgeBaseIds.isEmpty();
+        systemPrompt = medicalSafetyPromptBuilder.apply(systemPrompt, userMessage, hasKnowledgeBase);
+        if (!hasKnowledgeBase) {
             return appendConversationSummary(systemPrompt, summary);
         }
 
-        String userMessage = "";
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            ChatMessage message = messages.get(i);
-            if ("user".equals(message.getRole()) && message.getContent() != null) {
-                userMessage = message.getContent();
-                break;
-            }
-        }
         if (userMessage.isBlank()) {
             return appendConversationSummary(systemPrompt, summary);
         }
@@ -1673,6 +1669,19 @@ public class ConversationServiceImpl implements ConversationService {
                     .append('\n');
         }
         return appendConversationSummary(builder.toString().trim(), summary);
+    }
+
+    private String latestUserMessage(List<ChatMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessage message = messages.get(i);
+            if (message != null && "user".equals(message.getRole()) && message.getContent() != null) {
+                return message.getContent();
+            }
+        }
+        return "";
     }
 
     private String appendConversationSummary(String systemPrompt, ChatSessionSummaryPo summary) {

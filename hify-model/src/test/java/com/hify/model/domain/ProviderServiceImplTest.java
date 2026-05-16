@@ -170,6 +170,28 @@ class ProviderServiceImplTest {
                 );
     }
 
+    @Test
+    void testConnectionReturnsSuccessWhenModelSyncFails() {
+        ProviderPo existing = new ProviderPo();
+        existing.setId(1L);
+        existing.setName("Ollama");
+        existing.setType("OLLAMA");
+        existing.setEnabled(1);
+        existing.setSortOrder(0);
+        when(providerMapper.selectById(1L)).thenReturn(existing);
+        when(providerAdapterFactory.getAdapter("OLLAMA")).thenReturn(providerAdapter);
+        when(providerAdapter.testConnection(existing))
+                .thenReturn(ConnectivityTestResult.success(8, List.of("qwen2.5vl:latest")));
+        when(modelConfigMapper.selectList(any())).thenReturn(List.of());
+        when(modelConfigMapper.insert(any(ModelConfigPo.class)))
+                .thenThrow(new IllegalStateException("model sync failed"));
+
+        ConnectivityTestResult result = providerService.test(1L);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getModelCount()).isEqualTo(1);
+    }
+
     private static CreateProviderReq createProviderReq(String name, String type, String apiKey) {
         CreateProviderReq req = new CreateProviderReq();
         req.setName(name);

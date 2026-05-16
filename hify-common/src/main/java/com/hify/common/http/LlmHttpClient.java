@@ -9,9 +9,20 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.springframework.stereotype.Component;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.BufferedReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.SocketAddress;
+import java.net.URI;
 import java.net.SocketTimeoutException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -41,6 +52,7 @@ public class LlmHttpClient {
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
+                .proxySelector(privateAddressBypassProxySelector(ProxySelector.getDefault()))
                 .build();
     }
 
@@ -68,6 +80,7 @@ public class LlmHttpClient {
      * 同步 HTTP 请求，自定义方法和超时时间。
      */
     public String request(String method, String url, Map<String, String> headers, String body, int timeoutSeconds) {
+        URI uri = URI.create(url);
         OkHttpClient client = streamClient.newBuilder()
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
@@ -77,6 +90,9 @@ public class LlmHttpClient {
         String httpMethod = method == null || method.isBlank()
                 ? "GET"
                 : method.toUpperCase(java.util.Locale.ROOT);
+        if (shouldBypassProxy(uri)) {
+            return jdkRequest(httpMethod, url, headers, body, timeoutSeconds);
+        }
         Request.Builder builder = new Request.Builder().url(url);
         headers.forEach(builder::header);
         if ("GET".equals(httpMethod)) {
@@ -123,6 +139,12 @@ public class LlmHttpClient {
      * @throws LlmApiException TIMEOUT / AUTH_FAILED / RATE_LIMITED / UNKNOWN
      */
     public void stream(String url, Map<String, String> headers, String body, Consumer<String> callback) {
+        URI uri = URI.create(url);
+        if (shouldBypassProxy(uri)) {
+            jdkStream(url, headers, body, callback);
+            return;
+        }
+
         Request.Builder builder = new Request.Builder().url(url);
         headers.forEach(builder::header);
         Request request = builder.post(RequestBody.create(body, JSON)).build();
@@ -184,6 +206,193 @@ public class LlmHttpClient {
     }
 
     // ------------------------------------------------------------------ 私有方法
+
+    static ProxySelector privateAddressBypassProxySelector(ProxySelector delegate) {
+        return new ProxySelector() {
+            @Override
+            public List<Proxy> select(URI uri) {
+                if (shouldBypassProxy(uri)) {
+                    return List.of(Proxy.NO_PROXY);
+                }
+                if (delegate == null) {
+                    return List.of(Proxy.NO_PROXY);
+                }
+                List<Proxy> proxies = delegate.select(uri);
+                return proxies == null || proxies.isEmpty() ? List.of(Proxy.NO_PROXY) : proxies;
+            }
+
+            @Override
+            public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+                if (delegate != null) {
+                    delegate.connectFailed(uri, sa, ioe);
+                }
+            }
+        };
+    }
+
+    private static String jdkRequest(String method, String url, Map<String, String> headers,
+                                     String body, int timeoutSeconds) {
+        long start = System.currentTimeMillis();
+        try {
+            HttpURLConnection connection = openDirectConnection(url);
+            connection.setRequestMethod(method);
+            connection.setConnectTimeout((int) TimeUnit.SECONDS.toMillis(5));
+            connection.setReadTimeout((int) TimeUnit.SECONDS.toMillis(timeoutSeconds));
+            headers.forEach(connection::setRequestProperty);
+            connection.setRequestProperty("Connection", "close");
+            if (!"GET".equals(method)) {
+                byte[] payload = (body == null ? "" : body).getBytes(StandardCharsets.UTF_8);
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", JSON.toString());
+                connection.setFixedLengthStreamingMode(payload.length);
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(payload);
+                }
+            }
+
+            int status = connection.getResponseCode();
+            log.info("LLM {} {} status={} elapsed={}ms", method, url, status, elapsed(start));
+            String responseBody = readBody(connection, status);
+            if (status < 200 || status >= 300) {
+                log.warn("LLM {} {} status={} body={} elapsed={}ms",
+                        method, url, status, abbreviate(responseBody), elapsed(start));
+                throw classify(status, responseBody, null);
+            }
+            return responseBody;
+        } catch (LlmApiException e) {
+            throw e;
+        } catch (SocketTimeoutException e) {
+            log.warn("LLM {} {} timeout elapsed={}ms", method, url, elapsed(start));
+            throw new LlmApiException(LlmApiException.Type.TIMEOUT,
+                    "LLM 请求超时: " + url, e);
+        } catch (IOException e) {
+            log.warn("LLM {} {} error elapsed={}ms: {}", method, url, elapsed(start), e.getMessage());
+            throw new LlmApiException(LlmApiException.Type.UNKNOWN,
+                    "LLM 请求异常: " + url, e);
+        }
+    }
+
+    private static void jdkStream(String url, Map<String, String> headers, String body, Consumer<String> callback) {
+        long start = System.currentTimeMillis();
+        try {
+            HttpURLConnection connection = openDirectConnection(url);
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout((int) TimeUnit.SECONDS.toMillis(5));
+            connection.setReadTimeout(0);
+            headers.forEach(connection::setRequestProperty);
+            connection.setRequestProperty("Connection", "close");
+
+            byte[] payload = (body == null ? "" : body).getBytes(StandardCharsets.UTF_8);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", JSON.toString());
+            connection.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(payload);
+            }
+
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                String errorBody = readBody(connection, status);
+                log.warn("LLM STREAM {} status={} body={} elapsed={}ms",
+                        url, status, abbreviate(errorBody), elapsed(start));
+                throw classify(status, errorBody, null);
+            }
+
+            long lineCount = 0;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (!line.isBlank()) {
+                        callback.accept(line);
+                        lineCount++;
+                    }
+                }
+            }
+            log.info("LLM STREAM {} status={} lines={} elapsed={}ms",
+                    url, status, lineCount, elapsed(start));
+        } catch (LlmApiException e) {
+            throw e;
+        } catch (SocketTimeoutException e) {
+            log.warn("LLM STREAM {} timeout elapsed={}ms", url, elapsed(start));
+            throw new LlmApiException(LlmApiException.Type.TIMEOUT,
+                    "LLM 流式请求超时: " + url, e);
+        } catch (IOException e) {
+            log.warn("LLM STREAM {} error elapsed={}ms: {}", url, elapsed(start), e.getMessage());
+            throw new LlmApiException(LlmApiException.Type.UNKNOWN,
+                    "LLM 流式请求异常: " + url, e);
+        }
+    }
+
+    private static HttpURLConnection openDirectConnection(String url) throws IOException {
+        URL target = URI.create(url).toURL();
+        return (HttpURLConnection) target.openConnection(Proxy.NO_PROXY);
+    }
+
+    private static String readBody(HttpURLConnection connection, int status) throws IOException {
+        InputStream inputStream = status >= 200 && status < 300
+                ? connection.getInputStream()
+                : connection.getErrorStream();
+        if (inputStream == null) {
+            return "";
+        }
+        try (InputStream input = inputStream) {
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static boolean shouldBypassProxy(URI uri) {
+        if (uri == null || uri.getHost() == null) {
+            return false;
+        }
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
+        return isLocalHostname(host) || isPrivateIpv4(host) || isPrivateIpv6(host);
+    }
+
+    private static boolean isLocalHostname(String host) {
+        return "localhost".equals(host)
+                || host.endsWith(".localhost")
+                || host.endsWith(".local");
+    }
+
+    private static boolean isPrivateIpv4(String host) {
+        String[] parts = host.split("\\.");
+        if (parts.length != 4) {
+            return false;
+        }
+        int[] values = new int[4];
+        for (int i = 0; i < parts.length; i++) {
+            try {
+                values[i] = Integer.parseInt(parts[i]);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+            if (values[i] < 0 || values[i] > 255) {
+                return false;
+            }
+        }
+
+        int first = values[0];
+        int second = values[1];
+        return first == 10
+                || first == 127
+                || first == 0
+                || (first == 172 && second >= 16 && second <= 31)
+                || (first == 192 && second == 168)
+                || (first == 169 && second == 254)
+                || (first == 100 && second >= 64 && second <= 127);
+    }
+
+    private static boolean isPrivateIpv6(String host) {
+        String value = host.startsWith("[") && host.endsWith("]")
+                ? host.substring(1, host.length() - 1)
+                : host;
+        return "::1".equals(value)
+                || "0:0:0:0:0:0:0:1".equals(value)
+                || value.startsWith("fe80:")
+                || value.startsWith("fc")
+                || value.startsWith("fd");
+    }
 
     private static LlmApiException classify(int statusCode, Exception cause) {
         return classify(statusCode, null, cause);

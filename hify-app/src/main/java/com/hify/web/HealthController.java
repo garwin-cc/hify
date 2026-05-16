@@ -1,6 +1,6 @@
 package com.hify.web;
 
-import lombok.RequiredArgsConstructor;
+import com.hify.common.web.Result;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -16,34 +16,45 @@ import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/v1")
-@RequiredArgsConstructor
 public class HealthController {
 
     private static final String UP = "UP";
     private static final String DOWN = "DOWN";
 
-    private final JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate mysqlJdbcTemplate;
     private final RedisConnectionFactory redisConnectionFactory;
-    private final @Qualifier("pgvectorJdbcTemplate") JdbcTemplate pgvectorJdbcTemplate;
+    private final JdbcTemplate pgvectorJdbcTemplate;
+
+    public HealthController(@Qualifier("mysqlJdbcTemplate") JdbcTemplate mysqlJdbcTemplate,
+                            RedisConnectionFactory redisConnectionFactory,
+                            @Qualifier("pgvectorJdbcTemplate") JdbcTemplate pgvectorJdbcTemplate) {
+        this.mysqlJdbcTemplate = mysqlJdbcTemplate;
+        this.redisConnectionFactory = redisConnectionFactory;
+        this.pgvectorJdbcTemplate = pgvectorJdbcTemplate;
+    }
 
     @GetMapping("/health")
-    public HealthResponse health() {
-        return deepHealth();
+    public Result<HealthResponse> health() {
+        return Result.ok(buildDeepHealth());
     }
 
     @GetMapping("/health/liveness")
-    public HealthResponse liveness() {
-        return new HealthResponse(UP, new LinkedHashMap<>());
+    public Result<HealthResponse> liveness() {
+        return Result.ok(new HealthResponse(UP, new LinkedHashMap<>()));
     }
 
     @GetMapping("/health/readiness")
-    public HealthResponse readiness() {
+    public Result<HealthResponse> readiness() {
         Map<String, Object> components = readinessComponents();
-        return new HealthResponse(overallStatus(components), components);
+        return Result.ok(new HealthResponse(overallStatus(components), components));
     }
 
     @GetMapping("/health/deep")
-    public HealthResponse deepHealth() {
+    public Result<HealthResponse> deepHealth() {
+        return Result.ok(buildDeepHealth());
+    }
+
+    private HealthResponse buildDeepHealth() {
         Map<String, Object> components = readinessComponents();
         components.put("providerSummary", checkProviderSummary());
         return new HealthResponse(overallStatus(components), components);
@@ -67,7 +78,7 @@ public class HealthController {
 
     private ComponentHealth checkMysql() {
         try {
-            Integer result = jdbcTemplate.queryForObject("SELECT 1", Integer.class);
+            Integer result = mysqlJdbcTemplate.queryForObject("SELECT 1", Integer.class);
             return Integer.valueOf(1).equals(result)
                     ? ComponentHealth.up()
                     : ComponentHealth.down("Unexpected result: " + result);
@@ -100,13 +111,13 @@ public class HealthController {
 
     private ProviderSummaryHealth checkProviderSummary() {
         try {
-            Integer enabledCount = jdbcTemplate.queryForObject(
+            Integer enabledCount = mysqlJdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM t_provider WHERE enabled = 1 AND deleted = 0",
                     Integer.class);
             if (enabledCount == null || enabledCount == 0) {
                 return new ProviderSummaryHealth(UP, null, 0, 0, 0);
             }
-            Integer downCount = jdbcTemplate.queryForObject("""
+            Integer downCount = mysqlJdbcTemplate.queryForObject("""
                     SELECT COUNT(*)
                     FROM t_provider p
                     LEFT JOIN t_provider_health h ON h.provider_id = p.id
@@ -114,7 +125,7 @@ public class HealthController {
                       AND p.deleted = 0
                       AND h.status = 'DOWN'
                     """, Integer.class);
-            Integer unknownCount = jdbcTemplate.queryForObject("""
+            Integer unknownCount = mysqlJdbcTemplate.queryForObject("""
                     SELECT COUNT(*)
                     FROM t_provider p
                     LEFT JOIN t_provider_health h ON h.provider_id = p.id

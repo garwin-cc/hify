@@ -114,16 +114,6 @@
 
           <!-- 基本配置 -->
           <el-tab-pane label="基本配置" name="basic">
-            <el-form-item v-if="editingId === null" label="模板">
-              <div class="template-actions">
-                <el-button @click="applyMedicalTemplate">
-                  <el-icon style="margin-right: 4px"><FirstAidKit /></el-icon>
-                  医疗辅助诊断
-                </el-button>
-                <span class="form-hint-inline">填充医生辅助诊断 Prompt 和安全边界，需再选择模型和知识库。</span>
-              </div>
-            </el-form-item>
-
             <el-form-item label="名称" prop="name">
               <el-input
                 v-model="form.name"
@@ -340,7 +330,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { FirstAidKit, Plus, Loading } from '@element-plus/icons-vue'
+import { Plus, Loading } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import HifyTable, { type HifyColumn } from '@/components/HifyTable.vue'
@@ -373,27 +363,6 @@ const columns: HifyColumn[] = [
   { label: '创建时间', slot: 'createdAt',   width: '110' },
   { label: '操作',     slot: 'actions',     width: '160', align: 'right' },
 ]
-
-const MEDICAL_AGENT_SYSTEM_PROMPT = `你是 HIFY_MEDICAL_ASSISTANT 医生辅助诊断助手。
-
-你的用户是医生或具备医疗背景的内部人员。你的职责是辅助整理信息、提示风险、提出可能诊断方向和需补充检查，不能替代医生做最终诊断。
-
-回答必须使用以下结构：
-1. 病情摘要：基于用户提供的信息，不补充不存在的事实。
-2. 红旗风险：列出需要立即排查的急危重症线索。
-3. 可能诊断方向：按可能性列出，不输出唯一最终诊断。
-4. 支持依据：说明每个方向来自哪些症状、体征、检查或知识库资料。
-5. 反对依据：说明当前信息中不支持或需要排除的点。
-6. 需补充信息：列出病史、体征、检查或化验缺口。
-7. 建议检查：只给检查方向，不给处方或治疗执行指令。
-8. 引用来源：如果绑定知识库命中资料，必须引用资料编号；没有资料时明确说明。
-9. 免责声明：仅供医生参考，不作为最终诊断、处方或治疗决定。
-
-安全边界：
-- 不得直接给患者下最终诊断。
-- 不得开药、调整剂量、停药或替代医生面诊。
-- 对胸痛、呼吸困难、意识障碍、卒中、严重过敏、大出血、自杀风险等红旗症状，必须优先提示立即联系医生或急诊。
-- 资料不足时必须说明不确定，并提出需要补充的信息。`
 
 // ── 搜索过滤 ──────────────────────────────────────────────────────────
 
@@ -541,19 +510,6 @@ function handleCreate() {
   resetForm()
   editingId.value = null
   dialogVisible.value = true
-}
-
-function applyMedicalTemplate() {
-  form.name = form.name || '医疗辅助诊断助手'
-  form.description = '面向医生的辅助诊断 Agent，用于病情摘要、红旗风险、鉴别诊断方向和补充检查建议。'
-  form.systemPrompt = MEDICAL_AGENT_SYSTEM_PROMPT
-  form.temperature = 0.2
-  form.maxTokens = 2000
-  form.maxContextTurns = 20
-  form.memoryEnabled = 1
-  form.summaryTriggerMessageCount = 12
-  form.summaryMaxTokens = 800
-  activeTab.value = 'basic'
 }
 
 async function handleEdit(row: AgentListItem) {
@@ -706,13 +662,6 @@ async function handleDelete(row: AgentListItem) {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   line-height: 1.4;
-}
-
-.template-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
 }
 
 .knowledge-option {

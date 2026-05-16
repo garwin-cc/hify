@@ -433,7 +433,7 @@ class ConversationServiceImplTest {
     void abbreviateDoesNotExceedRequestedLength() throws Exception {
         Method abbreviate = ConversationServiceImpl.class.getDeclaredMethod("abbreviate", String.class, int.class);
         abbreviate.setAccessible(true);
-        String content = "右手第四掌骨骨折".repeat(80);
+        String content = "复杂问题描述".repeat(120);
 
         String preview = (String) abbreviate.invoke(null, content, 512);
 
@@ -452,40 +452,18 @@ class ConversationServiceImplTest {
         buildSystemPrompt.setAccessible(true);
         com.hify.agent.api.AgentDetailResp agent = new com.hify.agent.api.AgentDetailResp();
         agent.setId(7L);
-        agent.setSystemPrompt("你是医疗助手");
+        agent.setSystemPrompt("你是客服助手");
         agent.setKnowledgeBaseIds(List.of());
         ChatSessionSummaryPo summary = new ChatSessionSummaryPo();
-        summary.setSummary("用户目标：持续跟进右手第四掌骨骨折恢复。");
+        summary.setSummary("用户目标：持续跟进工单处理。");
 
         String prompt = (String) buildSystemPrompt.invoke(nullSafeService(), "trace-1", agent,
-                List.of(ChatMessage.builder().role("user").content("现在可以训练吗").build()), summary);
+                List.of(ChatMessage.builder().role("user").content("现在处理到哪里了").build()), summary);
 
-        assertThat(prompt).contains("你是医疗助手");
+        assertThat(prompt).contains("你是客服助手");
         assertThat(prompt).contains("【会话摘要 / 记忆】");
-        assertThat(prompt).contains("用户目标：持续跟进右手第四掌骨骨折恢复。");
-        assertThat(prompt.indexOf("你是医疗助手")).isLessThan(prompt.indexOf("【会话摘要 / 记忆】"));
-    }
-
-    @Test
-    void buildSystemPromptAddsMedicalSafetyBoundaryForMedicalAgent() throws Exception {
-        Method buildSystemPrompt = ConversationServiceImpl.class.getDeclaredMethod(
-                "buildSystemPrompt",
-                String.class,
-                com.hify.agent.api.AgentDetailResp.class,
-                List.class,
-                ChatSessionSummaryPo.class);
-        buildSystemPrompt.setAccessible(true);
-        com.hify.agent.api.AgentDetailResp agent = new com.hify.agent.api.AgentDetailResp();
-        agent.setId(7L);
-        agent.setSystemPrompt("你是 HIFY_MEDICAL_ASSISTANT 医生辅助诊断助手");
-        agent.setKnowledgeBaseIds(List.of());
-
-        String prompt = (String) buildSystemPrompt.invoke(nullSafeService(), "trace-1", agent,
-                List.of(ChatMessage.builder().role("user").content("患者胸痛并呼吸困难").build()), null);
-
-        assertThat(prompt).contains("【医疗安全边界】");
-        assertThat(prompt).contains("【红旗症状提醒】");
-        assertThat(prompt).contains("【知识库约束】");
+        assertThat(prompt).contains("用户目标：持续跟进工单处理。");
+        assertThat(prompt.indexOf("你是客服助手")).isLessThan(prompt.indexOf("【会话摘要 / 记忆】"));
     }
 
     private ConversationServiceImpl nullSafeService() {

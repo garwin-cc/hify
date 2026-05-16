@@ -128,7 +128,6 @@ public class ConversationServiceImpl implements ConversationService {
     private final ObjectMapper      objectMapper;
     private final HifyMetrics       hifyMetrics;
     private final ToolArgumentSchemaValidator toolArgumentSchemaValidator = new ToolArgumentSchemaValidator();
-    private final MedicalSafetyPromptBuilder medicalSafetyPromptBuilder = new MedicalSafetyPromptBuilder();
     private RateLimitService rateLimitService;
     private RateLimitQuotaService rateLimitQuotaService;
 
@@ -1616,7 +1615,6 @@ public class ConversationServiceImpl implements ConversationService {
         List<Long> knowledgeBaseIds = agent.getKnowledgeBaseIds();
         String userMessage = latestUserMessage(messages);
         boolean hasKnowledgeBase = knowledgeBaseIds != null && !knowledgeBaseIds.isEmpty();
-        systemPrompt = medicalSafetyPromptBuilder.apply(systemPrompt, userMessage, hasKnowledgeBase);
         if (!hasKnowledgeBase) {
             return appendConversationSummary(systemPrompt, summary);
         }

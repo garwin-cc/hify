@@ -38,4 +38,27 @@ class ModelConfigServiceImplTest {
 
         assertThat(resp.getModelType()).isEqualTo("RERANK");
     }
+
+    @Test
+    void getByIdIncludesProviderTypeForProviderAwareRuntimeTuning() {
+        ModelConfigMapper mapper = mock(ModelConfigMapper.class);
+        ProviderMapper providerMapper = mock(ProviderMapper.class);
+        ModelConfigPo po = new ModelConfigPo();
+        po.setId(11L);
+        po.setProviderId(1L);
+        po.setName("nomic embed");
+        po.setModelId("nomic-embed-text");
+        po.setModelType("EMBEDDING");
+        po.setEnabled(1);
+        when(mapper.selectById(11L)).thenReturn(po);
+        ProviderPo provider = new ProviderPo();
+        provider.setId(1L);
+        provider.setType("OLLAMA");
+        when(providerMapper.selectById(1L)).thenReturn(provider);
+        ModelConfigServiceImpl service = new ModelConfigServiceImpl(mapper, providerMapper);
+
+        ModelConfigResp resp = service.getById(11L);
+
+        assertThat(resp.getProviderType()).isEqualTo("OLLAMA");
+    }
 }

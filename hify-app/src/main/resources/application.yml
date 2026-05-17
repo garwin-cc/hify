@@ -123,6 +123,7 @@ hify:
   knowledge:
     max-file-size-bytes: 209715200
     embedding-batch-size: 32
+    ollama-embedding-batch-size: 64
     max-chunks-per-document: 50000
     max-split-steps: 100000
   init:

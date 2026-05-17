@@ -8,6 +8,7 @@ import java.util.Map;
 public class ModelConfigResp {
     private Long id;
     private Long providerId;
+    private String providerType;
     private String name;
     private String modelId;
     private String modelType;

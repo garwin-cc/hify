@@ -50,12 +50,15 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -341,6 +344,19 @@ class ConversationServiceImplTest {
     }
 
     @Test
+    void should_mark_trace_client_disconnected_when_token_send_fails() throws Exception {
+        Method method = ConversationServiceImpl.class.getDeclaredMethod("sendBufferedContent",
+                SseEmitter.class, AtomicBoolean.class, String.class, Long.class, String.class);
+        method.setAccessible(true);
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        method.invoke(conversationService, new FailingSseEmitter(), cancelled, "trace-1", 102L, "partial answer");
+
+        assertThat(cancelled).isTrue();
+        verify(conversationTraceMapper).update(eq(null), any());
+    }
+
+    @Test
     void upsertFeedbackCreatesFeedbackForAssistantMessage() {
         ChatMessagePo assistant = message(102L, "assistant", "原始回答", LocalDateTime.of(2026, 5, 14, 10, 1));
         when(messageMapper.selectById(102L)).thenReturn(assistant);
@@ -556,5 +572,13 @@ class ConversationServiceImplTest {
         message.setStatus("DONE");
         message.setCreatedAt(createdAt);
         return message;
+    }
+
+    private static class FailingSseEmitter extends SseEmitter {
+
+        @Override
+        public void send(SseEventBuilder builder) throws IOException {
+            throw new IOException("client gone");
+        }
     }
 }

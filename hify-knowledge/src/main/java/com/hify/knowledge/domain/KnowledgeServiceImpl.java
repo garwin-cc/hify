@@ -81,6 +81,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private static final int DEFAULT_MAX_EMBEDDING_BATCH_CHARS = 24_000;
     private static final int EXTRACTED_TEXT_EXPANSION_SAFETY_FACTOR = 4;
     private static final int DEFAULT_EMBEDDING_BATCH_SIZE = 32;
+    private static final int DEFAULT_OLLAMA_EMBEDDING_BATCH_SIZE = 64;
     private static final int DEFAULT_MAX_CHUNKS_PER_DOCUMENT = 50_000;
     private static final int DEFAULT_MAX_SPLIT_STEPS = 100_000;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;
@@ -152,6 +153,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Value("${hify.knowledge.embedding-batch-size:" + DEFAULT_EMBEDDING_BATCH_SIZE + "}")
     private int embeddingBatchSize = DEFAULT_EMBEDDING_BATCH_SIZE;
+
+    @Value("${hify.knowledge.ollama-embedding-batch-size:" + DEFAULT_OLLAMA_EMBEDDING_BATCH_SIZE + "}")
+    private int ollamaEmbeddingBatchSize = DEFAULT_OLLAMA_EMBEDDING_BATCH_SIZE;
 
     @Value("${hify.knowledge.max-chunks-per-document:" + DEFAULT_MAX_CHUNKS_PER_DOCUMENT + "}")
     private int maxChunksPerDocument = DEFAULT_MAX_CHUNKS_PER_DOCUMENT;
@@ -2089,6 +2093,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         private final Long indexVersion;
         private final boolean active;
         private final boolean progressEnabled;
+        private final int embeddingBatchLimit;
         private final int chunkSize;
         private final int chunkOverlap;
         private final StringBuilder buffer = new StringBuilder();
@@ -2105,6 +2110,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             this.indexVersion = indexVersion;
             this.active = active;
             this.progressEnabled = progressEnabled;
+            this.embeddingBatchLimit = resolveEmbeddingBatchSize(embeddingModelConfigId);
             this.chunkSize = effectiveChunkSize(document);
             this.chunkOverlap = Math.min(CHUNK_OVERLAP, Math.max(0, chunkSize / 4));
         }
@@ -2146,7 +2152,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                     batch.add(toKnowledgeChunk(content));
                     batchCharCount += content.length();
                     chunkCount++;
-                    if (batch.size() >= effectiveEmbeddingBatchSize()) {
+                    if (batch.size() >= embeddingBatchLimit) {
                         flushBatch();
                     }
                 }
@@ -2204,8 +2210,20 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         }
     }
 
-    private int effectiveEmbeddingBatchSize() {
-        return Math.max(1, Math.min(100, embeddingBatchSize));
+    private int resolveEmbeddingBatchSize(Long embeddingModelConfigId) {
+        int configuredBatchSize = embeddingBatchSize;
+        try {
+            ModelConfigResp modelConfig = embeddingModelConfigId == null
+                    ? null
+                    : modelConfigService.getById(embeddingModelConfigId);
+            if (modelConfig != null && "OLLAMA".equalsIgnoreCase(modelConfig.getProviderType())) {
+                configuredBatchSize = ollamaEmbeddingBatchSize;
+            }
+        } catch (Exception e) {
+            log.debug("resolve embedding provider type failed modelConfigId={} message={}",
+                    embeddingModelConfigId, e.getMessage());
+        }
+        return Math.max(1, Math.min(100, configuredBatchSize));
     }
 
     private int effectiveEmbeddingBatchMaxChars() {

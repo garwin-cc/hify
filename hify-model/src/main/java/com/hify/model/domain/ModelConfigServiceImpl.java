@@ -33,7 +33,7 @@ public class ModelConfigServiceImpl implements ModelConfigService {
                         .eq(ModelConfigPo::getEnabled, 1)
                         .orderByAsc(ModelConfigPo::getSortOrder)
                         .orderByAsc(ModelConfigPo::getId)
-        ).stream().map(ModelConfigServiceImpl::toResp).toList();
+        ).stream().map(this::toResp).toList();
     }
 
     @Override
@@ -45,7 +45,7 @@ public class ModelConfigServiceImpl implements ModelConfigService {
                         .eq(ModelConfigPo::getModelType, normalizedType)
                         .orderByAsc(ModelConfigPo::getSortOrder)
                         .orderByAsc(ModelConfigPo::getId)
-        ).stream().map(ModelConfigServiceImpl::toResp).toList();
+        ).stream().map(this::toResp).toList();
     }
 
     @Override
@@ -103,13 +103,14 @@ public class ModelConfigServiceImpl implements ModelConfigService {
         if (ids == null || ids.isEmpty()) return Map.of();
         return modelConfigMapper.selectBatchIds(ids)
                 .stream()
-                .collect(Collectors.toMap(ModelConfigPo::getId, ModelConfigServiceImpl::toResp));
+                .collect(Collectors.toMap(ModelConfigPo::getId, this::toResp));
     }
 
-    private static ModelConfigResp toResp(ModelConfigPo po) {
+    private ModelConfigResp toResp(ModelConfigPo po) {
         ModelConfigResp resp = new ModelConfigResp();
         resp.setId(po.getId());
         resp.setProviderId(po.getProviderId());
+        resp.setProviderType(resolveProviderType(po.getProviderId()));
         resp.setName(po.getName());
         resp.setModelId(po.getModelId());
         resp.setModelType(po.getModelType() == null ? "CHAT" : po.getModelType());
@@ -118,6 +119,14 @@ public class ModelConfigServiceImpl implements ModelConfigService {
         resp.setEnabled(po.getEnabled());
         resp.setSortOrder(po.getSortOrder());
         return resp;
+    }
+
+    private String resolveProviderType(Long providerId) {
+        if (providerId == null) {
+            return null;
+        }
+        ProviderPo provider = providerMapper.selectById(providerId);
+        return provider == null ? null : provider.getType();
     }
 
     private static String normalizeModelType(String modelType) {

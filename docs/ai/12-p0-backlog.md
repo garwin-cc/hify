@@ -265,6 +265,16 @@ P0 不追求功能数量，而追求稳定、可解释、可恢复。
 - 对 `PENDING` 或 `PROCESSING` 文档执行取消后，状态进入 `CANCELED`，不得继续写入可检索 chunk。
 - 删除文档或知识库后，MySQL 元数据和 pgvector chunk 不得留下可检索脏数据。
 
+#### Ollama 本地 Embedding 批处理建议
+
+如果知识库绑定的 embedding 模型是 Ollama 本地模型，可以适当提高单次处理 chunk 数以减少 HTTP 调用次数，但仍必须服从 chunk 数和字符数双重保护，避免单次请求过大导致超时、OOM 或失败重试成本过高。
+
+当前默认 `hify.knowledge.embedding-batch-size = 32`，代码有效上限为 `100`，单批最大字符数默认约 `24000`。短期建议本地 Ollama 环境先调到 `64`，稳定后再压测 `100`；CPU 场景建议 `16-32`，普通 GPU 或 Mac 场景建议 `32-64`，显存充足且单用户处理可试 `64-100`，多人并发上传建议保持 `32-64`。
+
+已支持 Provider 类型感知配置：保留通用 `embedding-batch-size = 32`，新增 `ollama-embedding-batch-size = 64`。运行时仅当 embedding model 的 Provider 为 `OLLAMA` 时使用 Ollama 专属值，其他 Provider 继续使用通用值；P0 阶段不建议突破 `100` 的代码上限。
+
+验收时必须比较 batch size `32 / 64 / 100` 下的文档处理耗时、embedding 阶段耗时、Ollama CPU/GPU/内存/显存峰值、timeout 情况、取消后脏 chunk、失败后重试清理，并确保 `mvn -pl hify-knowledge test` 通过。
+
 ### 2. 对话运行可观测
 
 - 每次对话请求必须生成 `traceId`，并写入用户消息、assistant 消息、conversation trace、RAG trace、LLM trace 和 MCP 调用审计。

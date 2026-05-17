@@ -610,7 +610,7 @@ public class ConversationServiceImpl implements ConversationService {
                                     toolMap, fullContent, streamStart, 1);
                             return;
                         }
-                        sendBufferedContent(emitter, cancelled, assistantMsgId, fullContent.toString());
+                        sendBufferedContent(emitter, cancelled, traceId, assistantMsgId, fullContent.toString());
                     }
                     int latency = (int) (System.currentTimeMillis() - streamStart);
                     finishLlmTrace(llmTraceId.get(), response, latency, "DONE", null, null);
@@ -728,7 +728,7 @@ public class ConversationServiceImpl implements ConversationService {
                                 fullContent, streamStart, toolRound + 1);
                         return;
                     }
-                    sendBufferedContent(emitter, cancelled, assistantMsgId, fullContent.toString());
+                    sendBufferedContent(emitter, cancelled, traceId, assistantMsgId, fullContent.toString());
                     int latency = (int) (System.currentTimeMillis() - streamStart);
                     finishLlmTrace(llmTraceId, response, latency, "DONE", null, null);
                     completeAssistantStream(emitter, cancelled, session.getId(), assistantMsgId,
@@ -795,18 +795,21 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     private void sendBufferedContent(SseEmitter emitter, AtomicBoolean cancelled,
-                                     Long assistantMsgId, String content) {
+                                     String traceId, Long assistantMsgId, String content) {
         if (cancelled.get() || content == null || content.isBlank()) {
             return;
         }
         try {
             emitter.send(SseEmitter.event().data(tokenEvent(content)));
         } catch (IOException e) {
-            log.debug("SSE buffered content send failed msgId={}", assistantMsgId);
+            log.debug("SSE buffered content send failed traceId={} msgId={}", traceId, assistantMsgId);
             cancelled.set(true);
+            markClientDisconnected(traceId);
         } catch (Exception e) {
-            log.warn("SSE buffered content send failed msgId={}: {}", assistantMsgId, e.getMessage());
+            log.warn("SSE buffered content send failed traceId={} msgId={}: {}",
+                    traceId, assistantMsgId, e.getMessage());
             cancelled.set(true);
+            markClientDisconnected(traceId);
             emitter.completeWithError(e);
         }
     }

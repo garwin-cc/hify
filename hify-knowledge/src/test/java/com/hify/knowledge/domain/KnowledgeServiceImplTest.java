@@ -15,6 +15,7 @@ import com.hify.knowledge.infra.KnowledgeDocumentMapper;
 import com.hify.knowledge.infra.KnowledgeTaskMapper;
 import com.hify.knowledge.infra.RagRetrievalTraceMapper;
 import com.hify.model.api.EmbeddingService;
+import com.hify.model.api.ModelConfigResp;
 import com.hify.model.api.ModelConfigService;
 import com.hify.model.api.RerankRequest;
 import com.hify.model.api.RerankResult;
@@ -127,6 +128,45 @@ class KnowledgeServiceImplTest {
         assertThat(embeddingService.batchSizes).allMatch(size -> size <= 32);
         assertThat(repository.savedBatches).hasSizeGreaterThan(1);
         assertThat(repository.savedBatches.stream().mapToInt(List::size).sum()).isEqualTo(chunkCount);
+    }
+
+    @Test
+    void processTextSegmentsUsesOllamaEmbeddingBatchSizeForLocalProvider() throws Exception {
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        FakeEmbeddingService embeddingService = new FakeEmbeddingService();
+        ModelConfigService modelConfigService = mock(ModelConfigService.class);
+        ModelConfigResp embeddingModel = new ModelConfigResp();
+        embeddingModel.setId(11L);
+        embeddingModel.setEnabled(1);
+        embeddingModel.setModelType("EMBEDDING");
+        embeddingModel.setProviderType("OLLAMA");
+        when(modelConfigService.getById(11L)).thenReturn(embeddingModel);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                mock(KnowledgeBaseMapper.class),
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                modelConfigService,
+                mock(RagRetrievalTraceMapper.class));
+        setIntField(service, "ollamaEmbeddingBatchSize", 64);
+        KnowledgeDocumentPo document = new KnowledgeDocumentPo();
+        document.setId(9L);
+        document.setKnowledgeBaseId(1L);
+        document.setName("large.txt");
+        document.setFileType("txt");
+
+        List<String> segments = new ArrayList<>();
+        for (int i = 0; i < 80; i++) {
+            segments.add(("word" + i + " ").repeat(140));
+        }
+
+        service.processTextSegments(document, 11L, segments);
+
+        assertThat(embeddingService.batchSizes).anyMatch(size -> size > 32);
+        assertThat(embeddingService.batchSizes).allMatch(size -> size <= 64);
     }
 
     @Test

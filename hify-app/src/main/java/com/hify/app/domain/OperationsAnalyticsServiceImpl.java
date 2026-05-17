@@ -1,6 +1,6 @@
 package com.hify.app.domain;
 
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -13,12 +13,15 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 public class OperationsAnalyticsServiceImpl implements OperationsAnalyticsService {
 
     private static final int LIMIT = 10;
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
+
+    public OperationsAnalyticsServiceImpl(@Qualifier("mysqlNamedJdbcTemplate") NamedParameterJdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
 
     @Override
     public OperationsAnalyticsOverview overview(Long projectId, LocalDateTime from, LocalDateTime to) {

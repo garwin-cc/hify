@@ -64,6 +64,7 @@
 
         <template #actions="{ row }">
           <el-button size="small" @click="handleEdit(row)">编辑</el-button>
+          <el-button size="small" @click="openRetrievalTest(row)">召回测试</el-button>
           <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
         </template>
       </HifyTable>
@@ -132,8 +133,17 @@
         <el-form-item label="检索模式">
           <el-segmented
             v-model="form.retrievalMode"
-            :options="[{ label: '向量检索', value: 'VECTOR' }]"
+            :options="[
+              { label: '向量', value: 'VECTOR' },
+              { label: '全文', value: 'FULLTEXT' },
+              { label: '混合', value: 'HYBRID' },
+            ]"
           />
+        </el-form-item>
+
+        <el-form-item v-if="form.retrievalMode === 'HYBRID'" label="混合权重">
+          <el-slider v-model="form.hybridAlpha" :min="0" :max="1" :step="0.05" style="width: 280px" />
+          <div class="form-hint">越接近 1 越偏向向量召回，越接近 0 越偏向关键词召回。</div>
         </el-form-item>
 
         <el-form-item label="TopK">
@@ -170,6 +180,49 @@
         <el-form-item label="上下文预算">
           <el-input-number v-model="form.maxContextTokens" :min="512" :max="16000" controls-position="right" />
         </el-form-item>
+
+        <el-divider content-position="left">Rerank 与过滤</el-divider>
+
+        <el-form-item label="启用精排">
+          <el-switch v-model="form.rerankEnabled" :active-value="1" :inactive-value="0" />
+        </el-form-item>
+
+        <el-form-item v-if="form.rerankEnabled === 1" label="精排模型">
+          <el-select
+            v-model="form.rerankModelConfigId"
+            placeholder="请选择 Rerank 模型"
+            filterable
+            :loading="loadingRerankModels"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="model in rerankModels"
+              :key="model.id"
+              :label="`${model.name}（${model.modelId}）`"
+              :value="model.id"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item v-if="form.rerankEnabled === 1" label="精排候选">
+          <el-input-number v-model="form.rerankTopN" :min="1" :max="100" controls-position="right" />
+        </el-form-item>
+
+        <el-form-item label="默认过滤">
+          <el-switch v-model="form.metadataFilterEnabled" :active-value="1" :inactive-value="0" />
+        </el-form-item>
+
+        <template v-if="form.metadataFilterEnabled === 1">
+          <el-form-item label="部门">
+            <el-input v-model="form.defaultDepartment" placeholder="例如 finance" />
+          </el-form-item>
+          <el-form-item label="文档类型">
+            <el-input v-model="form.defaultDocumentType" placeholder="例如 policy" />
+          </el-form-item>
+          <el-form-item label="标签">
+            <el-input v-model="form.defaultTagsText" placeholder="多个标签用逗号分隔" />
+          </el-form-item>
+        </template>
       </el-form>
 
       <template #footer>
@@ -177,6 +230,39 @@
         <el-button type="primary" :loading="submitting" @click="handleSubmit">
           保存
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="retrievalDialogVisible" title="召回测试" width="760px">
+      <el-form label-width="90px">
+        <el-form-item label="查询">
+          <el-input v-model="retrievalForm.queryText" placeholder="输入要测试的用户问题" />
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-input v-model="retrievalForm.department" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="retrievalForm.tagsText" placeholder="多个标签用逗号分隔" />
+        </el-form-item>
+      </el-form>
+      <el-table :data="retrievalHits" v-loading="retrievalLoading" max-height="360" empty-text="暂无召回结果">
+        <el-table-column prop="rank" label="#" width="56" />
+        <el-table-column prop="documentName" label="文档" min-width="130" />
+        <el-table-column prop="content" label="内容" min-width="260" show-overflow-tooltip />
+        <el-table-column label="分数" width="180">
+          <template #default="{ row }">
+            <div class="score-stack">
+              <span>Final {{ formatScore(row.finalScore ?? row.score) }}</span>
+              <span v-if="row.vectorScore != null">Vector {{ formatScore(row.vectorScore) }}</span>
+              <span v-if="row.keywordScore != null">Keyword {{ formatScore(row.keywordScore) }}</span>
+              <span v-if="row.rerankScore != null">Rerank {{ formatScore(row.rerankScore) }}</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="retrievalDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="retrievalLoading" @click="runRetrievalTest">运行测试</el-button>
       </template>
     </el-dialog>
   </div>
@@ -199,7 +285,9 @@ import {
   getKnowledgeBaseList,
   updateKnowledgeBase,
   updateKnowledgeRetrievalConfig,
+  testKnowledgeRetrieval,
   type KnowledgeBaseItem,
+  type KnowledgeSearchHit,
 } from '@/api/knowledge'
 import { getEnabledModelConfigs, type ModelConfig } from '@/api/provider'
 
@@ -235,22 +323,33 @@ const dialogVisible = ref(false)
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const editingId = ref<number | null>(null)
+const selectedKnowledgeBase = ref<KnowledgeBaseItem | null>(null)
 
 const form = reactive({
   name: '',
   description: '',
   embeddingModelConfigId: null as number | null,
   retrievalMode: 'VECTOR',
+  hybridAlpha: 0.7,
   topK: 5,
   candidateTopK: 20,
   scoreThreshold: 0.65,
   chunkSize: 512,
   chunkOverlap: 64,
   maxContextTokens: 3000,
+  rerankEnabled: 0,
+  rerankModelConfigId: null as number | null,
+  rerankTopN: 20,
+  metadataFilterEnabled: 0,
+  defaultDepartment: '',
+  defaultDocumentType: '',
+  defaultTagsText: '',
 })
 const editingDocumentCount = ref(0)
 const loadingEmbeddingModels = ref(false)
+const loadingRerankModels = ref(false)
 const embeddingModels = ref<ModelConfig[]>([])
+const rerankModels = ref<ModelConfig[]>([])
 
 const rules: FormRules = {
   name: [
@@ -264,6 +363,7 @@ const rules: FormRules = {
 
 onMounted(() => {
   loadEmbeddingModels()
+  loadRerankModels()
 })
 
 async function loadEmbeddingModels() {
@@ -277,17 +377,36 @@ async function loadEmbeddingModels() {
   }
 }
 
+async function loadRerankModels() {
+  loadingRerankModels.value = true
+  try {
+    rerankModels.value = await getEnabledModelConfigs('RERANK')
+  } catch {
+    rerankModels.value = []
+  } finally {
+    loadingRerankModels.value = false
+  }
+}
+
 function resetForm() {
   form.name = ''
   form.description = ''
   form.embeddingModelConfigId = embeddingModels.value[0]?.id ?? null
   form.retrievalMode = 'VECTOR'
+  form.hybridAlpha = 0.7
   form.topK = 5
   form.candidateTopK = 20
   form.scoreThreshold = 0.65
   form.chunkSize = 512
   form.chunkOverlap = 64
   form.maxContextTokens = 3000
+  form.rerankEnabled = 0
+  form.rerankModelConfigId = null
+  form.rerankTopN = 20
+  form.metadataFilterEnabled = 0
+  form.defaultDepartment = ''
+  form.defaultDocumentType = ''
+  form.defaultTagsText = ''
   editingDocumentCount.value = 0
 }
 
@@ -299,16 +418,26 @@ function handleCreate() {
 
 function handleEdit(row: KnowledgeBaseItem) {
   editingId.value = row.id
+  selectedKnowledgeBase.value = row
   form.name = row.name
   form.description = row.description || ''
   form.embeddingModelConfigId = row.embeddingModelConfigId
   form.retrievalMode = row.retrievalMode || 'VECTOR'
+  form.hybridAlpha = row.hybridAlpha ?? 0.7
   form.topK = row.topK || 5
   form.candidateTopK = row.candidateTopK || 20
   form.scoreThreshold = row.scoreThreshold ?? 0.65
   form.chunkSize = row.chunkSize || 512
   form.chunkOverlap = row.chunkOverlap ?? 64
   form.maxContextTokens = row.maxContextTokens || 3000
+  form.rerankEnabled = row.rerankEnabled || 0
+  form.rerankModelConfigId = row.rerankModelConfigId ?? null
+  form.rerankTopN = row.rerankTopN || 20
+  form.metadataFilterEnabled = row.metadataFilterEnabled || 0
+  const metadataFilter = parseMetadataFilter(row.defaultMetadataFilterJson)
+  form.defaultDepartment = String(metadataFilter.department || '')
+  form.defaultDocumentType = String(metadataFilter.documentType || '')
+  form.defaultTagsText = Array.isArray(metadataFilter.tags) ? metadataFilter.tags.join(',') : ''
   editingDocumentCount.value = row.documentCount
   dialogVisible.value = true
 }
@@ -340,13 +469,18 @@ async function handleSubmit() {
     }
     const retrievalPayload = {
       retrievalMode: form.retrievalMode,
+      hybridAlpha: form.hybridAlpha,
       topK: form.topK,
       candidateTopK: form.candidateTopK,
       scoreThreshold: form.scoreThreshold,
       chunkSize: form.chunkSize,
       chunkOverlap: form.chunkOverlap,
       maxContextTokens: form.maxContextTokens,
-      rerankEnabled: 0,
+      rerankEnabled: form.rerankEnabled,
+      rerankModelConfigId: form.rerankEnabled === 1 ? form.rerankModelConfigId : null,
+      rerankTopN: form.rerankTopN,
+      metadataFilterEnabled: form.metadataFilterEnabled,
+      defaultMetadataFilter: buildDefaultMetadataFilter(),
     }
     if (editingId.value === null) {
       const created = await createKnowledgeBase(payload)
@@ -364,6 +498,61 @@ async function handleSubmit() {
   } finally {
     submitting.value = false
   }
+}
+
+const retrievalDialogVisible = ref(false)
+const retrievalLoading = ref(false)
+const retrievalHits = ref<KnowledgeSearchHit[]>([])
+const retrievalForm = reactive({
+  queryText: '',
+  department: '',
+  tagsText: '',
+})
+
+function openRetrievalTest(row: KnowledgeBaseItem) {
+  selectedKnowledgeBase.value = row
+  retrievalDialogVisible.value = true
+  retrievalHits.value = []
+}
+
+async function runRetrievalTest() {
+  if (!selectedKnowledgeBase.value || !retrievalForm.queryText.trim()) return
+  retrievalLoading.value = true
+  try {
+    retrievalHits.value = await testKnowledgeRetrieval(selectedKnowledgeBase.value.id, {
+      queryText: retrievalForm.queryText.trim(),
+      department: retrievalForm.department.trim() || undefined,
+      tags: splitTags(retrievalForm.tagsText),
+      includeTrace: true,
+    })
+  } finally {
+    retrievalLoading.value = false
+  }
+}
+
+function buildDefaultMetadataFilter() {
+  return {
+    department: form.defaultDepartment.trim() || undefined,
+    documentType: form.defaultDocumentType.trim() || undefined,
+    tags: splitTags(form.defaultTagsText),
+  }
+}
+
+function parseMetadataFilter(value?: string) {
+  if (!value) return {} as Record<string, any>
+  try {
+    return JSON.parse(value)
+  } catch {
+    return {} as Record<string, any>
+  }
+}
+
+function splitTags(value: string) {
+  return value.split(',').map(item => item.trim()).filter(Boolean)
+}
+
+function formatScore(value?: number) {
+  return value == null ? '-' : value.toFixed(4)
 }
 
 const { confirm } = useConfirm()
@@ -419,5 +608,13 @@ async function handleDelete(row: KnowledgeBaseItem) {
   font-size: var(--text-xs);
   line-height: 1.4;
   color: var(--text-tertiary);
+}
+
+.score-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 </style>

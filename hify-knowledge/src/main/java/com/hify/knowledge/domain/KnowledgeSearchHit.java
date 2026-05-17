@@ -14,4 +14,6 @@ public class KnowledgeSearchHit extends KnowledgeChunk {
     private Double keywordScore;
 
     private Double rerankScore;
+
+    private Double fusionScore;
 }

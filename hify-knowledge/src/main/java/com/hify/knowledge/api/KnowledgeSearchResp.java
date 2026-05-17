@@ -32,6 +32,8 @@ public class KnowledgeSearchResp {
 
     private Double keywordScore;
 
+    private Double fusionScore;
+
     private Double rerankScore;
 
     private String retrievalMode;

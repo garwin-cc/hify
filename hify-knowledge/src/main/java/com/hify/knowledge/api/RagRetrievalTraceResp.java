@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class RagRetrievalTraceResp {
@@ -37,6 +38,8 @@ public class RagRetrievalTraceResp {
     private String status;
 
     private String errorMessage;
+
+    private Map<String, Object> detail;
 
     private LocalDateTime createdAt;
 }

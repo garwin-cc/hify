@@ -8,7 +8,7 @@ export interface ModelOption {
   id: number
   name: string
   modelId: string
-  modelType?: 'CHAT' | 'EMBEDDING'
+  modelType?: 'CHAT' | 'EMBEDDING' | 'RERANK'
   enabled: number
 }
 

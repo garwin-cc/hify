@@ -59,6 +59,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -857,6 +858,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setFinalScore(hit.getScore());
         resp.setVectorScore(hit.getVectorScore() == null ? hit.getScore() : hit.getVectorScore());
         resp.setKeywordScore(hit.getKeywordScore());
+        resp.setFusionScore(hit.getFusionScore());
         resp.setRerankScore(hit.getRerankScore());
         Map<String, Object> metadata = fromJson(hit.getMetadataJson());
         Object documentName = metadata.get("documentName");
@@ -889,6 +891,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         resp.setLatencyMs(po.getLatencyMs());
         resp.setStatus(po.getStatus());
         resp.setErrorMessage(po.getErrorMessage());
+        resp.setDetail(fromJson(po.getDetailJson()));
         resp.setCreatedAt(po.getCreatedAt());
         return resp;
     }
@@ -963,22 +966,29 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                                                      List<KnowledgeSearchHit> keywordHits,
                                                      double hybridAlpha) {
         Map<Long, KnowledgeSearchHit> merged = new HashMap<>();
-        for (KnowledgeSearchHit hit : vectorHits == null ? List.<KnowledgeSearchHit>of() : vectorHits) {
+        List<KnowledgeSearchHit> vectors = vectorHits == null ? List.of() : vectorHits;
+        List<KnowledgeSearchHit> keywords = keywordHits == null ? List.of() : keywordHits;
+        for (int i = 0; i < vectors.size(); i++) {
+            KnowledgeSearchHit hit = vectors.get(i);
             KnowledgeSearchHit copy = copyHit(hit);
             copy.setVectorScore(hit.getVectorScore() == null ? hit.getScore() : hit.getVectorScore());
-            copy.setScore(scoreHybrid(copy.getVectorScore(), null, hybridAlpha));
+            copy.setFusionScore(scoreHybridRrf(i + 1, null, hybridAlpha));
+            copy.setScore(copy.getFusionScore());
             merged.put(copy.getId(), copy);
         }
-        for (KnowledgeSearchHit hit : keywordHits == null ? List.<KnowledgeSearchHit>of() : keywordHits) {
+        for (int i = 0; i < keywords.size(); i++) {
+            KnowledgeSearchHit hit = keywords.get(i);
             KnowledgeSearchHit current = merged.get(hit.getId());
             if (current == null) {
                 KnowledgeSearchHit copy = copyHit(hit);
                 copy.setKeywordScore(hit.getKeywordScore() == null ? hit.getScore() : hit.getKeywordScore());
-                copy.setScore(scoreHybrid(null, copy.getKeywordScore(), hybridAlpha));
+                copy.setFusionScore(scoreHybridRrf(null, i + 1, hybridAlpha));
+                copy.setScore(copy.getFusionScore());
                 merged.put(copy.getId(), copy);
             } else {
                 current.setKeywordScore(hit.getKeywordScore() == null ? hit.getScore() : hit.getKeywordScore());
-                current.setScore(scoreHybrid(current.getVectorScore(), current.getKeywordScore(), hybridAlpha));
+                current.setFusionScore(scoreHybridRrf(rankOf(vectors, current.getId()), i + 1, hybridAlpha));
+                current.setScore(current.getFusionScore());
             }
         }
         return new ArrayList<>(merged.values());
@@ -1046,14 +1056,28 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         copy.setScore(source.getScore());
         copy.setVectorScore(source.getVectorScore());
         copy.setKeywordScore(source.getKeywordScore());
+        copy.setFusionScore(source.getFusionScore());
         copy.setRerankScore(source.getRerankScore());
         return copy;
     }
 
-    private static double scoreHybrid(Double vectorScore, Double keywordScore, double hybridAlpha) {
+    private static double scoreHybridRrf(Integer vectorRank, Integer keywordRank, double hybridAlpha) {
         double alpha = Math.max(0D, Math.min(1D, hybridAlpha));
-        return Math.max(0D, vectorScore == null ? 0D : vectorScore) * alpha
-                + Math.max(0D, keywordScore == null ? 0D : keywordScore) * (1D - alpha);
+        double vectorScore = vectorRank == null ? 0D : 61D / (60D + vectorRank);
+        double keywordScore = keywordRank == null ? 0D : 61D / (60D + keywordRank);
+        return vectorScore * alpha + keywordScore * (1D - alpha);
+    }
+
+    private static Integer rankOf(List<KnowledgeSearchHit> hits, Long chunkId) {
+        if (hits == null || chunkId == null) {
+            return null;
+        }
+        for (int i = 0; i < hits.size(); i++) {
+            if (chunkId.equals(hits.get(i).getId())) {
+                return i + 1;
+            }
+        }
+        return null;
     }
 
     private RetrievalOptions resolveOptions(KnowledgeSearchReq req, KnowledgeBasePo fallbackKnowledgeBase) {
@@ -1086,13 +1110,14 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             trace.setRetrievalMode(StringUtils.hasText(req.getRetrievalMode()) ? req.getRetrievalMode() : "VECTOR");
             trace.setTopK(req.getTopK());
             trace.setScoreThreshold(req.getScoreThreshold());
-            trace.setRerankEnabled(0);
+            trace.setRerankEnabled(results == null || results.stream().noneMatch(item -> item.getRerankScore() != null) ? 0 : 1);
             trace.setSelectedChunkIdsJson(toJsonList(results == null ? List.of()
                     : results.stream().map(KnowledgeSearchResp::getId).toList()));
             trace.setHitCount(results == null ? 0 : results.size());
             trace.setLatencyMs(latencyMs);
             trace.setStatus(status);
             trace.setErrorMessage(errorMessage == null ? "" : errorMessage);
+            trace.setDetailJson(toJson(retrievalTraceDetail(req, results)));
             traceMapper.insert(trace);
         } catch (Exception e) {
             log.warn("failed to save rag retrieval trace traceId={}: {}", traceId, e.getMessage());
@@ -1101,6 +1126,61 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     private static long elapsedMillis(long startNanos) {
         return Math.max(0, (System.nanoTime() - startNanos) / 1_000_000);
+    }
+
+    private Map<String, Object> retrievalTraceDetail(KnowledgeSearchReq req, List<KnowledgeSearchResp> results) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("retrievalMode", StringUtils.hasText(req.getRetrievalMode()) ? req.getRetrievalMode() : "VECTOR");
+        detail.put("candidateTopK", req.getCandidateTopK());
+        detail.put("topK", req.getTopK());
+        detail.put("scoreThreshold", req.getScoreThreshold());
+        detail.put("metadataFilter", metadataFilterDetail(req));
+        detail.put("selectedChunks", results == null ? List.of() : results.stream()
+                .map(this::selectedChunkTrace)
+                .toList());
+        return detail;
+    }
+
+    private Map<String, Object> metadataFilterDetail(KnowledgeSearchReq req) {
+        Map<String, Object> filter = new LinkedHashMap<>();
+        putIfNotBlank(filter, "department", req.getDepartment());
+        putIfNotBlank(filter, "documentType", req.getDocumentType());
+        putIfNotBlank(filter, "permissionScope", req.getPermissionScope());
+        if (req.getTags() != null && !req.getTags().isEmpty()) {
+            filter.put("tags", req.getTags());
+        }
+        if (req.getProjectId() != null) {
+            filter.put("projectId", req.getProjectId());
+        }
+        if (req.getCreatedAtStart() != null) {
+            filter.put("createdAtStart", req.getCreatedAtStart().toString());
+        }
+        if (req.getCreatedAtEnd() != null) {
+            filter.put("createdAtEnd", req.getCreatedAtEnd().toString());
+        }
+        return filter;
+    }
+
+    private Map<String, Object> selectedChunkTrace(KnowledgeSearchResp resp) {
+        Map<String, Object> chunk = new LinkedHashMap<>();
+        chunk.put("chunkId", resp.getId());
+        chunk.put("knowledgeBaseId", resp.getKnowledgeBaseId());
+        chunk.put("documentId", resp.getDocumentId());
+        chunk.put("documentName", resp.getDocumentName());
+        chunk.put("chunkIndex", resp.getChunkIndex());
+        chunk.put("vectorScore", resp.getVectorScore());
+        chunk.put("keywordScore", resp.getKeywordScore());
+        chunk.put("fusionScore", resp.getFusionScore());
+        chunk.put("rerankScore", resp.getRerankScore());
+        chunk.put("finalScore", resp.getFinalScore());
+        chunk.put("metadata", resp.getMetadata() == null ? Map.of() : resp.getMetadata());
+        return chunk;
+    }
+
+    private static void putIfNotBlank(Map<String, Object> target, String key, String value) {
+        if (StringUtils.hasText(value)) {
+            target.put(key, value);
+        }
     }
 
     private String toJson(Map<String, Object> metadata) {

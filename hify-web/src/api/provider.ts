@@ -8,7 +8,7 @@ export interface ModelConfig {
   providerId: number
   name: string
   modelId: string
-  modelType: 'CHAT' | 'EMBEDDING'
+  modelType: 'CHAT' | 'EMBEDDING' | 'RERANK'
   contextSize: number | null
   extraParams: Record<string, unknown>
   enabled: number
@@ -62,7 +62,7 @@ export interface CreateModelConfigReq {
   providerId: number
   name: string
   modelId: string
-  modelType: 'CHAT' | 'EMBEDDING'
+  modelType: 'CHAT' | 'EMBEDDING' | 'RERANK'
   contextSize?: number
 }
 
@@ -94,7 +94,7 @@ export const deleteProvider = (id: number) =>
 export const testConnection = (id: number): Promise<ConnectivityTestResult> =>
   post(`/v1/providers/${id}/test-connection`)
 
-export const getEnabledModelConfigs = (modelType?: 'CHAT' | 'EMBEDDING'): Promise<ModelConfig[]> =>
+export const getEnabledModelConfigs = (modelType?: 'CHAT' | 'EMBEDDING' | 'RERANK'): Promise<ModelConfig[]> =>
   get('/v1/model-configs', { modelType })
 
 export const createModelConfig = (data: CreateModelConfigReq): Promise<ModelConfig> =>
@@ -102,6 +102,6 @@ export const createModelConfig = (data: CreateModelConfigReq): Promise<ModelConf
 
 export const updateModelConfigType = (
   id: number,
-  modelType: 'CHAT' | 'EMBEDDING',
+  modelType: 'CHAT' | 'EMBEDDING' | 'RERANK',
 ): Promise<ModelConfig> =>
   put(`/v1/model-configs/${id}/type`, { modelType })

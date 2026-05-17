@@ -629,7 +629,7 @@ class KnowledgeServiceImplTest {
     }
 
     @Test
-    void hybridSearchMergesVectorAndKeywordScores() {
+    void should_rankHybridHitsByWeightedRrf_when_vectorAndKeywordResultsOverlap() {
         KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
         EmbeddingService embeddingService = mock(EmbeddingService.class);
         FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
@@ -664,8 +664,93 @@ class KnowledgeServiceImplTest {
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getVectorScore()).isEqualTo(0.8);
         assertThat(results.get(0).getKeywordScore()).isEqualTo(0.5);
-        assertThat(results.get(0).getFinalScore()).isEqualTo(0.56);
+        assertThat(results.get(0).getFinalScore()).isEqualTo(1D);
         assertThat(results.get(0).getRetrievalMode()).isEqualTo("HYBRID");
+    }
+
+    @Test
+    void should_keepHybridHitsAboveDefaultThreshold_when_rrfScoreIsNormalized() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        EmbeddingService embeddingService = mock(EmbeddingService.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 9L);
+        knowledgeBase.setRetrievalMode("HYBRID");
+        knowledgeBase.setHybridAlpha(0.5D);
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        when(embeddingService.embed(9L, List.of("报销流程"))).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        KnowledgeSearchHit vectorHit = hit(7L, 1L, "vector", 0.8);
+        vectorHit.setVectorScore(0.8);
+        KnowledgeSearchHit keywordHit = hit(7L, 1L, "vector", 0.5);
+        keywordHit.setKeywordScore(0.5);
+        repository.hits = List.of(vectorHit);
+        repository.keywordHits = List.of(keywordHit);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                mock(ModelConfigService.class),
+                mock(RagRetrievalTraceMapper.class));
+        KnowledgeSearchReq req = new KnowledgeSearchReq();
+        req.setKnowledgeBaseIds(List.of(1L));
+        req.setQueryText("报销流程");
+
+        List<KnowledgeSearchResp> results = service.searchSimilar(req);
+
+        assertThat(results).extracting(KnowledgeSearchResp::getId).containsExactly(7L);
+        assertThat(results.get(0).getFinalScore()).isGreaterThanOrEqualTo(0.65D);
+    }
+
+    @Test
+    void should_writeTraceDetail_when_includeTraceIsEnabled() {
+        KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+        EmbeddingService embeddingService = mock(EmbeddingService.class);
+        RagRetrievalTraceMapper traceMapper = mock(RagRetrievalTraceMapper.class);
+        FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBasePo knowledgeBase = knowledgeBase(1L, 1L, 9L);
+        knowledgeBase.setRetrievalMode("HYBRID");
+        knowledgeBase.setScoreThreshold(0D);
+        when(knowledgeBaseMapper.selectById(1L)).thenReturn(knowledgeBase);
+        when(embeddingService.embed(9L, List.of("报销流程"))).thenReturn(List.of(List.of(0.1, 0.2, 0.3)));
+        KnowledgeSearchHit vectorHit = hit(7L, 1L, "报销需要审批", 0.8);
+        vectorHit.setVectorScore(0.8);
+        vectorHit.setMetadataJson("{\"documentName\":\"制度.md\",\"department\":\"finance\"}");
+        KnowledgeSearchHit keywordHit = hit(7L, 1L, "报销需要审批", 0.5);
+        keywordHit.setKeywordScore(0.5);
+        keywordHit.setMetadataJson("{\"documentName\":\"制度.md\",\"department\":\"finance\"}");
+        repository.hits = List.of(vectorHit);
+        repository.keywordHits = List.of(keywordHit);
+        KnowledgeServiceImpl service = new KnowledgeServiceImpl(
+                knowledgeBaseMapper,
+                mock(KnowledgeDocumentMapper.class),
+                mock(KnowledgeTaskMapper.class),
+                repository,
+                new ObjectMapper(),
+                mock(ThreadPoolExecutor.class),
+                embeddingService,
+                mock(ModelConfigService.class),
+                traceMapper);
+
+        KnowledgeSearchReq req = new KnowledgeSearchReq();
+        req.setKnowledgeBaseIds(List.of(1L));
+        req.setQueryText("报销流程");
+        req.setDepartment("finance");
+        req.setIncludeTrace(true);
+
+        service.searchSimilar(req);
+
+        verify(traceMapper).insert(org.mockito.ArgumentMatchers.<RagRetrievalTracePo>argThat(trace ->
+                "HYBRID".equals(trace.getRetrievalMode())
+                        && trace.getTopK() == 5
+                        && trace.getDetailJson().contains("\"metadataFilter\"")
+                        && trace.getDetailJson().contains("\"department\":\"finance\"")
+                        && trace.getDetailJson().contains("\"selectedChunks\"")
+                        && trace.getDetailJson().contains("\"vectorScore\":0.8")
+                        && trace.getDetailJson().contains("\"keywordScore\":0.5")
+                        && trace.getDetailJson().contains("\"documentName\":\"制度.md\"")));
     }
 
     @Test

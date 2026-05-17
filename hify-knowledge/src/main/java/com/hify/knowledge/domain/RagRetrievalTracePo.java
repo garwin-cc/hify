@@ -39,4 +39,6 @@ public class RagRetrievalTracePo extends BaseEntity {
     private String status;
 
     private String errorMessage;
+
+    private String detailJson;
 }

@@ -11,6 +11,7 @@ export interface KnowledgeBaseItem {
   documentCount: number
   chunkCount: number
   retrievalMode: string
+  hybridAlpha: number
   topK: number
   candidateTopK: number
   scoreThreshold: number
@@ -20,6 +21,11 @@ export interface KnowledgeBaseItem {
   rerankEnabled: number
   rerankModelConfigId: number | null
   rerankTopN: number
+  metadataFilterEnabled: number
+  defaultMetadataFilterJson?: string
+  activeIndexVersion?: number
+  buildingIndexVersion?: number
+  indexStatus?: string
   createdAt: string
   updatedAt: string
 }
@@ -41,6 +47,7 @@ export interface UpdateKnowledgeBaseReq {
 
 export interface UpdateKnowledgeRetrievalConfigReq {
   retrievalMode?: string
+  hybridAlpha?: number
   topK?: number
   candidateTopK?: number
   scoreThreshold?: number
@@ -50,6 +57,8 @@ export interface UpdateKnowledgeRetrievalConfigReq {
   rerankEnabled?: number
   rerankModelConfigId?: number | null
   rerankTopN?: number
+  metadataFilterEnabled?: number
+  defaultMetadataFilter?: Record<string, unknown>
 }
 
 export type DocumentStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'FAILED' | 'CANCELED'
@@ -122,6 +131,10 @@ export interface KnowledgeSearchReq {
   candidateTopK?: number
   scoreThreshold?: number
   retrievalMode?: string
+  department?: string
+  documentType?: string
+  tags?: string[]
+  permissionScope?: string
   includeTrace?: boolean
 }
 
@@ -137,6 +150,10 @@ export interface KnowledgeSearchHit {
   score?: number
   finalScore?: number
   vectorScore?: number
+  keywordScore?: number
+  fusionScore?: number
+  rerankScore?: number
+  retrievalMode?: string
   metadata: Record<string, unknown>
   createdAt: string
 }

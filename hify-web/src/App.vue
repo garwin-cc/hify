@@ -103,6 +103,7 @@ import {
   Tickets,
   Lock,
   DataLine,
+  TrendCharts,
   ArrowLeft,
   ArrowRight,
 } from '@element-plus/icons-vue'
@@ -150,6 +151,7 @@ const navGroups = computed(() => {
     {
       label: '治理',
       items: [
+        auth.isAdmin ? { path: '/analytics', label: '运营分析', icon: TrendCharts } : null,
         auth.isAdmin ? { path: '/logs', label: '日志', icon: Tickets } : null,
         auth.isAdmin ? { path: '/audit', label: '审计', icon: Lock } : null,
         auth.isAdmin ? { path: '/settings', label: '系统设置', icon: Setting } : null,

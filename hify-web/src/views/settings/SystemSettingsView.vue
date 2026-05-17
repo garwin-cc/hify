@@ -78,6 +78,7 @@ const settingLinks = [
   { path: '/providers', title: '模型 Provider', description: '配置供应商、模型、健康检查和连接测试' },
   { path: '/users', title: '用户管理', description: '维护本地账号、角色和账号状态' },
   { path: '/audit', title: '身份源和权限', description: '配置 LDAP/OIDC/SAML，查看项目角色边界' },
+  { path: '/analytics', title: '运营分析', description: '查看 Agent 使用、失败率、Token、RAG、Workflow 和 MCP 指标' },
   { path: '/logs', title: '日志中心', description: '查看对话、Workflow、MCP、RAG、LLM 调用日志' },
 ]
 

@@ -29,8 +29,14 @@ import com.hify.conversation.infra.ChatSessionSummaryMapper;
 import com.hify.conversation.infra.ChatSessionSummaryPo;
 import com.hify.conversation.infra.ConversationTraceMapper;
 import com.hify.conversation.infra.ConversationTracePo;
+import com.hify.conversation.infra.ConversationRagTraceMapper;
+import com.hify.conversation.infra.ConversationRagTracePo;
+import com.hify.conversation.infra.ConversationLlmTraceMapper;
+import com.hify.conversation.infra.ConversationLlmTracePo;
 import com.hify.conversation.infra.MessageFeedbackMapper;
 import com.hify.conversation.infra.MessageFeedbackPo;
+import com.hify.knowledge.api.KnowledgeBaseResp;
+import com.hify.knowledge.api.KnowledgeService;
 import com.hify.model.api.ChatMessage;
 import com.hify.model.api.LlmCallService;
 import com.hify.mcp.api.McpToolCallAuditService;
@@ -71,6 +77,8 @@ class ConversationServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ChatMessagePo.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ChatSessionPo.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ConversationTracePo.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ConversationRagTracePo.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ConversationLlmTracePo.class);
     }
 
     @Mock
@@ -86,6 +94,12 @@ class ConversationServiceImplTest {
     private ConversationTraceMapper conversationTraceMapper;
 
     @Mock
+    private ConversationRagTraceMapper conversationRagTraceMapper;
+
+    @Mock
+    private ConversationLlmTraceMapper conversationLlmTraceMapper;
+
+    @Mock
     private MessageFeedbackMapper messageFeedbackMapper;
 
     @Mock
@@ -93,6 +107,9 @@ class ConversationServiceImplTest {
 
     @Mock
     private LlmCallService llmCallService;
+
+    @Mock
+    private KnowledgeService knowledgeService;
 
     @Mock
     private WorkflowService workflowService;
@@ -283,6 +300,44 @@ class ConversationServiceImplTest {
                     assertThat(resp.getMcpTriggered()).isFalse();
                     assertThat(resp.getSummaryUsed()).isTrue();
                 });
+    }
+
+    @Test
+    void should_resolve_knowledge_base_name_when_rag_trace_only_stores_id() {
+        ChatMessagePo assistant = message(102L, "assistant", "命中回答", LocalDateTime.of(2026, 5, 14, 10, 1));
+        assistant.setTraceId("trace-1");
+        when(messageMapper.selectById(102L)).thenReturn(assistant);
+
+        ConversationTracePo trace = new ConversationTracePo();
+        trace.setTraceId("trace-1");
+        trace.setAgentId(3L);
+        trace.setAgentName("客服助手");
+        trace.setRagTriggered(1);
+        trace.setMcpTriggered(0);
+        trace.setStatus("DONE");
+        when(conversationTraceMapper.selectOne(any())).thenReturn(trace);
+
+        ConversationRagTracePo rag = new ConversationRagTracePo();
+        rag.setTraceId("trace-1");
+        rag.setKnowledgeBaseId(8L);
+        rag.setKnowledgeBaseName(null);
+        rag.setDocumentId("doc-1");
+        rag.setDocumentName("FAQ.md");
+        rag.setChunkIndex(2);
+        rag.setContentPreview("参考内容");
+        when(conversationRagTraceMapper.selectList(any())).thenReturn(List.of(rag));
+        when(conversationLlmTraceMapper.selectOne(any())).thenReturn(null);
+        when(mcpToolCallAuditService.listByTraceId("trace-1")).thenReturn(List.of());
+
+        KnowledgeBaseResp knowledgeBase = new KnowledgeBaseResp();
+        knowledgeBase.setId(8L);
+        knowledgeBase.setName("客服知识库");
+        when(knowledgeService.getKnowledgeBase(8L)).thenReturn(knowledgeBase);
+
+        var detail = conversationService.getMessageTrace(102L);
+
+        assertThat(detail.getRag().getHits()).singleElement()
+                .satisfies(hit -> assertThat(hit.getKnowledgeBaseName()).isEqualTo("客服知识库"));
     }
 
     @Test

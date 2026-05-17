@@ -422,6 +422,40 @@ class WorkflowEngineTest {
     }
 
     @Test
+    void should_mask_sensitive_values_when_persisting_node_snapshots_for_run_troubleshooting() {
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"llm.answer\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "llm", null, 0),
+                edge("llm", "end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new SensitiveLlmExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                versionMapper,
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
+
+        engine.execute(10L, "hello");
+
+        assertThat(updatedNodeRuns).anySatisfy(run -> {
+            assertThat(run.getNodeKey()).isEqualTo("llm");
+            assertThat(run.getInputSnapshot()).doesNotContain("raw-token");
+            assertThat(run.getOutputs()).doesNotContain("secret-key");
+            assertThat(run.getOutputs()).contains("\"llm.apiKey\":\"******\"");
+            assertThat(run.getOutputs()).contains("\"llm.token\":\"******\"");
+        });
+    }
+
+    @Test
     void retriesNodeWhenRuntimePolicyAllowsRetry() {
         nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
                 node("start", "START", "{}"),
@@ -614,6 +648,23 @@ class WorkflowEngineTest {
         @Override
         public String nodeType() {
             return "CONDITION";
+        }
+    }
+
+    private static class SensitiveLlmExecutor implements NodeExecutor {
+
+        @Override
+        public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
+            LlmNodeConfig llmConfig = (LlmNodeConfig) config;
+            ctx.set("start", "token", "raw-token");
+            ctx.set(node.nodeKey(), "apiKey", "secret-key");
+            ctx.set(node.nodeKey(), "token", "raw-token");
+            ctx.set(node.nodeKey(), llmConfig.outputVariable(), "answer: " + ctx.get("start", "userMessage"));
+        }
+
+        @Override
+        public String nodeType() {
+            return "LLM";
         }
     }
 

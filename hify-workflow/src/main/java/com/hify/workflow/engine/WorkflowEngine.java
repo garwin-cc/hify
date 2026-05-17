@@ -14,6 +14,7 @@ import com.hify.workflow.domain.WorkflowEventPublisher;
 import com.hify.workflow.domain.WorkflowNodePo;
 import com.hify.workflow.domain.WorkflowNodeRunPo;
 import com.hify.workflow.domain.WorkflowRunPo;
+import com.hify.workflow.domain.WorkflowSnapshotSanitizer;
 import com.hify.workflow.domain.WorkflowVersionPo;
 import com.hify.workflow.domain.WorkflowReviewHandler;
 import com.hify.workflow.domain.config.NodeConfigParser;
@@ -69,10 +70,18 @@ public class WorkflowEngine {
     private final WorkflowEventPublisher workflowEventPublisher;
     private final WorkflowReviewHandler workflowReviewHandler;
     private WorkflowCallTraceSink workflowCallTraceSink = WorkflowCallTraceSink.noop();
+    private WorkflowSnapshotSanitizer workflowSnapshotSanitizer = new WorkflowSnapshotSanitizer();
 
     @Autowired(required = false)
     public void setWorkflowCallTraceSink(WorkflowCallTraceSink workflowCallTraceSink) {
         this.workflowCallTraceSink = workflowCallTraceSink == null ? WorkflowCallTraceSink.noop() : workflowCallTraceSink;
+    }
+
+    @Autowired(required = false)
+    public void setWorkflowSnapshotSanitizer(WorkflowSnapshotSanitizer workflowSnapshotSanitizer) {
+        if (workflowSnapshotSanitizer != null) {
+            this.workflowSnapshotSanitizer = workflowSnapshotSanitizer;
+        }
     }
 
     public String execute(Long workflowId, String userMessage) {
@@ -517,7 +526,7 @@ public class WorkflowEngine {
 
     private void updateNodeRunSuccess(WorkflowNodeRunPo po, ExecutionContext ctx, long startedAt) {
         po.setStatus(STATUS_SUCCESS);
-        po.setOutputs(toJson(ctx.snapshot()));
+        po.setOutputs(toSnapshotJson(ctx.snapshot()));
         po.setElapsedMs(elapsed(startedAt));
         po.setFinishedAt(LocalDateTime.now());
         try {
@@ -529,7 +538,7 @@ public class WorkflowEngine {
 
     private void updateNodeRunWaiting(WorkflowNodeRunPo po, ExecutionContext ctx, long startedAt) {
         po.setStatus(STATUS_WAITING);
-        po.setOutputs(toJson(ctx.snapshot()));
+        po.setOutputs(toSnapshotJson(ctx.snapshot()));
         po.setElapsedMs(elapsed(startedAt));
         try {
             workflowNodeRunMapper.updateById(po);
@@ -540,7 +549,7 @@ public class WorkflowEngine {
 
     private void updateNodeRunFailed(WorkflowNodeRunPo po, ExecutionContext ctx, Exception exception, long startedAt) {
         po.setStatus(STATUS_FAILED);
-        po.setOutputs(toJson(ctx.snapshot()));
+        po.setOutputs(toSnapshotJson(ctx.snapshot()));
         po.setError(shortError(exception));
         po.setElapsedMs(elapsed(startedAt));
         po.setFinishedAt(LocalDateTime.now());
@@ -552,7 +561,7 @@ public class WorkflowEngine {
     }
 
     private void captureNodeInput(WorkflowNodeRunPo nodeRun, ExecutionContext ctx) {
-        nodeRun.setInputSnapshot(toJson(ctx.snapshot()));
+        nodeRun.setInputSnapshot(toSnapshotJson(ctx.snapshot()));
         try {
             workflowNodeRunMapper.updateById(nodeRun);
         } catch (Exception e) {
@@ -576,7 +585,7 @@ public class WorkflowEngine {
     private void updateWorkflowRunWaiting(WorkflowRunPo po, String currentNodeKey, ExecutionContext ctx) {
         po.setStatus(STATUS_WAITING);
         po.setCurrentNodeKey(currentNodeKey);
-        po.setContextSnapshot(toJson(ctx.snapshot()));
+        po.setContextSnapshot(toSnapshotJson(ctx.snapshot()));
         try {
             workflowRunMapper.updateById(po);
         } catch (Exception e) {
@@ -633,6 +642,10 @@ public class WorkflowEngine {
             log.warn("failed to serialize workflow context snapshot: {}", e.getMessage());
             return "{}";
         }
+    }
+
+    private String toSnapshotJson(Map<String, Object> value) {
+        return toJson(workflowSnapshotSanitizer == null ? value : workflowSnapshotSanitizer.sanitize(value));
     }
 
     private Map<String, Object> parseContextSnapshot(String snapshot) {

@@ -63,6 +63,7 @@ import com.hify.mcp.api.McpToolCallAuditRecord;
 import com.hify.mcp.api.McpToolCallAuditResp;
 import com.hify.mcp.api.McpToolCallAuditService;
 import com.hify.mcp.api.McpToolResp;
+import com.hify.knowledge.api.KnowledgeBaseResp;
 import com.hify.knowledge.api.KnowledgeSearchReq;
 import com.hify.knowledge.api.KnowledgeSearchResp;
 import com.hify.knowledge.api.KnowledgeService;
@@ -1759,6 +1760,7 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     private List<ConversationTraceDetailResp.RagHit> listRagHits(String traceId) {
+        Map<Long, String> knowledgeBaseNameCache = new HashMap<>();
         return conversationRagTraceMapper.selectList(Wrappers.lambdaQuery(ConversationRagTracePo.class)
                         .eq(ConversationRagTracePo::getTraceId, traceId)
                         .orderByDesc(ConversationRagTracePo::getScore)
@@ -1767,7 +1769,7 @@ public class ConversationServiceImpl implements ConversationService {
                 .map(po -> {
                     ConversationTraceDetailResp.RagHit hit = new ConversationTraceDetailResp.RagHit();
                     hit.setKnowledgeBaseId(po.getKnowledgeBaseId());
-                    hit.setKnowledgeBaseName(po.getKnowledgeBaseName());
+                    hit.setKnowledgeBaseName(resolveKnowledgeBaseName(po, knowledgeBaseNameCache));
                     hit.setDocumentId(po.getDocumentId());
                     hit.setDocumentName(po.getDocumentName());
                     hit.setChunkId(po.getChunkId());
@@ -1777,6 +1779,33 @@ public class ConversationServiceImpl implements ConversationService {
                     return hit;
                 })
                 .toList();
+    }
+
+    private String resolveKnowledgeBaseName(ConversationRagTracePo po, Map<Long, String> cache) {
+        if (po == null) {
+            return null;
+        }
+        if (StringUtils.hasText(po.getKnowledgeBaseName())) {
+            return po.getKnowledgeBaseName();
+        }
+        Long knowledgeBaseId = po.getKnowledgeBaseId();
+        if (knowledgeBaseId == null || knowledgeService == null) {
+            return po.getKnowledgeBaseName();
+        }
+        if (cache.containsKey(knowledgeBaseId)) {
+            return cache.get(knowledgeBaseId);
+        }
+        try {
+            KnowledgeBaseResp knowledgeBase = knowledgeService.getKnowledgeBase(knowledgeBaseId);
+            String name = knowledgeBase == null ? null : knowledgeBase.getName();
+            cache.put(knowledgeBaseId, name);
+            return name;
+        } catch (Exception e) {
+            log.debug("resolve rag knowledge base name failed knowledgeBaseId={} message={}",
+                    knowledgeBaseId, e.getMessage());
+            cache.put(knowledgeBaseId, po.getKnowledgeBaseName());
+            return po.getKnowledgeBaseName();
+        }
     }
 
     private List<ConversationTraceDetailResp.ToolCallTrace> listToolCalls(String traceId) {

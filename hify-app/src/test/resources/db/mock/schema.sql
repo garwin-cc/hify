@@ -424,6 +424,7 @@ CREATE TABLE t_conversation_trace (
     trace_id VARCHAR(64) NOT NULL,
     session_id BIGINT NOT NULL,
     user_id BIGINT,
+    project_id BIGINT,
     app_id BIGINT,
     api_key_id BIGINT,
     user_message_id BIGINT NOT NULL,

@@ -242,3 +242,46 @@ P0 不追求功能数量，而追求稳定、可解释、可恢复。
 - 能让用户自助重试、取消、恢复，优先做。
 - 只是增加新节点、新模型、新页面入口的，延后。
 - 会显著增加权限、租户、插件市场复杂度的，延后或不做。
+
+## P0 验收执行清单
+
+以下清单用于每次声明 Stage 2 稳定闭环完成前的专项验收。自动化测试优先覆盖可重复的状态转换、trace 记录和脱敏逻辑；文件大小、长连接断开、真实浏览器交互等场景可作为集成测试或人工 smoke test。
+
+### 1. RAG 任务可靠性
+
+- 上传支持格式的正常文档后，文档状态最终进入 `DONE`，`chunk_count` 和知识库 `chunk_count` 一致。
+- 上传空文件、超大文件、不支持格式或无法解析文件时，文档进入 `FAILED`，并写入 `error_code`、`error_message`、`failed_stage`、`retryable`。
+- 对 `FAILED` 或 `CANCELED` 文档执行重试时，必须先清理旧 chunk，再重置进度并创建新处理任务。
+- 对 `PENDING` 或 `PROCESSING` 文档执行取消后，状态进入 `CANCELED`，不得继续写入可检索 chunk。
+- 删除文档或知识库后，MySQL 元数据和 pgvector chunk 不得留下可检索脏数据。
+
+### 2. 对话运行可观测
+
+- 每次对话请求必须生成 `traceId`，并写入用户消息、assistant 消息、conversation trace、RAG trace、LLM trace 和 MCP 调用审计。
+- 对话详情必须能展示 Agent、模型 Provider/modelId、RAG 命中知识库/文档/chunk/score、MCP 工具名/参数 key/耗时/结果、LLM 首 token/总耗时/token/错误。
+- LLM 超时、限流、普通失败和后端异常时，assistant 消息必须进入 `ERROR` 或带 `partial` 的明确状态。
+- SSE 超时或客户端断开时，trace 状态必须区分 `TIMEOUT`、`CLIENT_DISCONNECTED`、`ERROR` 或 `BACKEND_ERROR`。
+- 前端 trace 面板不得暴露 API Key、token、clientSecret、MCP authConfig 或完整敏感工具返回。
+
+### 3. Workflow 运行排障
+
+- 每次 workflow run 必须记录 `traceId`、`workflow_version_id`、输入、输出、当前节点、状态、错误、耗时。
+- 每个 node run 必须记录节点 key/type、执行状态、输入快照、输出快照、错误、开始/结束时间和耗时。
+- `LLM`、`API_CALL`、`TOOL/MCP`、`CODE_TASK`、`HUMAN_REVIEW` 等外部调用必须记录 call trace，并保存脱敏后的 request/response、耗时和失败原因。
+- 失败 run 的前端详情页必须能定位失败节点，并展示节点输入、输出、外部调用和错误原因。
+- 失败 run 重跑必须复用原始 input，并记录 `rerun_from_run_id`。
+
+### 4. Agent 会话摘要记忆
+
+- Agent 记忆默认关闭，开启后才读取和更新会话摘要。
+- 达到摘要阈值后异步生成摘要，摘要写入 `t_chat_session_summary`，并在后续上下文中按固定顺序注入。
+- 摘要生成失败时只记录失败摘要和 trace 错误，不阻断主对话。
+- 用户清空会话摘要后，后续对话不应继续使用旧摘要。
+- trace 面板必须展示是否启用记忆、是否使用摘要、摘要版本、耗时和错误。
+
+### 5. 脱敏和安全验收
+
+- Workflow node run 的 `input_snapshot`、`outputs` 和 run `context_snapshot` 不得明文保存 `authorization`、`apiKey`、`api_key`、`token`、`secret`、`password`、`cookie`、`set-cookie` 等字段。
+- Workflow call trace 的 request/response snapshot 必须使用同一类脱敏规则。
+- 对话、RAG、MCP、LLM trace 中不得保存 Provider API Key、MCP authConfig、OAuth token 或完整请求头。
+- 前端调试面板只展示排障必要字段，敏感字段只能显示掩码。

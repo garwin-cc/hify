@@ -7,6 +7,7 @@ import com.hify.knowledge.api.KnowledgeService;
 import com.hify.model.api.ModelConfigResp;
 import com.hify.model.api.ModelConfigService;
 import com.hify.mcp.api.McpService;
+import org.springframework.dao.DuplicateKeyException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -103,6 +104,25 @@ class AgentReleaseGovernanceServiceTest {
         assertThatThrownBy(() -> service.createApp(100L, req))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("已发布");
+    }
+
+    @Test
+    void should_throwConflictBizException_when_appEndpointAlreadyExists() {
+        when(agentMapper.selectById(100L)).thenReturn(agentPo());
+        AgentVersionPo published = version(2, "PUBLISHED");
+        published.setId(200L);
+        when(agentVersionMapper.selectById(200L)).thenReturn(published);
+        doThrow(new DuplicateKeyException("Duplicate entry '/api/agents/10-0' for key 'uk_agent_app_endpoint'"))
+                .when(agentAppMapper).insert(any(AgentAppPo.class));
+
+        AgentAppReq req = new AgentAppReq();
+        req.setPublishedVersionId(200L);
+        req.setName("internal app");
+        req.setEndpointPath("/api/agents/10-0");
+
+        assertThatThrownBy(() -> service.createApp(100L, req))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("应用访问地址已存在");
     }
 
     @Test

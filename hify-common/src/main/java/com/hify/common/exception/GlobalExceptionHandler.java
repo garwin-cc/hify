@@ -5,6 +5,8 @@ import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.FieldError;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -49,10 +51,43 @@ public class GlobalExceptionHandler {
         return Result.fail(ErrorCode.PARAM_INVALID.getCode(), message);
     }
 
+    @ExceptionHandler(AsyncRequestTimeoutException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public Result<Void> handleAsyncRequestTimeout(AsyncRequestTimeoutException e) {
+        log.warn("Async request timeout: {}", e.getMessage());
+        return Result.fail(ErrorCode.SERVICE_UNAVAILABLE.getCode(), "长连接已超时，请重新连接");
+    }
+
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public Result<Void> handleAsyncRequestNotUsable(AsyncRequestNotUsableException e) {
+        log.debug("Async request is no longer usable: {}", e.getMessage());
+        return Result.fail(ErrorCode.SERVICE_UNAVAILABLE.getCode(), "客户端连接已断开，请重试");
+    }
+
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Void> handleException(Exception e) {
+        if (isClientAbort(e)) {
+            log.debug("Client connection closed: {}", e.getMessage());
+            return Result.fail(ErrorCode.SERVICE_UNAVAILABLE.getCode(), "客户端连接已断开，请重试");
+        }
         log.error("Unhandled exception", e);
         return Result.fail(ErrorCode.INTERNAL_ERROR.getCode(), ErrorCode.INTERNAL_ERROR.getMessage());
+    }
+
+    private boolean isClientAbort(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            String name = current.getClass().getName();
+            String message = current.getMessage();
+            if (name.contains("ClientAbortException")
+                    || name.contains("AsyncRequestNotUsableException")
+                    || (message != null && message.contains("Broken pipe"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

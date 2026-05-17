@@ -4,7 +4,6 @@ import com.hify.knowledge.domain.KnowledgeChunk;
 import com.hify.knowledge.domain.KnowledgeSearchHit;
 import com.hify.knowledge.domain.KnowledgeVectorRepository;
 import com.hify.knowledge.api.KnowledgeSearchFilter;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
@@ -19,13 +18,17 @@ import java.util.stream.Collectors;
 
 @Repository
 @Profile("!mock")
-@RequiredArgsConstructor
 public class PgvectorKnowledgeVectorRepository implements KnowledgeVectorRepository {
 
-    private final @Qualifier("pgvectorNamedJdbcTemplate") NamedParameterJdbcTemplate jdbcTemplate;
+    private final NamedParameterJdbcTemplate jdbcTemplate;
 
     @Value("${hify.knowledge.pgvector.probes:10}")
     private int probes = 10;
+
+    public PgvectorKnowledgeVectorRepository(
+            @Qualifier("pgvectorNamedJdbcTemplate") NamedParameterJdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
 
     @Override
     public Long upsert(KnowledgeChunk chunk, List<Double> embedding) {

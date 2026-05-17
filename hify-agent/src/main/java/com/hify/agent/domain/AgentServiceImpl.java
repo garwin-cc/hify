@@ -28,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
@@ -391,7 +392,11 @@ public class AgentServiceImpl implements AgentService {
         po.setApiEnabled(req.getApiEnabled() == null ? 0 : normalizeEnabled(req.getApiEnabled()));
         po.setEndpointPath(normalizeEndpointPath(req.getEndpointPath(), agentId));
         po.setStatus("ACTIVE");
-        agentAppMapper.insert(po);
+        try {
+            agentAppMapper.insert(po);
+        } catch (DuplicateKeyException e) {
+            throw new BizException(ErrorCode.CONFLICT, "应用访问地址已存在，请更换访问地址", e);
+        }
         recordAudit("AGENT_APP_PUBLISH", agent, Map.of(), appAudit(po), true, null);
         return toAppResp(po);
     }

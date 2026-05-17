@@ -1437,7 +1437,8 @@ public class ConversationServiceImpl implements ConversationService {
                 .set(ChatMessagePo::getErrorCode, null)
                 .set(ChatMessagePo::getErrorMessage, null)
                 .set(ChatMessagePo::getDebugError, null)
-                .set(ChatMessagePo::getToolCalls,    toStoredToolCalls(response.getToolCalls())));
+                .set(ChatMessagePo::getToolCalls, toStoredToolCalls(response.getToolCalls()),
+                        "typeHandler=com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler"));
     }
 
     private void markMessageError(Long msgId, String errorCode, String errorMessage,

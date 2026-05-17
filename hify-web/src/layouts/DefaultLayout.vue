@@ -60,7 +60,7 @@ const menuItems = [
   { path: '/knowledge-bases', label: '知识库',  icon: Collection },
   { path: '/workflows',    label: '工作流',  icon: Files },
   { path: '/mcp',         label: 'MCP 工具', icon: Tools },
-  { path: '/projects',    label: '项目成员', icon: User },
+  { path: '/projects',    label: '项目管理', icon: User },
 ]
 </script>
 

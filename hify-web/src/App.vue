@@ -151,6 +151,7 @@ const navGroups = computed(() => {
     {
       label: '治理',
       items: [
+        auth.isAdmin ? { path: '/projects', label: '项目管理', icon: User } : null,
         auth.isAdmin ? { path: '/analytics', label: '运营分析', icon: TrendCharts } : null,
         auth.isAdmin ? { path: '/logs', label: '日志', icon: Tickets } : null,
         auth.isAdmin ? { path: '/audit', label: '审计', icon: Lock } : null,

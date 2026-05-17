@@ -78,6 +78,7 @@ public class ProjectServiceImpl implements ProjectService {
         po.setCode(req.getCode());
         po.setStatus(STATUS_ACTIVE);
         projectMapper.insert(po);
+        addCreatorAsOwner(po);
         return toProjectResp(po);
     }
 
@@ -184,6 +185,20 @@ public class ProjectServiceImpl implements ProjectService {
         if (count != null && count > 0) {
             throw new BizException(ErrorCode.CONFLICT, "项目编码已存在: " + code);
         }
+    }
+
+    private void addCreatorAsOwner(ProjectPo project) {
+        CurrentUser user = CurrentUserContext.get();
+        if (user == null || user.getId() == null || project.getId() == null) {
+            return;
+        }
+        ProjectMemberPo member = new ProjectMemberPo();
+        member.setWorkspaceId(project.getWorkspaceId());
+        member.setProjectId(project.getId());
+        member.setUserId(user.getId());
+        member.setRole(ProjectRole.OWNER.name());
+        member.setStatus(STATUS_ACTIVE);
+        projectMemberMapper.insert(member);
     }
 
     private String normalizeStatus(String status) {

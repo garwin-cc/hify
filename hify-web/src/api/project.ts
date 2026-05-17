@@ -24,8 +24,17 @@ export interface ProjectMember {
   status: ProjectStatus
 }
 
+export interface CreateProjectPayload {
+  workspaceId?: number
+  name: string
+  code: string
+}
+
 export const getProjects = (): Promise<Project[]> =>
   get('/v1/projects')
+
+export const createProject = (payload: CreateProjectPayload): Promise<Project> =>
+  post('/v1/projects', payload)
 
 export const getProjectMembers = (projectId: number): Promise<ProjectMember[]> =>
   get(`/v1/projects/${projectId}/members`)

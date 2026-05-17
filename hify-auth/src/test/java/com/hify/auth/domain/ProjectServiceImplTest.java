@@ -1,6 +1,7 @@
 package com.hify.auth.domain;
 
 import com.hify.auth.api.AddProjectMemberReq;
+import com.hify.auth.api.CreateProjectReq;
 import com.hify.auth.api.ProjectMemberResp;
 import com.hify.auth.api.ProjectResp;
 import com.hify.auth.api.ProjectRole;
@@ -21,6 +22,52 @@ import java.util.function.Function;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProjectServiceImplTest {
+
+    @Test
+    void should_add_current_admin_as_owner_when_creating_project() {
+        List<ProjectPo> projects = new ArrayList<>();
+        List<ProjectMemberPo> insertedMembers = new ArrayList<>();
+        ProjectService service = new ProjectServiceImpl(
+                mapper(ProjectMapper.class, method -> {
+                    if ("selectCount".equals(method)) {
+                        return args -> 0L;
+                    }
+                    if ("insert".equals(method)) {
+                        return args -> {
+                            ProjectPo po = (ProjectPo) args[0];
+                            po.setId(20L);
+                            projects.add(po);
+                            return 1;
+                        };
+                    }
+                    return null;
+                }),
+                memberMapper(null, insertedMembers, new ArrayList<>()),
+                mapper(UserMapper.class, method -> null));
+        CurrentUser user = new CurrentUser();
+        user.setId(100L);
+        user.setRole(UserRole.ADMIN);
+        CurrentUserContext.set(user);
+        CreateProjectReq req = new CreateProjectReq();
+        req.setName("运营项目");
+        req.setCode("ops");
+        try {
+            ProjectResp resp = service.createProject(req);
+
+            assertThat(resp.getId()).isEqualTo(20L);
+            assertThat(projects).singleElement()
+                    .satisfies(project -> assertThat(project.getWorkspaceId()).isEqualTo(1L));
+            assertThat(insertedMembers).singleElement()
+                    .satisfies(member -> {
+                        assertThat(member.getProjectId()).isEqualTo(20L);
+                        assertThat(member.getUserId()).isEqualTo(100L);
+                        assertThat(member.getRole()).isEqualTo(ProjectRole.OWNER.name());
+                        assertThat(member.getStatus()).isEqualTo("ACTIVE");
+                    });
+        } finally {
+            CurrentUserContext.clear();
+        }
+    }
 
     @Test
     void should_list_only_joined_projects_for_non_admin_user() {

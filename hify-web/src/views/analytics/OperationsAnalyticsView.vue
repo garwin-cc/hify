@@ -248,7 +248,7 @@ function percent(value: number) {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
   align-items: stretch;
@@ -281,14 +281,15 @@ function percent(value: number) {
 
 .analytics-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(480px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .analytics-grid > .hify-card,
 .page-content > .hify-card {
+  height: 100%;
   min-width: 0;
   overflow: hidden;
 }
@@ -301,6 +302,10 @@ function percent(value: number) {
 }
 
 @media (max-width: 1180px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .analytics-grid {
     grid-template-columns: 1fr;
   }

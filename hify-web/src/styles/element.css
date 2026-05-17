@@ -315,7 +315,7 @@
   box-shadow: var(--shadow-sm);
   padding: var(--card-padding);
 }
-.hify-card + .hify-card {
+.page-content > .hify-card + .hify-card {
   margin-top: var(--element-gap);
 }
 

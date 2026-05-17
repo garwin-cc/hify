@@ -9,6 +9,9 @@ import com.hify.common.audit.AuditLogRecord;
 import com.hify.common.audit.AuditLogService;
 import com.hify.auth.api.AuthService;
 import com.hify.auth.api.CurrentUser;
+import com.hify.auth.api.PermissionAction;
+import com.hify.auth.api.PermissionService;
+import com.hify.auth.api.UserRole;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.log.TraceContext;
@@ -93,6 +96,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final ObjectMapper objectMapper;
     private AuditLogService auditLogService;
     private AuthService authService;
+    private PermissionService permissionService;
     private TaskQueue workflowTaskQueue;
     private WorkflowPublishService workflowPublishService;
     private WorkflowVersionDiffService workflowVersionDiffService;
@@ -109,6 +113,11 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Autowired(required = false)
     public void setAuthService(AuthService authService) {
         this.authService = authService;
+    }
+
+    @Autowired(required = false)
+    public void setPermissionService(PermissionService permissionService) {
+        this.permissionService = permissionService;
     }
 
     @Autowired(required = false)
@@ -142,6 +151,9 @@ public class WorkflowServiceImpl implements WorkflowService {
         validateDefinition(req);
         validateCodeTaskSafety(req.getNodes(), req.getEdges());
         WorkflowPo workflow = new WorkflowPo();
+        workflow.setWorkspaceId(req.getWorkspaceId() == null ? 1L : req.getWorkspaceId());
+        workflow.setProjectId(req.getProjectId() == null ? 1L : req.getProjectId());
+        ensureCanManageWorkflowProject(workflow.getProjectId());
         workflow.setName(req.getName());
         workflow.setDescription(req.getDescription() == null ? "" : req.getDescription());
         workflow.setEnabled(req.getEnabled() == null ? 1 : normalizeEnabled(req.getEnabled()));
@@ -157,6 +169,9 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public PageResult<WorkflowListItemResp> listPage(WorkflowQuery query) {
+        if (query.getProjectId() != null) {
+            ensureCanReadWorkflowProject(query.getProjectId());
+        }
         int pageNo = query.getPage() <= 0 ? 1 : query.getPage();
         int pageSize = query.getSize() <= 0 ? 20 : query.getSize();
         Page<WorkflowPo> page = PageHelper.toPage(pageNo, pageSize);
@@ -164,12 +179,14 @@ public class WorkflowServiceImpl implements WorkflowService {
                 Wrappers.lambdaQuery(WorkflowPo.class)
                         .like(StringUtils.hasText(query.getName()), WorkflowPo::getName, query.getName())
                         .eq(query.getEnabled() != null, WorkflowPo::getEnabled, query.getEnabled())
+                        .eq(query.getProjectId() != null, WorkflowPo::getProjectId, query.getProjectId())
                         .orderByDesc(WorkflowPo::getCreatedAt)), this::toListItemResp);
     }
 
     @Override
     public WorkflowDetailResp getDetail(Long id) {
         WorkflowPo workflow = findWorkflowOrThrow(id);
+        ensureCanReadWorkflowProject(workflow.getProjectId());
         List<WorkflowNodePo> nodes = nodeMapper.selectList(Wrappers.lambdaQuery(WorkflowNodePo.class)
                 .eq(WorkflowNodePo::getWorkflowId, id)
                 .orderByAsc(WorkflowNodePo::getId));
@@ -186,7 +203,13 @@ public class WorkflowServiceImpl implements WorkflowService {
         validateDefinition(req);
         validateCodeTaskSafety(req.getNodes(), req.getEdges());
         WorkflowPo workflow = findWorkflowOrThrow(id);
+        ensureCanManageWorkflowProject(workflow.getProjectId());
         Map<String, Object> before = workflowAudit(workflow);
+        if (req.getWorkspaceId() != null) workflow.setWorkspaceId(req.getWorkspaceId());
+        if (req.getProjectId() != null) {
+            ensureCanManageWorkflowProject(req.getProjectId());
+            workflow.setProjectId(req.getProjectId());
+        }
         workflow.setName(req.getName());
         workflow.setDescription(req.getDescription() == null ? "" : req.getDescription());
         workflow.setEnabled(req.getEnabled() == null ? 1 : normalizeEnabled(req.getEnabled()));
@@ -208,6 +231,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Transactional
     public void delete(Long id) {
         WorkflowPo workflow = findWorkflowOrThrow(id);
+        ensureCanManageWorkflowProject(workflow.getProjectId());
         Map<String, Object> before = workflowAudit(workflow);
         workflowMapper.deleteById(id);
         nodeMapper.delete(Wrappers.lambdaQuery(WorkflowNodePo.class)
@@ -220,14 +244,14 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public WorkflowRunResp run(Long id, WorkflowRunReq req) {
-        findWorkflowOrThrow(id);
+        ensureCanRunWorkflow(findWorkflowOrThrow(id));
         workflowEngine.execute(id, req.getUserMessage());
         return getLatestRun(id);
     }
 
     @Override
     public WorkflowRunResp startAsyncRun(Long id, WorkflowRunReq req) {
-        findWorkflowOrThrow(id);
+        ensureCanRunWorkflow(findWorkflowOrThrow(id));
         return startAsyncRun(id, req.getUserMessage(), null);
     }
 
@@ -282,7 +306,7 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public WorkflowNodeDebugResp debugNode(Long workflowId, String nodeKey, WorkflowNodeDebugReq req) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanManageWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         long startedAt = System.currentTimeMillis();
         WorkflowNodeDebugResp resp = new WorkflowNodeDebugResp();
         try {
@@ -303,7 +327,7 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public List<WorkflowVersionResp> listVersions(Long workflowId) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         return workflowVersionMapper.selectList(Wrappers.lambdaQuery(WorkflowVersionPo.class)
                         .eq(WorkflowVersionPo::getWorkflowId, workflowId)
                         .orderByDesc(WorkflowVersionPo::getVersionNo))
@@ -314,14 +338,14 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public WorkflowVersionResp getVersion(Long workflowId, Integer versionNo) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         WorkflowVersionPo version = findVersionOrThrow(workflowId, versionNo);
         return toVersionResp(version);
     }
 
     @Override
     public WorkflowVersionDiffResp diffVersions(Long workflowId, Integer leftVersionNo, Integer rightVersionNo) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         requireService(workflowVersionDiffService, "工作流版本差异服务不可用");
         return workflowVersionDiffService.diff(workflowId, leftVersionNo, rightVersionNo);
     }
@@ -329,7 +353,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Override
     @Transactional
     public WorkflowDetailResp restoreVersion(Long workflowId, Integer versionNo) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanManageWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         WorkflowVersionPo version = findVersionOrThrow(workflowId, versionNo);
         WorkflowDetailResp snapshot = parseSnapshot(version.getSnapshotJson());
         UpdateWorkflowReq req = new UpdateWorkflowReq();
@@ -349,6 +373,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Transactional
     public WorkflowDetailResp rollbackVersion(Long workflowId, Integer versionNo, WorkflowRollbackReq req) {
         WorkflowPo workflow = findWorkflowOrThrow(workflowId);
+        ensureCanManageWorkflowProject(workflow.getProjectId());
         WorkflowVersionPo version = findVersionOrThrow(workflowId, versionNo);
         WorkflowDetailResp restored = restoreVersion(workflowId, versionNo);
         WorkflowVersionPo latest = workflowVersionMapper.selectOne(Wrappers.lambdaQuery(WorkflowVersionPo.class)
@@ -377,7 +402,7 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public WorkflowPublishResp publish(Long workflowId, WorkflowPublishReq req) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanManageWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         validateCodeTaskSafety(getDetail(workflowId));
         requireService(workflowPublishService, "工作流发布服务不可用");
         WorkflowPublishResp resp = workflowPublishService.publish(workflowId, req);
@@ -388,21 +413,21 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public List<WorkflowPublishResp> listPublishes(Long workflowId) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         requireService(workflowPublishService, "工作流发布服务不可用");
         return workflowPublishService.list(workflowId);
     }
 
     @Override
     public WorkflowTriggerResp createTrigger(Long workflowId, WorkflowTriggerReq req) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanManageWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         requireService(workflowTriggerService, "工作流触发器服务不可用");
         return workflowTriggerService.create(workflowId, req);
     }
 
     @Override
     public List<WorkflowTriggerResp> listTriggers(Long workflowId) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         requireService(workflowTriggerService, "工作流触发器服务不可用");
         return workflowTriggerService.list(workflowId);
     }
@@ -419,7 +444,7 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public List<WorkflowVariableResp> listVariables(Long workflowId) {
-        findWorkflowOrThrow(workflowId);
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(workflowId).getProjectId());
         requireService(workflowVariableService, "工作流变量服务不可用");
         return workflowVariableService.listVariables(workflowId);
     }
@@ -430,6 +455,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (run == null) {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
         }
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(run.getWorkflowId()).getProjectId());
         List<WorkflowNodeRunPo> nodeRuns = workflowNodeRunMapper.selectList(
                 Wrappers.lambdaQuery(WorkflowNodeRunPo.class)
                         .eq(WorkflowNodeRunPo::getWorkflowRunId, run.getId())
@@ -439,6 +465,9 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public PageResult<WorkflowRunResp> listRuns(WorkflowRunQuery query) {
+        if (query.getWorkflowId() != null) {
+            ensureCanReadWorkflowProject(findWorkflowOrThrow(query.getWorkflowId()).getProjectId());
+        }
         int pageNo = query.getPage() <= 0 ? 1 : query.getPage();
         int pageSize = query.getSize() <= 0 ? 20 : query.getSize();
         Page<WorkflowRunPo> page = PageHelper.toPage(pageNo, pageSize);
@@ -464,7 +493,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (!List.of("FAILED", "TIMEOUT", "CANCELED").contains(sourceRun.getStatus())) {
             throw new BizException(ErrorCode.PARAM_ERROR, "仅失败、超时或取消的工作流运行支持重跑");
         }
-        findWorkflowOrThrow(sourceRun.getWorkflowId());
+        ensureCanRunWorkflow(findWorkflowOrThrow(sourceRun.getWorkflowId()));
         return startAsyncRun(sourceRun.getWorkflowId(), sourceRun.getInput(), sourceRun.getId());
     }
 
@@ -474,6 +503,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (run == null) {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
         }
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(run.getWorkflowId()).getProjectId());
         return workflowRunEventService.subscribe(runId, afterEventSeq, isTerminalRun(run.getStatus()));
     }
 
@@ -483,6 +513,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (run == null) {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
         }
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(run.getWorkflowId()).getProjectId());
         return workflowReviewService.getWaitingReview(runId);
     }
 
@@ -498,6 +529,8 @@ public class WorkflowServiceImpl implements WorkflowService {
         if (run == null) {
             throw new BizException(ErrorCode.NOT_FOUND, "工作流执行记录不存在: " + runId);
         }
+        ensureProjectPermission(findWorkflowOrThrow(run.getWorkflowId()).getProjectId(),
+                PermissionAction.REVIEW, "当前用户无 Workflow 项目评审权限");
         if (!"WAITING".equals(run.getStatus())) {
             throw new BizException(ErrorCode.PARAM_ERROR, "工作流当前不在待评审状态");
         }
@@ -530,7 +563,7 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public WorkflowRunResp getLatestRun(Long id) {
-        findWorkflowOrThrow(id);
+        ensureCanReadWorkflowProject(findWorkflowOrThrow(id).getProjectId());
         WorkflowRunPo run = workflowRunMapper.selectOne(Wrappers.lambdaQuery(WorkflowRunPo.class)
                 .eq(WorkflowRunPo::getWorkflowId, id)
                 .orderByDesc(WorkflowRunPo::getCreatedAt)
@@ -887,6 +920,27 @@ public class WorkflowServiceImpl implements WorkflowService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private void ensureCanReadWorkflowProject(Long projectId) {
+        ensureProjectPermission(projectId, PermissionAction.READ, "当前用户无 Workflow 项目读取权限");
+    }
+
+    private void ensureCanManageWorkflowProject(Long projectId) {
+        ensureProjectPermission(projectId, PermissionAction.MANAGE, "当前用户无 Workflow 项目管理权限");
+    }
+
+    private void ensureCanRunWorkflow(WorkflowPo workflow) {
+        ensureProjectPermission(workflow.getProjectId(), PermissionAction.RUN, "当前用户无 Workflow 项目运行权限");
+    }
+
+    private void ensureProjectPermission(Long projectId, PermissionAction action, String message) {
+        CurrentUser user = currentUser();
+        if (user == null || user.getRole() == UserRole.ADMIN || permissionService == null
+                || permissionService.canAccessProject(user, projectId, action)) {
+            return;
+        }
+        throw new BizException(ErrorCode.FORBIDDEN, message);
     }
 
     private String toJson(Map<String, Object> value) {

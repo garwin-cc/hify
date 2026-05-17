@@ -5,6 +5,7 @@ export type WorkflowStatus = 'DRAFT' | 'PUBLISHED'
 
 export interface WorkflowListItem {
   id: number
+  projectId?: number
   name: string
   description: string
   enabled: number
@@ -95,6 +96,7 @@ export interface CreateWorkflowReq {
   name: string
   description?: string
   enabled?: number
+  projectId?: number
   startNodeKey: string
   nodes: WorkflowNode[]
   edges?: WorkflowEdge[]
@@ -243,8 +245,9 @@ export interface WorkflowTrigger {
 export const getWorkflowList = (
   page: number,
   size: number,
+  projectId?: number | null,
 ): Promise<PageData<WorkflowListItem>> =>
-  get('/v1/workflows', { page, size })
+  get('/v1/workflows', { page, size, projectId: projectId || undefined })
 
 export const getWorkflowTemplateList = (
   page: number,

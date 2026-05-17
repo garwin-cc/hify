@@ -6,6 +6,11 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hify.auth.api.AuthService;
+import com.hify.auth.api.CurrentUser;
+import com.hify.auth.api.PermissionAction;
+import com.hify.auth.api.PermissionService;
+import com.hify.auth.api.UserRole;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.task.TaskQueue;
@@ -137,6 +142,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final RagRetrievalTraceMapper traceMapper;
     private TaskQueue knowledgeTaskQueue;
     private RerankService rerankService;
+    private AuthService authService;
+    private PermissionService permissionService;
 
     @Autowired(required = false)
     public void setKnowledgeTaskQueue(@Qualifier("knowledgeTaskQueue") TaskQueue knowledgeTaskQueue) {
@@ -146,6 +153,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Autowired(required = false)
     public void setRerankService(RerankService rerankService) {
         this.rerankService = rerankService;
+    }
+
+    @Autowired(required = false)
+    public void setAuthService(AuthService authService) {
+        this.authService = authService;
+    }
+
+    @Autowired(required = false)
+    public void setPermissionService(PermissionService permissionService) {
+        this.permissionService = permissionService;
     }
 
     @Value("${hify.knowledge.max-file-size-bytes:" + DEFAULT_MAX_FILE_SIZE + "}")
@@ -176,6 +193,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         KnowledgeBasePo po = new KnowledgeBasePo();
         po.setWorkspaceId(req.getWorkspaceId() == null ? 1L : req.getWorkspaceId());
         po.setProjectId(req.getProjectId() == null ? 1L : req.getProjectId());
+        ensureCanManageKnowledgeProject(po.getProjectId());
         po.setVisibility(normalizeVisibility(req.getVisibility()));
         po.setShareScope(normalizeVisibility(req.getShareScope()));
         po.setName(req.getName());
@@ -194,6 +212,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public KnowledgeBaseResp updateRetrievalConfig(Long id, UpdateKnowledgeRetrievalConfigReq req) {
         KnowledgeBasePo po = findKnowledgeBaseOrThrow(id);
+        ensureCanManageKnowledgeProject(po.getProjectId());
         applyRetrievalConfig(po, req);
         knowledgeBaseMapper.updateById(po);
         log.info("updated knowledge retrieval config id={}", id);
@@ -202,11 +221,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public PageResult<KnowledgeBaseResp> listKnowledgeBases(KnowledgeBaseQuery query) {
+        if (query.getProjectId() != null) {
+            ensureCanReadKnowledgeProject(query.getProjectId());
+        }
         int pageNo = query.getPage() <= 0 ? 1 : query.getPage();
         int pageSize = query.getSize() <= 0 ? 20 : query.getSize();
         Page<KnowledgeBasePo> pageParam = PageHelper.toPage(pageNo, pageSize);
         LambdaQueryWrapper<KnowledgeBasePo> wrapper = Wrappers.lambdaQuery(KnowledgeBasePo.class)
                 .like(StringUtils.hasText(query.getName()), KnowledgeBasePo::getName, query.getName())
+                .eq(query.getProjectId() != null, KnowledgeBasePo::getProjectId, query.getProjectId())
                 .orderByDesc(KnowledgeBasePo::getCreatedAt);
         return PageHelper.toPageResult(knowledgeBaseMapper.selectPage(pageParam, wrapper),
                 this::toKnowledgeBaseResp);
@@ -214,13 +237,16 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public KnowledgeBaseResp getKnowledgeBase(Long id) {
-        return toKnowledgeBaseResp(findKnowledgeBaseOrThrow(id));
+        KnowledgeBasePo po = findKnowledgeBaseOrThrow(id);
+        ensureCanReadKnowledgeProject(po.getProjectId());
+        return toKnowledgeBaseResp(po);
     }
 
     @Override
     @Transactional
     public KnowledgeBaseResp updateKnowledgeBase(Long id, UpdateKnowledgeBaseReq req) {
         KnowledgeBasePo po = findKnowledgeBaseOrThrow(id);
+        ensureCanManageKnowledgeProject(po.getProjectId());
         if (req.getName() != null) {
             if (!StringUtils.hasText(req.getName())) {
                 throw new BizException(ErrorCode.PARAM_ERROR, "知识库名称不能为空");
@@ -234,6 +260,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             po.setWorkspaceId(req.getWorkspaceId());
         }
         if (req.getProjectId() != null) {
+            ensureCanManageKnowledgeProject(req.getProjectId());
             po.setProjectId(req.getProjectId());
         }
         if (req.getVisibility() != null) {
@@ -261,7 +288,8 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     @Transactional
     public void deleteKnowledgeBase(Long id) {
-        findKnowledgeBaseOrThrow(id);
+        KnowledgeBasePo po = findKnowledgeBaseOrThrow(id);
+        ensureCanManageKnowledgeProject(po.getProjectId());
         knowledgeBaseMapper.deleteById(id);
         documentMapper.delete(Wrappers.lambdaQuery(KnowledgeDocumentPo.class)
                 .eq(KnowledgeDocumentPo::getKnowledgeBaseId, id));
@@ -273,6 +301,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public Long uploadDocument(Long knowledgeBaseId, MultipartFile file) {
         KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(knowledgeBaseId);
+        ensureCanManageKnowledgeProject(knowledgeBase.getProjectId());
         validateUploadFile(file);
 
         String originalFilename = file.getOriginalFilename();
@@ -321,7 +350,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public PageResult<KnowledgeDocumentResp> listDocuments(Long knowledgeBaseId, KnowledgeDocumentQuery query) {
-        findKnowledgeBaseOrThrow(knowledgeBaseId);
+        ensureCanReadKnowledgeProject(findKnowledgeBaseOrThrow(knowledgeBaseId).getProjectId());
         int pageNo = query.getPage() <= 0 ? 1 : query.getPage();
         int pageSize = query.getSize() <= 0 ? 20 : query.getSize();
         Page<KnowledgeDocumentPo> pageParam = PageHelper.toPage(pageNo, pageSize);
@@ -333,12 +362,15 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public KnowledgeDocumentResp getDocument(Long id) {
-        return toDocumentResp(findDocumentOrThrow(id));
+        KnowledgeDocumentPo document = findDocumentOrThrow(id);
+        ensureCanReadKnowledgeProject(findKnowledgeBaseOrThrow(document.getKnowledgeBaseId()).getProjectId());
+        return toDocumentResp(document);
     }
 
     @Override
     public List<KnowledgeChunkResp> listDocumentChunks(Long documentId) {
-        findDocumentOrThrow(documentId);
+        KnowledgeDocumentPo document = findDocumentOrThrow(documentId);
+        ensureCanReadKnowledgeProject(findKnowledgeBaseOrThrow(document.getKnowledgeBaseId()).getProjectId());
         return vectorRepository.listByDocumentId(documentId)
                 .stream()
                 .map(this::toChunkResp)
@@ -349,6 +381,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public void deleteDocument(Long id) {
         KnowledgeDocumentPo document = findDocumentOrThrow(id);
+        ensureCanManageKnowledgeProject(findKnowledgeBaseOrThrow(document.getKnowledgeBaseId()).getProjectId());
         documentMapper.deleteById(id);
         vectorRepository.deleteByDocumentId(id);
         knowledgeBaseMapper.update(null, Wrappers.lambdaUpdate(KnowledgeBasePo.class)
@@ -362,6 +395,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public void retryDocument(Long id) {
         KnowledgeDocumentPo document = findDocumentOrThrow(id);
+        ensureCanManageKnowledgeProject(findKnowledgeBaseOrThrow(document.getKnowledgeBaseId()).getProjectId());
         if (!STATUS_FAILED.equals(document.getParseStatus()) && !STATUS_CANCELED.equals(document.getParseStatus())) {
             throw new BizException(ErrorCode.PARAM_ERROR, "只有失败或已取消的文档可以重试");
         }
@@ -404,6 +438,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public void cancelDocument(Long id) {
         KnowledgeDocumentPo document = findDocumentOrThrow(id);
+        ensureCanManageKnowledgeProject(findKnowledgeBaseOrThrow(document.getKnowledgeBaseId()).getProjectId());
         if (STATUS_DONE.equals(document.getParseStatus())
                 || STATUS_FAILED.equals(document.getParseStatus())
                 || STATUS_CANCELED.equals(document.getParseStatus())) {
@@ -431,6 +466,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     public Long revectorizeDocument(Long id, KnowledgeRebuildReq req) {
         KnowledgeDocumentPo document = findDocumentOrThrow(id);
         KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(document.getKnowledgeBaseId());
+        ensureCanManageKnowledgeProject(knowledgeBase.getProjectId());
         applyRebuildOptions(knowledgeBase, req);
         resetDocumentForProcessing(document, "文档重向量化已排队");
         vectorRepository.deleteByDocumentId(id);
@@ -447,6 +483,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Transactional
     public Long rebuildKnowledgeBaseIndex(Long id, KnowledgeRebuildReq req) {
         KnowledgeBasePo knowledgeBase = findKnowledgeBaseOrThrow(id);
+        ensureCanManageKnowledgeProject(knowledgeBase.getProjectId());
         applyRebuildOptions(knowledgeBase, req);
         Long nextIndexVersion = effectiveActiveIndexVersion(knowledgeBase) + 1;
         knowledgeBase.setBuildingIndexVersion(nextIndexVersion);
@@ -475,6 +512,9 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public List<KnowledgeTaskResp> listProcessingTasks(Long knowledgeBaseId, Long documentId) {
+        if (knowledgeBaseId != null) {
+            ensureCanReadKnowledgeProject(findKnowledgeBaseOrThrow(knowledgeBaseId).getProjectId());
+        }
         return taskMapper.selectList(Wrappers.lambdaQuery(KnowledgeTaskPo.class)
                         .eq(knowledgeBaseId != null, KnowledgeTaskPo::getKnowledgeBaseId, knowledgeBaseId)
                         .eq(documentId != null, KnowledgeTaskPo::getDocumentId, documentId)
@@ -507,6 +547,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public Long upsertChunk(KnowledgeChunkUpsertReq req) {
+        ensureCanManageKnowledgeProject(findKnowledgeBaseOrThrow(req.getKnowledgeBaseId()).getProjectId());
         KnowledgeChunk chunk = new KnowledgeChunk();
         chunk.setKnowledgeBaseId(req.getKnowledgeBaseId());
         chunk.setDocumentId(req.getDocumentId());
@@ -530,6 +571,34 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             throw new BizException(ErrorCode.NOT_FOUND, "文档不存在: " + id);
         }
         return po;
+    }
+
+    private void ensureCanReadKnowledgeProject(Long projectId) {
+        ensureProjectPermission(projectId, PermissionAction.READ, "当前用户无知识库项目读取权限");
+    }
+
+    private void ensureCanManageKnowledgeProject(Long projectId) {
+        ensureProjectPermission(projectId, PermissionAction.MANAGE, "当前用户无知识库项目管理权限");
+    }
+
+    private void ensureProjectPermission(Long projectId, PermissionAction action, String message) {
+        CurrentUser user = currentUser();
+        if (user == null || user.getRole() == UserRole.ADMIN || permissionService == null
+                || permissionService.canAccessProject(user, projectId, action)) {
+            return;
+        }
+        throw new BizException(ErrorCode.FORBIDDEN, message);
+    }
+
+    private CurrentUser currentUser() {
+        if (authService == null) {
+            return null;
+        }
+        try {
+            return authService.getCurrentUser();
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private KnowledgeBaseResp toKnowledgeBaseResp(KnowledgeBasePo po) {

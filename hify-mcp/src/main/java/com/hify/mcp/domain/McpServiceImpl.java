@@ -7,6 +7,9 @@ import com.hify.common.audit.AuditLogRecord;
 import com.hify.common.audit.AuditLogService;
 import com.hify.auth.api.AuthService;
 import com.hify.auth.api.CurrentUser;
+import com.hify.auth.api.PermissionAction;
+import com.hify.auth.api.PermissionService;
+import com.hify.auth.api.UserRole;
 import com.hify.common.exception.BizException;
 import com.hify.common.exception.ErrorCode;
 import com.hify.common.log.TraceContext;
@@ -42,6 +45,7 @@ public class McpServiceImpl implements McpService {
     private final McpEndpointGuard    mcpEndpointGuard;
     private AuditLogService auditLogService;
     private AuthService authService;
+    private PermissionService permissionService;
 
     @Autowired(required = false)
     public void setAuditLogService(AuditLogService auditLogService) {
@@ -53,8 +57,16 @@ public class McpServiceImpl implements McpService {
         this.authService = authService;
     }
 
+    @Autowired(required = false)
+    public void setPermissionService(PermissionService permissionService) {
+        this.permissionService = permissionService;
+    }
+
     @Override
     public PageResult<McpServerListItemResp> list(McpServerQuery query) {
+        if (query.getProjectId() != null) {
+            ensureCanReadMcpProject(query.getProjectId());
+        }
         Page<McpServerPo> pageParam = PageHelper.toPage(query.getPage(), query.getPageSize());
         LambdaQueryWrapper<McpServerPo> wrapper = new LambdaQueryWrapper<McpServerPo>()
                 .like(query.getName() != null && !query.getName().isBlank(), McpServerPo::getName, query.getName())
@@ -82,6 +94,7 @@ public class McpServiceImpl implements McpService {
     @Override
     public McpServerDetailResp getById(Long id) {
         McpServerPo po = findOrThrow(id);
+        ensureCanReadMcpProject(po.getProjectId());
         List<McpToolResp> tools = listToolsByServerId(id);
 
         McpServerDetailResp detail = new McpServerDetailResp();
@@ -99,6 +112,7 @@ public class McpServiceImpl implements McpService {
         mcpEndpointGuard.validate(req.getEndpoint());
         po.setWorkspaceId(req.getWorkspaceId() == null ? 1L : req.getWorkspaceId());
         po.setProjectId(req.getProjectId() == null ? 1L : req.getProjectId());
+        ensureCanManageMcpProject(po.getProjectId());
         po.setName(req.getName());
         po.setDescription(req.getDescription() != null ? req.getDescription() : "");
         po.setEndpoint(normalizeEndpoint(req.getEndpoint()));
@@ -123,6 +137,7 @@ public class McpServiceImpl implements McpService {
     @Transactional
     public McpServerResp update(Long id, UpdateMcpServerReq req) {
         McpServerPo po = findOrThrow(id);
+        ensureCanManageMcpProject(po.getProjectId());
         Map<String, Object> before = mcpAudit(po);
 
         if (req.getName() != null && !req.getName().equals(po.getName())) {
@@ -135,6 +150,7 @@ public class McpServiceImpl implements McpService {
             po.setEndpoint(normalizeEndpoint(req.getEndpoint()));
         }
         if (req.getEnabled() != null) po.setEnabled(req.getEnabled());
+        if (req.getProjectId() != null) ensureCanManageMcpProject(req.getProjectId());
         if (req.getWorkspaceId() != null) po.setWorkspaceId(req.getWorkspaceId());
         if (req.getProjectId() != null) po.setProjectId(req.getProjectId());
         if (req.getVisibility() != null) po.setVisibility(normalizeVisibility(req.getVisibility()));
@@ -156,6 +172,7 @@ public class McpServiceImpl implements McpService {
     @Transactional
     public void delete(Long id) {
         McpServerPo po = findOrThrow(id);
+        ensureCanManageMcpProject(po.getProjectId());
         Map<String, Object> before = mcpAudit(po);
         long bindingCount = mcpServerMapper.countAgentBindings(id);
         if (bindingCount > 0) {
@@ -171,6 +188,7 @@ public class McpServiceImpl implements McpService {
     @Transactional
     public McpConnectivityTestResult test(Long id) {
         McpServerPo po = findOrThrow(id);
+        ensureCanManageMcpProject(po.getProjectId());
         mcpEndpointGuard.validate(po.getEndpoint());
         long start = System.currentTimeMillis();
         McpConnectivityTestResult result = new McpConnectivityTestResult();
@@ -415,6 +433,23 @@ public class McpServiceImpl implements McpService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private void ensureCanReadMcpProject(Long projectId) {
+        ensureProjectPermission(projectId, PermissionAction.READ, "当前用户无 MCP 项目读取权限");
+    }
+
+    private void ensureCanManageMcpProject(Long projectId) {
+        ensureProjectPermission(projectId, PermissionAction.MANAGE, "当前用户无 MCP 项目管理权限");
+    }
+
+    private void ensureProjectPermission(Long projectId, PermissionAction action, String message) {
+        CurrentUser user = currentUser();
+        if (user == null || user.getRole() == UserRole.ADMIN || permissionService == null
+                || permissionService.canAccessProject(user, projectId, action)) {
+            return;
+        }
+        throw new BizException(ErrorCode.FORBIDDEN, message);
     }
 
     private static McpServerResp toResp(McpServerPo po) {

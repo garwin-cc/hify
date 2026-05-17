@@ -53,6 +53,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import HifyTable, { type HifyColumn } from '@/components/HifyTable.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import { useConfirm } from '@/composables/useConfirm'
+import { useProjectStore } from '@/stores/project'
 import {
   deleteWorkflow,
   getWorkflowList,
@@ -62,6 +63,7 @@ import {
 
 const { isNarrow } = useBreakpoint()
 const { confirm } = useConfirm()
+const projectStore = useProjectStore()
 
 const tableRef = ref<{ refresh: () => void; load: () => void }>()
 
@@ -75,7 +77,7 @@ const columns = computed<HifyColumn[]>(() => [
 ])
 
 function fetchList(page: number, pageSize: number) {
-  return getWorkflowList(page, pageSize)
+  return getWorkflowList(page, pageSize, projectStore.currentProjectId)
 }
 
 async function handleDelete(row: WorkflowListItem) {

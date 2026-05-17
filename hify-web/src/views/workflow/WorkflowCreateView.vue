@@ -847,6 +847,7 @@ import {
 import { getModelGroups, type ModelGroup } from '@/api/agent'
 import { subscribeSse } from '@/api/sse'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectStore } from '@/stores/project'
 import { notifySuccess } from '@/utils/notify'
 
 type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'TOOL' | 'REPLY' | 'VARIABLE_ASSIGNER' | 'ITERATION' | 'ITERATION_END' | 'END'
@@ -862,6 +863,7 @@ type ValidationIssue = {
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const projectStore = useProjectStore()
 const submitting = ref(false)
 const runningWorkflow = ref(false)
 const loadingDetail = ref(false)
@@ -1858,6 +1860,7 @@ async function saveWorkflowBeforeRun(): Promise<number | null> {
   const payload = {
     name: form.name.trim(),
     description: form.description.trim(),
+    projectId: projectStore.currentProjectId ?? undefined,
     enabled: config.enabled ?? 1,
     startNodeKey: config.startNodeKey,
     nodes: config.nodes,
@@ -2160,6 +2163,7 @@ async function handleSubmit() {
     const payload = {
       name: form.name.trim(),
       description: form.description.trim(),
+      projectId: projectStore.currentProjectId ?? undefined,
       enabled: config.enabled ?? 1,
       startNodeKey: config.startNodeKey,
       nodes: config.nodes,

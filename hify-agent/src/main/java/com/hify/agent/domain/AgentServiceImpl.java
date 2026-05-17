@@ -27,7 +27,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -216,7 +215,8 @@ public class AgentServiceImpl implements AgentService {
             @CacheEvict(cacheNames = "agent:detail", allEntries = true),
     })
     public void delete(Long id) {
-        requireAgent(id);
+        AgentPo po = requireAgent(id);
+        ensureCanManageAgentProject(po.getProjectId());
         // 先删关联工具（硬删除），再软删 Agent 本体
         agentToolMapper.delete(
                 new LambdaQueryWrapper<AgentToolPo>().eq(AgentToolPo::getAgentId, id));
@@ -234,6 +234,7 @@ public class AgentServiceImpl implements AgentService {
     })
     public AgentDetailResp toggleEnabled(Long id, int enabled) {
         AgentPo po = requireAgent(id);
+        ensureCanManageAgentProject(po.getProjectId());
         po.setEnabled(enabled);
         agentMapper.updateById(po);
 
@@ -245,9 +246,9 @@ public class AgentServiceImpl implements AgentService {
     // ── 详情 ──────────────────────────────────────────────────────────
 
     @Override
-    @Cacheable(cacheNames = "agent:detail", key = "#id")
     public AgentDetailResp getDetail(Long id) {
         AgentPo po = requireAgent(id);
+        ensureCanReadAgentProject(po.getProjectId());
         ModelConfigResp modelConfig = modelConfigService.getById(po.getModelConfigId());
         List<Long> toolIds = queryToolIds(id);
         return buildDetailResp(po, modelConfig, toolIds);
@@ -257,9 +258,13 @@ public class AgentServiceImpl implements AgentService {
 
     @Override
     public PageResult<AgentListItemResp> listPage(AgentQuery query) {
+        if (query.getProjectId() != null) {
+            ensureCanReadAgentProject(query.getProjectId());
+        }
         LambdaQueryWrapper<AgentPo> wrapper = new LambdaQueryWrapper<AgentPo>()
                 .like(StringUtils.hasText(query.getName()), AgentPo::getName, query.getName())
                 .eq(query.getEnabled() != null, AgentPo::getEnabled, query.getEnabled())
+                .eq(query.getProjectId() != null, AgentPo::getProjectId, query.getProjectId())
                 .orderByDesc(AgentPo::getCreatedAt);
 
         Page<AgentPo> page = agentMapper.selectPage(
@@ -289,7 +294,8 @@ public class AgentServiceImpl implements AgentService {
 
     @Override
     public List<AgentVersionResp> listVersions(Long id) {
-        requireAgent(id);
+        AgentPo po = requireAgent(id);
+        ensureCanReadAgentProject(po.getProjectId());
         return agentVersionMapper.selectList(new LambdaQueryWrapper<AgentVersionPo>()
                         .eq(AgentVersionPo::getAgentId, id)
                         .orderByDesc(AgentVersionPo::getVersionNo))
@@ -392,7 +398,8 @@ public class AgentServiceImpl implements AgentService {
 
     @Override
     public List<AgentAppResp> listApps(Long agentId) {
-        requireAgent(agentId);
+        AgentPo agent = requireAgent(agentId);
+        ensureCanReadAgentProject(agent.getProjectId());
         return agentAppMapper.selectList(new LambdaQueryWrapper<AgentAppPo>()
                         .eq(AgentAppPo::getAgentId, agentId)
                         .orderByDesc(AgentAppPo::getCreatedAt))
@@ -606,15 +613,21 @@ public class AgentServiceImpl implements AgentService {
         if (resourceProjectId == null || resourceProjectId.equals(agentProjectId)) {
             return;
         }
-        CurrentUser user = currentUser();
-        if (permissionService == null || !permissionService.canAccessProject(user, resourceProjectId, PermissionAction.READ)) {
-            throw new BizException(ErrorCode.FORBIDDEN,
-                    resourceType + " 跨项目绑定无权限: " + resourceId);
-        }
+        throw new BizException(ErrorCode.FORBIDDEN,
+                resourceType + " 必须属于同一项目，禁止跨项目绑定: " + resourceId);
     }
 
     private void ensureCanManageAgentProject(Long projectId) {
         ensureCanManageTargetProject(projectId, "当前用户无 Agent 项目管理权限");
+    }
+
+    private void ensureCanReadAgentProject(Long projectId) {
+        CurrentUser user = currentUser();
+        if (user == null || user.getRole() == UserRole.ADMIN || permissionService == null
+                || permissionService.canAccessProject(user, projectId, PermissionAction.READ)) {
+            return;
+        }
+        throw new BizException(ErrorCode.FORBIDDEN, "当前用户无 Agent 项目读取权限");
     }
 
     private void ensureCanManageTargetProject(Long projectId, String message) {

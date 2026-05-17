@@ -3,6 +3,7 @@ import type { PageData } from '@/components/HifyTable.vue'
 
 export interface McpServer {
   id: number
+  projectId?: number
   name: string
   description: string
   endpoint: string
@@ -28,6 +29,7 @@ export interface McpServerDetail {
 export interface McpServerQuery {
   name?: string
   enabled?: number
+  projectId?: number
 }
 
 export interface SaveMcpServerRequest {
@@ -35,6 +37,7 @@ export interface SaveMcpServerRequest {
   description?: string
   endpoint: string
   enabled: number
+  projectId?: number
 }
 
 export interface McpConnectivityTestResult {
@@ -51,8 +54,8 @@ export const getMcpServerPage = (
 ): Promise<PageData<McpServer>> =>
   get('/v1/mcp-servers', { page, pageSize, ...query })
 
-export const getMcpServerList = (): Promise<McpServer[]> =>
-  getMcpServerPage(1, 100, { enabled: 1 }).then((page) => page.records)
+export const getMcpServerList = (projectId?: number | null): Promise<McpServer[]> =>
+  getMcpServerPage(1, 100, { enabled: 1, projectId: projectId || undefined }).then((page) => page.records)
 
 export const getMcpServerDetail = (id: number): Promise<McpServerDetail> =>
   get(`/v1/mcp-servers/${id}`)
@@ -73,8 +76,8 @@ export interface McpToolOption extends McpTool {
   serverName: string
 }
 
-export const getMcpToolOptions = async (): Promise<McpToolOption[]> => {
-  const servers = await getMcpServerList()
+export const getMcpToolOptions = async (projectId?: number | null): Promise<McpToolOption[]> => {
+  const servers = await getMcpServerList(projectId)
   const details = await Promise.all(
     servers
       .filter((server) => (server.toolCount ?? 0) > 0)

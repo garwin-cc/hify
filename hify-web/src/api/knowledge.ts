@@ -3,6 +3,7 @@ import type { PageData } from '@/components/HifyTable.vue'
 
 export interface KnowledgeBaseItem {
   id: number
+  projectId?: number
   name: string
   description: string
   enabled: number
@@ -27,6 +28,7 @@ export interface CreateKnowledgeBaseReq {
   name: string
   description?: string
   embeddingModelConfigId: number
+  projectId?: number
 }
 
 export interface UpdateKnowledgeBaseReq {
@@ -34,6 +36,7 @@ export interface UpdateKnowledgeBaseReq {
   description?: string
   enabled?: number
   embeddingModelConfigId?: number
+  projectId?: number
 }
 
 export interface UpdateKnowledgeRetrievalConfigReq {
@@ -142,8 +145,9 @@ export const getKnowledgeBaseList = (
   page: number,
   size: number,
   name?: string,
+  projectId?: number | null,
 ): Promise<PageData<KnowledgeBaseItem>> =>
-  get('/v1/knowledge-bases', { page, size, name: name || undefined })
+  get('/v1/knowledge-bases', { page, size, name: name || undefined, projectId: projectId || undefined })
 
 export const getKnowledgeBase = (id: number): Promise<KnowledgeBaseItem> =>
   get(`/v1/knowledge-bases/${id}`)

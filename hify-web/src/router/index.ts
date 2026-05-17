@@ -24,6 +24,12 @@ const router = createRouter({
       meta: { roles: ['ADMIN', 'EDITOR'] },
     },
     {
+      path: '/projects',
+      name: 'Projects',
+      component: () => import('@/views/project/ProjectView.vue'),
+      meta: { roles: ['ADMIN', 'EDITOR'] },
+    },
+    {
       path: '/agents',
       name: 'Agents',
       component: () => import('@/views/agent/AgentList.vue'),

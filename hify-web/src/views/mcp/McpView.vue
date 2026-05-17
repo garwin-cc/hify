@@ -186,6 +186,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import HifyTable, { type HifyColumn } from '@/components/HifyTable.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectStore } from '@/stores/project'
 import { notifySuccess } from '@/utils/notify'
 import {
   createMcpServer,
@@ -203,6 +204,7 @@ const tableRef = ref<{ refresh: () => void }>()
 const formRef = ref<FormInstance>()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
+const projectStore = useProjectStore()
 
 const filterName = ref('')
 const dialogVisible = ref(false)
@@ -239,6 +241,7 @@ const columns: HifyColumn[] = [
 function fetchList(page: number, pageSize: number) {
   return getMcpServerPage(page, pageSize, {
     name: filterName.value.trim() || undefined,
+    projectId: projectStore.currentProjectId ?? undefined,
   })
 }
 
@@ -269,11 +272,15 @@ async function handleSubmit() {
   submitting.value = true
   try {
     form.endpoint = form.endpoint.replace(/\s+/g, '')
+    const payload: SaveMcpServerRequest = {
+      ...form,
+      projectId: projectStore.currentProjectId ?? undefined,
+    }
     if (editingId.value === null) {
-      await createMcpServer(form)
+      await createMcpServer(payload)
       notifySuccess('MCP Server 创建成功')
     } else {
-      await updateMcpServer(editingId.value, form)
+      await updateMcpServer(editingId.value, payload)
       notifySuccess('MCP Server 更新成功')
     }
     dialogVisible.value = false

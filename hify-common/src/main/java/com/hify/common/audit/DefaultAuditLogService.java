@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -59,7 +60,7 @@ public class DefaultAuditLogService implements AuditLogService {
     }
 
     private String toJson(Map<String, Object> value) throws JsonProcessingException {
-        String json = objectMapper.writeValueAsString(sanitize(value));
+        String json = objectMapper.writeValueAsString(sanitizeMap(value));
         if (json.length() <= MAX_JSON_LENGTH) {
             return json;
         }
@@ -70,13 +71,25 @@ public class DefaultAuditLogService implements AuditLogService {
         return objectMapper.writeValueAsString(truncated);
     }
 
-    private Map<String, Object> sanitize(Map<String, Object> value) {
+    private Map<String, Object> sanitizeMap(Map<String, Object> value) {
         if (value == null || value.isEmpty()) {
             return Map.of();
         }
         Map<String, Object> result = new LinkedHashMap<>();
-        value.forEach((key, item) -> result.put(key, sensitive(key) ? "******" : item));
+        value.forEach((key, item) -> result.put(key, sensitive(key) ? "******" : sanitizeValue(item)));
         return result;
+    }
+
+    private Object sanitizeValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            map.forEach((key, item) -> nested.put(String.valueOf(key), item));
+            return sanitizeMap(nested);
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(this::sanitizeValue).toList();
+        }
+        return value;
     }
 
     private boolean sensitive(String key) {

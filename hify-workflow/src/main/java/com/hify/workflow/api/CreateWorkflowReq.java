@@ -17,6 +17,10 @@ public class CreateWorkflowReq {
 
     private Integer enabled;
 
+    private Long workspaceId;
+
+    private Long projectId;
+
     @NotBlank(message = "开始节点不能为空")
     private String startNodeKey;
 

@@ -237,8 +237,9 @@ class KnowledgeServiceImplTest {
     @Test
     void upsertChunkPersistsChunkWithMetadataJson() {
         FakeKnowledgeVectorRepository repository = new FakeKnowledgeVectorRepository();
+        KnowledgeBaseMapper knowledgeBaseMapper = knowledgeBaseMapper(knowledgeBase(1L, 1L, null));
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
-                mock(KnowledgeBaseMapper.class),
+                knowledgeBaseMapper,
                 mock(KnowledgeDocumentMapper.class),
                 mock(KnowledgeTaskMapper.class),
                 repository,
@@ -372,6 +373,7 @@ class KnowledgeServiceImplTest {
 
     @Test
     void getDocumentReturnsStructuredProcessingErrorFields() {
+        KnowledgeBaseMapper knowledgeBaseMapper = knowledgeBaseMapper(knowledgeBase(1L, 1L, null));
         KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
         KnowledgeDocumentPo document = new KnowledgeDocumentPo();
         document.setId(7L);
@@ -388,7 +390,7 @@ class KnowledgeServiceImplTest {
         document.setErrorMessage("embedding timeout");
         when(documentMapper.selectById(7L)).thenReturn(document);
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
-                mock(KnowledgeBaseMapper.class),
+                knowledgeBaseMapper,
                 documentMapper,
                 mock(KnowledgeTaskMapper.class),
                 new FakeKnowledgeVectorRepository(),
@@ -421,8 +423,9 @@ class KnowledgeServiceImplTest {
         document.setChunkCount(0);
         document.setRetryable(1);
         when(documentMapper.selectById(7L)).thenReturn(document);
+        KnowledgeBaseMapper knowledgeBaseMapper = knowledgeBaseMapper(knowledgeBase(1L, 1L, null));
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
-                mock(KnowledgeBaseMapper.class),
+                knowledgeBaseMapper,
                 documentMapper,
                 mock(KnowledgeTaskMapper.class),
                 repository,
@@ -449,8 +452,9 @@ class KnowledgeServiceImplTest {
         document.setFileType("txt");
         document.setParseStatus("PENDING");
         when(documentMapper.selectById(8L)).thenReturn(document);
+        KnowledgeBaseMapper knowledgeBaseMapper = knowledgeBaseMapper(knowledgeBase(1L, 1L, null));
         KnowledgeServiceImpl service = new KnowledgeServiceImpl(
-                mock(KnowledgeBaseMapper.class),
+                knowledgeBaseMapper,
                 documentMapper,
                 mock(KnowledgeTaskMapper.class),
                 repository,
@@ -853,6 +857,12 @@ class KnowledgeServiceImplTest {
         po.setActiveIndexVersion(1L);
         po.setIndexStatus("READY");
         return po;
+    }
+
+    private static KnowledgeBaseMapper knowledgeBaseMapper(KnowledgeBasePo po) {
+        KnowledgeBaseMapper mapper = mock(KnowledgeBaseMapper.class);
+        when(mapper.selectById(po.getId())).thenReturn(po);
+        return mapper;
     }
 
     private static KnowledgeDocumentPo document(Long id, Long knowledgeBaseId, String status) {

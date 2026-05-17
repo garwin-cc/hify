@@ -136,7 +136,15 @@ class WorkflowServiceImplTest {
 
     @Test
     void submitReviewCancelsRunAndReviewNodeWhenActionIsReject() {
-        WorkflowMapper workflowMapper = mapper(WorkflowMapper.class, method -> null);
+        WorkflowPo workflow = new WorkflowPo();
+        workflow.setId(10L);
+        workflow.setProjectId(1L);
+        WorkflowMapper workflowMapper = mapper(WorkflowMapper.class, method -> {
+            if ("selectById".equals(method)) {
+                return args -> workflow;
+            }
+            return null;
+        });
         WorkflowNodeMapper nodeMapper = mapper(WorkflowNodeMapper.class, method -> null);
         WorkflowEdgeMapper edgeMapper = mapper(WorkflowEdgeMapper.class, method -> null);
 

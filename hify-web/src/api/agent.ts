@@ -62,6 +62,7 @@ export interface CreateAgentReq {
   description?: string
   systemPrompt: string
   modelConfigId: number
+  projectId?: number
   workflowId?: number | null
   knowledgeBaseIds?: number[]
   temperature?: number
@@ -79,6 +80,7 @@ export interface UpdateAgentReq {
   description?: string
   systemPrompt?: string
   modelConfigId?: number
+  projectId?: number
   workflowId?: number | null
   bindWorkflow?: boolean
   knowledgeBaseIds?: number[]
@@ -95,6 +97,7 @@ export interface UpdateAgentReq {
 export interface AgentQuery {
   name?: string
   enabled?: number
+  projectId?: number
 }
 
 export interface AgentVersion {

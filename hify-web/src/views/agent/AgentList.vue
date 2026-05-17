@@ -336,6 +336,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import HifyTable, { type HifyColumn } from '@/components/HifyTable.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { notifySuccess } from '@/utils/notify'
+import { useProjectStore } from '@/stores/project'
 import {
   getModelGroups,
   getAgentList,
@@ -350,6 +351,8 @@ import {
 import { getMcpToolOptions, type McpToolOption } from '@/api/mcp'
 import { getKnowledgeBaseList, type KnowledgeBaseItem } from '@/api/knowledge'
 import { getWorkflowList, type WorkflowListItem } from '@/api/workflow'
+
+const projectStore = useProjectStore()
 
 // ── 列配置 ────────────────────────────────────────────────────────────
 
@@ -377,6 +380,7 @@ function fetchList(page: number, pageSize: number) {
   return getAgentList(page, pageSize, {
     name:    filterName.value    || undefined,
     enabled: filterEnabled.value,
+    projectId: projectStore.currentProjectId ?? undefined,
   })
 }
 
@@ -416,7 +420,7 @@ const loadingMcp  = ref(false)
 async function loadMcpServers() {
   loadingMcp.value = true
   try {
-    mcpTools.value = await getMcpToolOptions()
+    mcpTools.value = await getMcpToolOptions(projectStore.currentProjectId)
   } finally {
     loadingMcp.value = false
   }
@@ -430,7 +434,7 @@ const loadingKnowledgeBases = ref(false)
 async function loadKnowledgeBases() {
   loadingKnowledgeBases.value = true
   try {
-    const result = await getKnowledgeBaseList(1, 100)
+    const result = await getKnowledgeBaseList(1, 100, undefined, projectStore.currentProjectId)
     knowledgeBases.value = result.records
   } finally {
     loadingKnowledgeBases.value = false
@@ -445,7 +449,7 @@ const loadingWorkflows = ref(false)
 async function loadWorkflows() {
   loadingWorkflows.value = true
   try {
-    const result = await getWorkflowList(1, 100)
+    const result = await getWorkflowList(1, 100, projectStore.currentProjectId)
     workflows.value = result.records
   } finally {
     loadingWorkflows.value = false
@@ -586,6 +590,7 @@ async function handleSubmit() {
         summaryTriggerMessageCount: form.summaryTriggerMessageCount,
         summaryMaxTokens: form.summaryMaxTokens,
         toolIds:         form.toolIds.length > 0 ? form.toolIds : undefined,
+        projectId:       projectStore.currentProjectId ?? undefined,
       })
       notifySuccess('Agent 已创建')
     }

@@ -10,4 +10,6 @@ public class KnowledgeBaseQuery {
     private int size = 20;
 
     private String name;
+
+    private Long projectId;
 }

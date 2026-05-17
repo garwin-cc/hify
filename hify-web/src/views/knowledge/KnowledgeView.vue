@@ -192,6 +192,7 @@ import HifyTable, { type HifyColumn } from '@/components/HifyTable.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { notifySuccess } from '@/utils/notify'
 import { useBreakpoint } from '@/composables/useBreakpoint'
+import { useProjectStore } from '@/stores/project'
 import {
   createKnowledgeBase,
   deleteKnowledgeBase,
@@ -204,6 +205,7 @@ import { getEnabledModelConfigs, type ModelConfig } from '@/api/provider'
 
 const router = useRouter()
 const { isNarrow } = useBreakpoint()
+const projectStore = useProjectStore()
 
 const columns = computed<HifyColumn[]>(() => [
   { label: '名称', slot: 'name', minWidth: '180' },
@@ -222,7 +224,7 @@ const tableRef = ref<{ refresh: () => void; load: () => void }>()
 const filterName = ref('')
 
 function fetchList(page: number, pageSize: number) {
-  return getKnowledgeBaseList(page, pageSize, filterName.value.trim())
+  return getKnowledgeBaseList(page, pageSize, filterName.value.trim(), projectStore.currentProjectId)
 }
 
 function goDocuments(row: KnowledgeBaseItem) {
@@ -334,6 +336,7 @@ async function handleSubmit() {
       name: form.name.trim(),
       description: form.description.trim(),
       embeddingModelConfigId: form.embeddingModelConfigId,
+      projectId: projectStore.currentProjectId ?? undefined,
     }
     const retrievalPayload = {
       retrievalMode: form.retrievalMode,

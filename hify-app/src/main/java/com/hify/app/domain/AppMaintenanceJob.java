@@ -27,6 +27,7 @@ public class AppMaintenanceJob {
     private final JdbcTemplate jdbcTemplate;
     private final AppJobRunLogger appJobRunLogger;
     private final AppMaintenanceProperties properties;
+    private final AppLogArchiveService appLogArchiveService;
     private JdbcTemplate pgvectorJdbcTemplate;
 
     @Autowired(required = false)
@@ -189,10 +190,17 @@ public class AppMaintenanceJob {
     }
 
     private int cleanupTable(String table, LocalDateTime before) {
-        if (!tableExists(table)) {
-            return 0;
+        return appLogArchiveService.archiveAndDelete(archiveType(table), table, before);
+    }
+
+    private String archiveType(String table) {
+        if ("t_audit_log".equals(table)) {
+            return "AUDIT_LOG";
         }
-        return jdbcTemplate.update("DELETE FROM " + table + " WHERE created_at < ? AND deleted = 0", before);
+        if ("t_app_job_run_log".equals(table)) {
+            return "JOB_LOG";
+        }
+        return "RUNTIME_LOG";
     }
 
     private List<String> runtimeLogTables() {

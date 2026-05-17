@@ -1,6 +1,11 @@
 package com.hify.web;
 
+import com.hify.app.domain.AppLogArchiveService;
+import com.hify.common.metrics.HifyMetrics;
+import com.hify.common.task.TaskQueue;
+import com.hify.common.task.TaskQueueStatus;
 import com.hify.common.web.Result;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.connection.RedisConnection;
@@ -24,13 +29,25 @@ public class HealthController {
     private final JdbcTemplate mysqlJdbcTemplate;
     private final RedisConnectionFactory redisConnectionFactory;
     private final JdbcTemplate pgvectorJdbcTemplate;
+    private final Map<String, TaskQueue> taskQueues;
+    private final HifyMetrics hifyMetrics;
+    private final AppLogArchiveService appLogArchiveService;
+    private final int maxSseConnections;
 
     public HealthController(@Qualifier("mysqlJdbcTemplate") JdbcTemplate mysqlJdbcTemplate,
                             RedisConnectionFactory redisConnectionFactory,
-                            @Qualifier("pgvectorJdbcTemplate") JdbcTemplate pgvectorJdbcTemplate) {
+                            @Qualifier("pgvectorJdbcTemplate") JdbcTemplate pgvectorJdbcTemplate,
+                            Map<String, TaskQueue> taskQueues,
+                            HifyMetrics hifyMetrics,
+                            AppLogArchiveService appLogArchiveService,
+                            @Value("${hify.conversation.sse.max-active-connections:500}") int maxSseConnections) {
         this.mysqlJdbcTemplate = mysqlJdbcTemplate;
         this.redisConnectionFactory = redisConnectionFactory;
         this.pgvectorJdbcTemplate = pgvectorJdbcTemplate;
+        this.taskQueues = taskQueues;
+        this.hifyMetrics = hifyMetrics;
+        this.appLogArchiveService = appLogArchiveService;
+        this.maxSseConnections = maxSseConnections;
     }
 
     @GetMapping("/health")
@@ -56,6 +73,8 @@ public class HealthController {
 
     private HealthResponse buildDeepHealth() {
         Map<String, Object> components = readinessComponents();
+        components.put("sseConnections", checkSseConnections());
+        components.put("logArchive", appLogArchiveService.health());
         components.put("providerSummary", checkProviderSummary());
         return new HealthResponse(overallStatus(components), components);
     }
@@ -65,6 +84,7 @@ public class HealthController {
         components.put("mysql", checkMysql());
         components.put("redis", checkRedis());
         components.put("pgvector", checkPgvector());
+        components.put("taskQueues", checkTaskQueues());
         return components;
     }
 
@@ -150,7 +170,40 @@ public class HealthController {
         if (component instanceof ProviderSummaryHealth health) {
             return health.status();
         }
+        if (component instanceof TaskQueuesHealth health) {
+            return health.status();
+        }
+        if (component instanceof SseConnectionsHealth health) {
+            return health.status();
+        }
+        if (component instanceof AppLogArchiveService.ArchiveHealth health) {
+            return health.status();
+        }
         return null;
+    }
+
+    private TaskQueuesHealth checkTaskQueues() {
+        var statuses = taskQueues.entrySet().stream()
+                .map(entry -> namedStatus(entry.getKey(), entry.getValue().status()))
+                .toList();
+        boolean saturated = statuses.stream().anyMatch(TaskQueueStatus::saturated);
+        return new TaskQueuesHealth(saturated ? DOWN : UP, saturated ? "后台任务队列已满载" : null, statuses);
+    }
+
+    private TaskQueueStatus namedStatus(String beanName, TaskQueueStatus status) {
+        if (!"default".equals(status.name()) && !"unknown".equals(status.name())) {
+            return status;
+        }
+        return new TaskQueueStatus(beanName, status.activeCount(), status.queuedCount(), status.remainingCapacity(),
+                status.maxPending(), status.submittedCount(), status.completedCount(), status.failedCount(),
+                status.rejectedCount(), status.saturated());
+    }
+
+    private SseConnectionsHealth checkSseConnections() {
+        int active = hifyMetrics.activeSseConnections();
+        boolean saturated = maxSseConnections > 0 && active >= maxSseConnections;
+        return new SseConnectionsHealth(saturated ? DOWN : UP, saturated ? "SSE 连接数达到上限" : null,
+                active, maxSseConnections);
     }
 
     private static String rootMessage(Throwable e) {
@@ -178,5 +231,11 @@ public class HealthController {
     }
 
     public record ProviderSummaryHealth(String status, String error, int enabledCount, int downCount, int unknownCount) {
+    }
+
+    public record TaskQueuesHealth(String status, String error, java.util.List<TaskQueueStatus> queues) {
+    }
+
+    public record SseConnectionsHealth(String status, String error, int active, int maxActive) {
     }
 }

@@ -108,6 +108,10 @@ public class HifyMetrics {
         sseActiveConnections.updateAndGet(value -> Math.max(0, value - 1));
     }
 
+    public int activeSseConnections() {
+        return sseActiveConnections.get();
+    }
+
     public void registerCircuitBreakerState(String provider, CircuitBreaker circuitBreaker) {
         String key = tag(provider);
         if (!registeredCircuitBreakers.add(key)) {

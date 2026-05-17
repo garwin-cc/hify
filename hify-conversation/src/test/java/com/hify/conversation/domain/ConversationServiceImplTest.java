@@ -50,6 +50,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -390,6 +391,22 @@ class ConversationServiceImplTest {
         when(agentService.getDetail(3L)).thenReturn(agent);
         when(rateLimitService.check(any())).thenReturn(RateLimitResult.rejected(3));
         conversationService.setRateLimitService(rateLimitService);
+
+        conversationService.sendMessage(3L, null, "你好", 5L, 6L, 7L);
+
+        verify(sessionMapper, never()).insert(any(ChatSessionPo.class));
+        verify(messageMapper, never()).insert(any(ChatMessagePo.class));
+        verify(llmExecutor, never()).execute(any(Runnable.class));
+    }
+
+    @Test
+    void should_rejectBeforePersistingMessages_when_sseConnectionLimitReached() {
+        AgentDetailResp agent = enabledAgent(3L);
+        when(agentService.getDetail(3L)).thenReturn(agent);
+        when(rateLimitService.check(any())).thenReturn(RateLimitResult.allowed(1));
+        when(hifyMetrics.activeSseConnections()).thenReturn(1);
+        conversationService.setRateLimitService(rateLimitService);
+        ReflectionTestUtils.setField(conversationService, "maxSseConnections", 1);
 
         conversationService.sendMessage(3L, null, "你好", 5L, 6L, 7L);
 

@@ -37,11 +37,12 @@ class HealthControllerIntegrationTest extends HifyMockIntegrationTest {
         assertThat(data.path("components").has("mysql")).isTrue();
         assertThat(data.path("components").has("redis")).isTrue();
         assertThat(data.path("components").has("pgvector")).isTrue();
+        assertThat(data.path("components").has("taskQueues")).isTrue();
         assertThat(data.path("components").has("providerSummary")).isFalse();
     }
 
     @Test
-    void should_returnDeepHealthWithProviderSummary() throws Exception {
+    void should_returnDeepHealthWithProviderSummaryAndCapacitySignals() throws Exception {
         JsonNode root = getJson("/api/v1/health/deep");
         JsonNode data = assertOkResult(root);
 
@@ -49,7 +50,12 @@ class HealthControllerIntegrationTest extends HifyMockIntegrationTest {
         assertThat(data.path("components").has("redis")).isTrue();
         assertThat(data.path("components").has("pgvector")).isTrue();
         assertThat(data.path("components").has("providerSummary")).isTrue();
+        assertThat(data.path("components").has("sseConnections")).isTrue();
+        assertThat(data.path("components").has("logArchive")).isTrue();
+        assertThat(data.path("components").has("taskQueues")).isTrue();
         assertThat(data.path("components").path("providerSummary").path("status").asText()).isNotBlank();
+        assertThat(data.path("components").path("sseConnections").path("active").isInt()).isTrue();
+        assertThat(data.path("components").path("taskQueues").path("queues").isArray()).isTrue();
     }
 
     private JsonNode getJson(String path) throws Exception {

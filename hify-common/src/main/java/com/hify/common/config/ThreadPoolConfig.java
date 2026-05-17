@@ -87,16 +87,16 @@ public class ThreadPoolConfig {
 
     @Bean("knowledgeTaskQueue")
     public TaskQueue knowledgeTaskQueue(@Qualifier("knowledgeExecutor") ThreadPoolExecutor executor) {
-        return new InMemoryTaskQueue(executor, 20);
+        return new InMemoryTaskQueue("knowledge", executor, 20);
     }
 
     @Bean("workflowTaskQueue")
     public TaskQueue workflowTaskQueue(@Qualifier("llmExecutor") ThreadPoolExecutor executor) {
-        return new InMemoryTaskQueue(executor, 100);
+        return new InMemoryTaskQueue("workflow", executor, 100);
     }
 
     @Bean("backgroundTaskQueue")
     public TaskQueue backgroundTaskQueue(@Qualifier("asyncExecutor") ThreadPoolExecutor executor) {
-        return new InMemoryTaskQueue(executor, 100);
+        return new InMemoryTaskQueue("background", executor, 100);
     }
 }

@@ -74,6 +74,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -131,6 +132,8 @@ public class ConversationServiceImpl implements ConversationService {
     private final ToolArgumentSchemaValidator toolArgumentSchemaValidator = new ToolArgumentSchemaValidator();
     private RateLimitService rateLimitService;
     private RateLimitQuotaService rateLimitQuotaService;
+    @Value("${hify.conversation.sse.max-active-connections:500}")
+    private int maxSseConnections;
 
     @Qualifier("llmExecutor")
     private final ThreadPoolExecutor llmExecutor;
@@ -395,6 +398,9 @@ public class ConversationServiceImpl implements ConversationService {
         if (!rateLimit.isAllowed()) {
             return rejectedEmitter(ErrorCode.TOO_MANY_REQUESTS.getCode(),
                     "对话调用过于频繁，请 " + rateLimit.getRetryAfterSeconds() + " 秒后重试");
+        }
+        if (maxSseConnections > 0 && hifyMetrics.activeSseConnections() >= maxSseConnections) {
+            return rejectedEmitter(ErrorCode.TOO_MANY_REQUESTS.getCode(), "SSE 连接数达到上限，请稍后重试");
         }
 
         ChatSessionPo session = resolveSession(agentId, sessionId, content, requestContext);

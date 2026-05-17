@@ -280,6 +280,7 @@ Hify 不按 Dify 的功能广度推进，而按内部生产可用性推进。Dif
 - 工作流运行超时检测
 - RAG 向量孤儿 chunk 清理（文档删除后 pgvector 残留）
 - 已落地 app 侧统一 Job 日志：过期 Session、运行/审计/Job 日志清理、知识库 PROCESSING 超时恢复、Workflow RUNNING/WAITING 超时失败化、pgvector 孤儿 chunk 清理。
+- 已落地 1000 人本地部署治理基础：运行/审计/Job 日志过期后批量归档到 `t_ops_log_archive` 再清理原表，后台任务队列暴露容量状态，readiness 纳入队列饱和判断，deep health 展示 SSE 连接、归档和队列细节，K8s/Compose 增加 SSE 上限和归档参数。
 
 ---
 

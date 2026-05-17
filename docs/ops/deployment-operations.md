@@ -38,6 +38,7 @@ docker compose --profile observability up -d prometheus grafana
 - 后端滚动发布使用 `maxUnavailable: 0`，确保 SSE 和 Workflow 运行期间至少保留旧副本。
 - 后端设置 `preStop` 和 `terminationGracePeriodSeconds: 75`，给长连接和异步任务留出退出窗口。
 - liveness 只检查进程存活，readiness 检查 MySQL、Redis、pgvector；deep health 供人工排障，不放进探针。
+- readiness 同时暴露后台任务队列状态，队列满载时应摘除新流量；deep health 额外包含 SSE 活跃连接、日志归档状态和 Provider 汇总。
 - HPA 使用 CPU 和内存双指标，LLM 延迟通常不是 CPU 问题，扩容只能缓解请求堆积，不能替代 Provider 熔断和 fallback。
 
 ## 数据库和缓存
@@ -98,19 +99,37 @@ Grafana 面板覆盖：
 - Workflow run：`hify_workflow_runs`
 - JVM、Tomcat、Hikari：Spring Boot/Micrometer 默认指标
 
+健康检查分层：
+
+- `/api/v1/health/liveness`：只表示进程存活，适合 K8s liveness。
+- `/api/v1/health/readiness`：检查 MySQL、Redis、pgvector 和后台任务队列饱和状态，适合 K8s readiness。
+- `/api/v1/health/deep`：面向人工排障，包含 Provider 汇总、SSE active/max、日志归档行数和任务队列细节。
+
+SSE 容量：
+
+- `hify.conversation.sse.max-active-connections` 默认 500，可通过 `HIFY_CONVERSATION_SSE_MAX_ACTIVE_CONNECTIONS` 调整。
+- 达到上限时新对话流会返回 429 风格错误，已有连接继续自然完成。
+- 多副本部署时该上限是单 Pod 上限；集群总承载约为 `backendReplicas * max-active-connections`，仍需结合 Provider 限流评估。
+
 ## 日志和审计
 
 运行日志：
 
 - 输出到 stdout，交由容器日志系统采集。
 - 用于排障、错误率分析和 traceId 串联。
-- 默认保留 90 天，由 `hify.jobs.runtime-log-retention-days` 控制；超过周期归档到对象存储或日志平台冷存储。
+- 默认保留 90 天，由 `hify.jobs.runtime-log-retention-days` 控制；超过周期先批量归档到 `t_ops_log_archive`，再清理原表，避免大事务和不可追踪删除。
 
 审计日志：
 
 - 落 MySQL `t_audit_log`，与运行日志分开管理。
 - 用于追踪权限变更、Provider 修改、MCP 修改、Workflow 发布、版本恢复等高风险操作。
-- 默认保留 180 天，由 `hify.jobs.audit-log-retention-days` 控制；生产合规要求更长时，使用归档表或离线仓库。
+- 默认保留 180 天，由 `hify.jobs.audit-log-retention-days` 控制；归档任务会写入脱敏快照，生产合规要求更长时再同步到离线仓库。
+
+归档参数：
+
+- `hify.jobs.archive-enabled`：是否启用本地归档，默认 `true`。
+- `hify.jobs.archive-batch-size`：单次每表归档批大小，默认 `500`，高峰期不建议调大。
+- `hify.jobs.archive-retention-days`：归档表规划保留天数，默认 `365`。
 
 敏感字段：
 

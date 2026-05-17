@@ -77,10 +77,12 @@ location /api/ {
 
 - `/api/v1/health` 必须检查 MySQL、Redis、pgvector，所有依赖 UP 才返回整体 UP。
 - K8s liveness 使用 `/api/v1/health/liveness`，readiness 使用 `/api/v1/health/readiness`，deep health 只供人工排障。
+- readiness 需要纳入后台任务队列饱和状态；deep health 需要展示 SSE 活跃连接、日志归档状态、任务队列细节和 Provider 汇总。
 - `/actuator/prometheus` 暴露 Micrometer 指标，指标统一使用 `hify_` 前缀。
 - Grafana Dashboard 至少覆盖请求量、错误率、SSE 连接数、LLM token、RAG 延迟、MCP 调用、Workflow run、Hikari 连接池。
 - JSON 日志输出到 stdout，由 K8s 日志采集系统收集。
 - 同一请求链路必须共享 traceId；对话、LLM、MCP、工作流异常都必须带 traceId。
 - 运行日志和审计日志分开治理：运行日志走容器日志系统，审计日志落 `t_audit_log`；保留周期、归档和敏感字段脱敏策略见运维手册。
+- 1000 人本地部署必须配置 `HIFY_CONVERSATION_SSE_MAX_ACTIVE_CONNECTIONS`、归档批大小和日志保留周期，避免长连接和维护 Job 无上限增长。
 
 ---

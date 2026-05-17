@@ -14,6 +14,9 @@ public class AppMaintenanceProperties {
     private int runtimeLogRetentionDays = 90;
     private int auditLogRetentionDays = 180;
     private int jobLogRetentionDays = 30;
+    private boolean archiveEnabled = true;
+    private int archiveBatchSize = 500;
+    private int archiveRetentionDays = 365;
     private int knowledgeProcessingTimeoutMinutes = 60;
     private int workflowRunTimeoutGraceMinutes = 0;
 }

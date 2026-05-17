@@ -43,4 +43,46 @@ class InMemoryTaskQueueTest {
                 .isInstanceOf(TaskRejectedException.class);
         executor.shutdownNow();
     }
+
+    @Test
+    void should_reportQueueStatus_when_tasksAreSubmittedAndRejected() throws Exception {
+        AtomicBoolean executed = new AtomicBoolean(false);
+        ThreadPoolExecutor executor = TaskExecutors.fixed("test-task-%d", 1, 1);
+        InMemoryTaskQueue queue = new InMemoryTaskQueue("knowledge", executor, 1);
+
+        queue.submit(TaskRequest.builder()
+                .taskType(TaskType.KNOWLEDGE_PROCESS)
+                .taskId("doc-1")
+                .task(() -> executed.set(true))
+                .build());
+
+        executor.shutdown();
+        assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+        TaskQueueStatus status = queue.status();
+        assertThat(status.name()).isEqualTo("knowledge");
+        assertThat(status.maxPending()).isEqualTo(1);
+        assertThat(status.submittedCount()).isEqualTo(1);
+        assertThat(status.completedCount()).isEqualTo(1);
+        assertThat(status.rejectedCount()).isZero();
+        assertThat(status.saturated()).isFalse();
+    }
+
+    @Test
+    void should_incrementRejectedCount_when_queueIsFull() {
+        ThreadPoolExecutor executor = TaskExecutors.fixed("test-task-%d", 1, 1);
+        InMemoryTaskQueue queue = new InMemoryTaskQueue("workflow", executor, 0);
+
+        assertThatThrownBy(() -> queue.submit(TaskRequest.builder()
+                .taskType(TaskType.WORKFLOW_RUN)
+                .taskId("workflow-2")
+                .task(() -> {
+                })
+                .build()))
+                .isInstanceOf(TaskRejectedException.class);
+
+        assertThat(queue.status().rejectedCount()).isEqualTo(1);
+        assertThat(queue.status().saturated()).isTrue();
+        executor.shutdownNow();
+    }
 }

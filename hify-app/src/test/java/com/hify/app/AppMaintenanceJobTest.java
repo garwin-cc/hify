@@ -62,6 +62,35 @@ class AppMaintenanceJobTest extends HifyMockIntegrationTest {
     }
 
     @Test
+    void should_archiveRuntimeLogsBeforeCleanup() {
+        jdbcTemplate.update("""
+                INSERT INTO t_llm_call_stat
+                (id, trace_id, provider_id, provider_type, model_config_id, model_id, call_type, success,
+                 input_tokens, output_tokens, latency_ms, created_at, updated_at, deleted)
+                VALUES (9401, 'trace-archive', 1, 'OPENAI', 1, 'gpt-4o', 'CHAT', 1, 10, 12, 100, ?, ?, 0)
+                """, LocalDateTime.now().minusDays(120), LocalDateTime.now().minusDays(120));
+
+        int affected = appMaintenanceJob.cleanupRuntimeLogs();
+
+        Integer sourceCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM t_llm_call_stat WHERE id = 9401",
+                Integer.class);
+        Integer archiveCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM t_ops_log_archive
+                WHERE archive_type = 'RUNTIME_LOG' AND source_table = 't_llm_call_stat' AND source_id = 9401
+                """, Integer.class);
+        String payload = jdbcTemplate.queryForObject("""
+                SELECT payload_json FROM t_ops_log_archive
+                WHERE archive_type = 'RUNTIME_LOG' AND source_table = 't_llm_call_stat' AND source_id = 9401
+                """, String.class);
+
+        assertThat(affected).isEqualTo(1);
+        assertThat(sourceCount).isZero();
+        assertThat(archiveCount).isEqualTo(1);
+        assertThat(payload).contains("trace-archive");
+    }
+
+    @Test
     void should_markTimedOutKnowledgeDocumentsFailedAndRecordJobLog() {
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS t_knowledge_document (

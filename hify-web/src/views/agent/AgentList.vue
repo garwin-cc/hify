@@ -107,8 +107,9 @@
         ref="formRef"
         :model="form"
         :rules="rules"
-        label-width="110px"
+        label-width="150px"
         label-position="right"
+        class="agent-form"
       >
         <el-tabs v-model="activeTab" class="agent-tabs">
 
@@ -695,6 +696,20 @@ async function handleDelete(row: AgentListItem) {
 
 .agent-tabs :deep(.el-tabs__content) {
   padding-top: 16px;
+}
+
+.agent-form :deep(.el-form-item__label) {
+  align-items: center;
+  display: inline-flex;
+  justify-content: flex-end;
+  line-height: 1.3;
+  min-height: 32px;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.agent-form :deep(.el-form-item__content) {
+  min-width: 0;
 }
 
 /* Tool checkbox list */

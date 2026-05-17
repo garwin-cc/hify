@@ -164,49 +164,51 @@
         </template>
 
         <template #actions="{ row }">
-          <el-button
-            v-if="row.status === 'DONE'"
-            size="small"
-            @click="handleViewChunks(row)"
-          >
-            查看分块
-          </el-button>
-          <el-button
-            v-if="row.status === 'DONE'"
-            size="small"
-            type="primary"
-            text
-            @click="handleRevectorize(row)"
-          >
-            重向量化
-          </el-button>
-          <el-button
-            v-if="row.status === 'FAILED' || row.status === 'CANCELED'"
-            size="small"
-            type="primary"
-            text
-            :disabled="row.status === 'FAILED' && row.retryable !== 1"
-            @click="handleRetry(row)"
-          >
-            重试
-          </el-button>
-          <el-button
-            v-if="row.status === 'PENDING' || row.status === 'PROCESSING'"
-            size="small"
-            type="warning"
-            text
-            @click="handleCancel(row)"
-          >
-            取消
-          </el-button>
-          <el-button
-            size="small"
-            type="danger"
-            text
-            @click="handleDelete(row)"
-          >
-            删除
-          </el-button>
+          <div class="document-actions">
+            <el-button
+              v-if="row.status === 'DONE'"
+              size="small"
+              @click="handleViewChunks(row)"
+            >
+              查看分块
+            </el-button>
+            <el-button
+              v-if="row.status === 'DONE'"
+              size="small"
+              type="primary"
+              plain
+              @click="handleRevectorize(row)"
+            >
+              重向量化
+            </el-button>
+            <el-button
+              v-if="row.status === 'FAILED' || row.status === 'CANCELED'"
+              size="small"
+              type="primary"
+              plain
+              :disabled="row.status === 'FAILED' && row.retryable !== 1"
+              @click="handleRetry(row)"
+            >
+              重试
+            </el-button>
+            <el-button
+              v-if="row.status === 'PENDING' || row.status === 'PROCESSING'"
+              size="small"
+              type="warning"
+              plain
+              @click="handleCancel(row)"
+            >
+              取消
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              @click="handleDelete(row)"
+            >
+              删除
+            </el-button>
+          </div>
         </template>
       </HifyTable>
     </div>
@@ -358,7 +360,7 @@ const columns = computed<HifyColumn[]>(() => [
   ...(!isNarrow.value ? [
     { label: '创建时间', slot: 'createdAt', width: '120' } as HifyColumn,
   ] : []),
-  { label: '操作', slot: 'actions', width: '170', align: 'right' },
+  { label: '操作', slot: 'actions', width: isNarrow.value ? '150' : '280', align: 'right' },
 ])
 
 function goBack() {
@@ -800,6 +802,18 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: var(--text-tertiary);
   line-height: 1;
+}
+
+.document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.document-actions :deep(.el-button) {
+  margin-left: 0;
 }
 
 .chunk-list {

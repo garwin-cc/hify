@@ -2,18 +2,20 @@
   <div class="page-content">
     <PageHeader title="运营分析" description="查看 Agent、RAG、Workflow、MCP 和模型调用的轻量运营指标">
       <template #actions>
-        <el-select v-model="selectedProjectId" placeholder="全部项目" clearable class="project-select">
-          <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
-        </el-select>
-        <el-date-picker
-          v-model="range"
-          type="datetimerange"
-          start-placeholder="开始时间"
-          end-placeholder="结束时间"
-          value-format="YYYY-MM-DDTHH:mm:ss"
-          class="range-picker"
-        />
-        <el-button :loading="loading" @click="loadOverview">刷新</el-button>
+        <div class="analytics-actions">
+          <el-select v-model="selectedProjectId" placeholder="全部项目" clearable class="project-select">
+            <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
+          </el-select>
+          <el-date-picker
+            v-model="range"
+            type="datetimerange"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            class="range-picker"
+          />
+          <el-button :loading="loading" @click="loadOverview">刷新</el-button>
+        </div>
       </template>
     </PageHeader>
 
@@ -226,19 +228,30 @@ function percent(value: number) {
 </script>
 
 <style scoped>
+.analytics-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 100%;
+}
+
 .project-select {
   width: 180px;
+  flex: 0 0 180px;
 }
 
 .range-picker {
   width: 360px;
+  flex: 0 0 360px;
 }
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+  align-items: stretch;
 }
 
 .metric-card {
@@ -246,6 +259,7 @@ function percent(value: number) {
   flex-direction: column;
   gap: 8px;
   min-height: 116px;
+  min-width: 0;
 }
 
 .metric-card__label {
@@ -267,9 +281,16 @@ function percent(value: number) {
 
 .analytics-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(480px, 1fr));
   gap: 16px;
   margin-bottom: 16px;
+  align-items: start;
+}
+
+.analytics-grid > .hify-card,
+.page-content > .hify-card {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .rate-text {
@@ -280,13 +301,18 @@ function percent(value: number) {
 }
 
 @media (max-width: 1180px) {
-  .metric-grid,
   .analytics-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 720px) {
+  .analytics-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
   .metric-grid,
   .analytics-grid {
     grid-template-columns: 1fr;
@@ -295,6 +321,7 @@ function percent(value: number) {
   .range-picker,
   .project-select {
     width: 100%;
+    flex-basis: auto;
   }
 }
 </style>

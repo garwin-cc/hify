@@ -15,14 +15,28 @@
             <el-option
               v-for="project in projectStore.projects"
               :key="project.id"
-              :label="`${project.name}（${project.code}）`"
+              :label="project.name"
               :value="project.id"
             />
           </el-select>
           <el-button v-if="auth.isAdmin" type="primary" @click="openCreateDialog">新建项目</el-button>
         </div>
         <div class="project-panel__actions">
-          <el-input-number v-model="newMember.userId" :min="1" controls-position="right" placeholder="用户 ID" />
+          <el-select
+            v-model="newMember.userId"
+            filterable
+            clearable
+            placeholder="选择用户"
+            :loading="loadingUsers"
+            style="width: 220px"
+          >
+            <el-option
+              v-for="user in availableUsers"
+              :key="user.id"
+              :label="user.displayName ? `${user.displayName}（${user.username}）` : user.username"
+              :value="user.id"
+            />
+          </el-select>
           <el-select v-model="newMember.role" style="width: 150px">
             <el-option v-for="role in projectRoles" :key="role" :label="role" :value="role" />
           </el-select>
@@ -60,12 +74,6 @@
         <el-form-item label="项目名称" prop="name">
           <el-input v-model.trim="createForm.name" maxlength="50" show-word-limit />
         </el-form-item>
-        <el-form-item label="项目编码" prop="code">
-          <el-input v-model.trim="createForm.code" maxlength="50" show-word-limit />
-        </el-form-item>
-        <el-form-item label="工作空间 ID" prop="workspaceId">
-          <el-input-number v-model="createForm.workspaceId" :min="1" controls-position="right" style="width: 100%" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createDialogVisible = false">取消</el-button>
@@ -76,9 +84,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { getUserList, type UserInfo } from '@/api/auth'
 import {
   addProjectMember,
   createProject,
@@ -97,30 +106,33 @@ const auth = useAuthStore()
 const projectStore = useProjectStore()
 const selectedProjectId = ref<number | null>(projectStore.currentProjectId)
 const members = ref<ProjectMember[]>([])
+const users = ref<UserInfo[]>([])
 const loadingMembers = ref(false)
+const loadingUsers = ref(false)
 const submitting = ref(false)
 const creating = ref(false)
 const createDialogVisible = ref(false)
 const createFormRef = ref<FormInstance>()
 const newMember = reactive({
-  userId: 1,
+  userId: null as number | null,
   role: 'VIEWER' as ProjectRole,
 })
 const createForm = reactive({
-  workspaceId: 1,
   name: '',
-  code: '',
 })
 const createRules: FormRules = {
   name: [{ required: true, message: '请输入项目名称', trigger: 'blur' }],
-  code: [
-    { required: true, message: '请输入项目编码', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_-]+$/, message: '项目编码只能包含字母、数字、下划线和短横线', trigger: 'blur' },
-  ],
 }
+const availableUsers = computed(() => {
+  const memberUserIds = new Set(members.value.map((member) => member.userId))
+  return users.value.filter((user) => user.status === 'ACTIVE' && !memberUserIds.has(user.id))
+})
 
 onMounted(async () => {
-  await projectStore.loadProjects().catch(() => null)
+  await Promise.all([
+    projectStore.loadProjects().catch(() => null),
+    loadUsers(),
+  ])
   if (!selectedProjectId.value) {
     selectedProjectId.value = projectStore.currentProjectId
   }
@@ -145,10 +157,18 @@ async function loadMembers() {
   }
 }
 
+async function loadUsers() {
+  loadingUsers.value = true
+  try {
+    const page = await getUserList(1, 200)
+    users.value = page.records ?? []
+  } finally {
+    loadingUsers.value = false
+  }
+}
+
 function openCreateDialog() {
-  createForm.workspaceId = 1
   createForm.name = ''
-  createForm.code = ''
   createDialogVisible.value = true
 }
 
@@ -157,9 +177,8 @@ async function handleCreateProject() {
   creating.value = true
   try {
     const project = await createProject({
-      workspaceId: createForm.workspaceId,
       name: createForm.name,
-      code: createForm.code,
+      code: generateProjectCode(createForm.name),
     })
     notifySuccess('项目已创建')
     createDialogVisible.value = false
@@ -172,12 +191,23 @@ async function handleCreateProject() {
   }
 }
 
+function generateProjectCode(name: string) {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  const prefix = normalized || 'project'
+  return `${prefix.slice(0, 32)}-${Date.now().toString(36)}`.slice(0, 50)
+}
+
 async function handleAddMember() {
-  if (!selectedProjectId.value) return
+  if (!selectedProjectId.value || !newMember.userId) return
   submitting.value = true
   try {
     await addProjectMember(selectedProjectId.value, newMember.userId, newMember.role)
     notifySuccess('成员已添加')
+    newMember.userId = null
     await loadMembers()
   } finally {
     submitting.value = false

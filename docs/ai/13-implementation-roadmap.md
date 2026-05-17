@@ -76,6 +76,7 @@
 目标：文档处理链路必须可控、可恢复、可解释。
 
 - 已有 `error_code`、`error_message`、`failed_stage`、`retryable`、`process_stage`、`cancel_requested` 等字段时，先检查状态流转和前端展示是否闭环。
+- 2026-05-17 已跑通现有知识库可靠性单测：`mvn -pl hify-knowledge test`。真实大文件和浏览器 smoke test 仍作为专项验收项。
 - 失败重试时先清理旧 chunk 再重新处理，防止脏向量被检索。
 - 取消以数据库 `cancel_requested` 为事实来源，处理循环在解析、切片、embedding batch、保存前后检查，内存标志只能做加速。
 - 单文件大小、最大分块数、embedding 批次、并发任务数均加上限保护。
@@ -87,6 +88,7 @@
 
 - traceId 贯穿：用户消息入库 → RAG 检索 → MCP 工具调用 → LLM 请求 → SSE 输出 → assistant 消息落库，跨线程通过 `TraceContext.wrap` 传播
 - `t_conversation_trace` 只保存索引字段和概要状态；RAG 命中、MCP 调用、LLM 请求明细继续放子表或审计表。
+- 2026-05-17 已补齐 RAG trace 详情的知识库名称回填，并修正集成测试 H2 mock schema 中 `t_conversation_trace.project_id` 缺失问题。
 - SSE 断开区分用户主动断开 / 模型调用失败 / 后端异常 / 超时，assistant 消息进入确定状态（DONE / ERROR / PARTIAL）
 - 前端对话详情页展示 Trace 信息，不暴露 API Key 和敏感工具返回
 
@@ -95,6 +97,7 @@
 目标：任意失败的工作流运行都能定位失败节点，节点输入输出可查。
 
 - 确保异常路径下 `t_workflow_node_run` 的 `input_snapshot` 和 `outputs` 均已写入。
+- 2026-05-17 已补齐 Workflow node/run 快照落库前脱敏，`input_snapshot`、`outputs`、`context_snapshot` 不保存 `apiKey`、`token`、`secret` 等敏感明文。
 - 前端运行详情页展示节点执行顺序、状态、耗时、输入输出、失败错误
 - 前端补充失败重跑入口（接口已有）
 - HUMAN_REVIEW / CODE_TASK / API_CALL 节点的外部调用耗时和失败原因写入 `WorkflowCallTrace`

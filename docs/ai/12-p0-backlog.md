@@ -247,6 +247,16 @@ P0 不追求功能数量，而追求稳定、可解释、可恢复。
 
 以下清单用于每次声明 Stage 2 稳定闭环完成前的专项验收。自动化测试优先覆盖可重复的状态转换、trace 记录和脱敏逻辑；文件大小、长连接断开、真实浏览器交互等场景可作为集成测试或人工 smoke test。
 
+### 2026-05-17 已完成更新
+
+- 已补充本文件的 P0 验收执行清单，后续 Stage 2 收尾按 RAG、对话可观测、Workflow 排障、Agent 摘要记忆、脱敏安全五类逐项验收。
+- 已验证现有 RAG 可靠性单测覆盖通过：`mvn -pl hify-knowledge test`。
+- 已补齐对话 trace 详情的 RAG 知识库名称回填：当 `t_conversation_rag_trace` 只保存 `knowledge_base_id` 且 `knowledge_base_name` 为空时，详情接口通过 `KnowledgeService` 解析名称，并增加单测覆盖。
+- 已补齐 Workflow node/run 快照落库前脱敏：`input_snapshot`、`outputs`、`context_snapshot` 写入前统一经过 `WorkflowSnapshotSanitizer`，并增加敏感字段不落明文的单测覆盖。
+- 已修正 app 集成测试 H2 mock schema，使 `t_conversation_trace.project_id` 与生产迁移保持一致，避免对话 trace 落库在集成测试中被字段缺失异常吞掉。
+- 已通过验证：`mvn -pl hify-workflow test`、`mvn -pl hify-conversation test`、`mvn -pl hify-knowledge test`、`mvn -pl hify-app -am test`、`mvn -pl hify-app -am -Dtest=ChatControllerIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false test`、`npm run build --prefix hify-web`。
+- 待后续专项验收：真实 200MB 内大文件处理、SSE 客户端断开/超时、前端浏览器人工 smoke test。
+
 ### 1. RAG 任务可靠性
 
 - 上传支持格式的正常文档后，文档状态最终进入 `DONE`，`chunk_count` 和知识库 `chunk_count` 一致。

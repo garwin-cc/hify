@@ -90,10 +90,14 @@
                   size="small"
                   class="model-type-select"
                   :loading="updatingModelTypeIds.has(m.id)"
-                  @change="(value: 'CHAT' | 'EMBEDDING') => handleUpdateModelType(m, value)"
+                  @change="(value: ModelType) => handleUpdateModelType(m, value)"
                 >
-                  <el-option label="对话" value="CHAT" />
-                  <el-option label="向量" value="EMBEDDING" />
+                  <el-option
+                    v-for="option in MODEL_TYPE_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
                 </el-select>
               </div>
             </div>
@@ -228,8 +232,12 @@
         </el-form-item>
         <el-form-item label="模型用途" prop="modelType">
           <el-select v-model="modelForm.modelType" style="width: 100%">
-            <el-option label="对话" value="CHAT" />
-            <el-option label="向量" value="EMBEDDING" />
+            <el-option
+              v-for="option in MODEL_TYPE_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="上下文长度">
@@ -310,6 +318,14 @@ const HEALTH_LABEL: Record<string, string> = {
   UNKNOWN:  '未知',
 }
 
+type ModelType = ModelConfig['modelType']
+
+const MODEL_TYPE_OPTIONS: Array<{ label: string; value: ModelType; successMessage: string }> = [
+  { label: '对话', value: 'CHAT', successMessage: '已标记为对话模型' },
+  { label: '向量', value: 'EMBEDDING', successMessage: '已标记为向量模型' },
+  { label: '重排', value: 'RERANK', successMessage: '已标记为重排模型' },
+]
+
 // ── 工具方法 ──────────────────────────────────────────────────────────
 
 function healthTagType(status: string | null): 'success' | 'danger' | 'warning' | 'info' {
@@ -372,13 +388,13 @@ async function handleTestConnection(row: ProviderListItem) {
   }
 }
 
-async function handleUpdateModelType(model: ModelConfig, modelType: 'CHAT' | 'EMBEDDING') {
+async function handleUpdateModelType(model: ModelConfig, modelType: ModelType) {
   if ((model.modelType ?? 'CHAT') === modelType) return
 
   updatingModelTypeIds.add(model.id)
   try {
     await updateModelConfigType(model.id, modelType)
-    notifySuccess(modelType === 'EMBEDDING' ? '已标记为向量模型' : '已标记为对话模型')
+    notifySuccess(MODEL_TYPE_OPTIONS.find(option => option.value === modelType)?.successMessage ?? '模型用途已更新')
     tableRef.value?.load()
   } catch {
     // request interceptor has shown the error message
@@ -397,7 +413,7 @@ const selectedProvider = ref<ProviderListItem | null>(null)
 const modelForm = reactive({
   name: '',
   modelId: '',
-  modelType: 'CHAT' as 'CHAT' | 'EMBEDDING',
+  modelType: 'CHAT' as ModelType,
   contextSize: 8192,
 })
 

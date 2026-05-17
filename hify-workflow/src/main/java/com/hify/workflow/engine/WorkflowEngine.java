@@ -21,6 +21,8 @@ import com.hify.workflow.domain.config.NodeConfigParser;
 import com.hify.workflow.engine.executor.ConditionNodeConfig;
 import com.hify.workflow.engine.executor.EndNodeConfig;
 import com.hify.workflow.engine.executor.HumanReviewConfig;
+import com.hify.workflow.engine.executor.IterationConfig;
+import com.hify.workflow.engine.executor.IterationEndConfig;
 import com.hify.workflow.engine.executor.NodeExecutorRegistry;
 import com.hify.workflow.infra.WorkflowEdgeMapper;
 import com.hify.workflow.infra.WorkflowNodeMapper;
@@ -33,6 +35,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.lang.reflect.Array;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -181,7 +186,9 @@ public class WorkflowEngine {
                         ctx.clearCurrentNodeRun();
                         return null;
                     }
-                    if (!"START".equalsIgnoreCase(current.getNodeType())) {
+                    if ("ITERATION".equalsIgnoreCase(current.getNodeType())) {
+                        executeIterationNode(workflowRun, current, nodeMap, edgeMap, ctx);
+                    } else if (!"START".equalsIgnoreCase(current.getNodeType())) {
                         executeNodeWithPolicy(current, ctx, runtimePolicy, nodeRun);
                     }
                     checkTimeout(workflowRun);
@@ -242,6 +249,151 @@ public class WorkflowEngine {
                 Map.of("nodeType", node.getNodeType(),
                         "reply", reply == null ? "" : reply,
                         "elapsedMs", elapsed(nodeStartedAt)));
+    }
+
+    private void executeIterationNode(WorkflowRunPo workflowRun, WorkflowNodePo iterationNode,
+                                      Map<String, WorkflowNodePo> nodeMap,
+                                      Map<String, List<WorkflowEdgePo>> edgeMap,
+                                      ExecutionContext parentCtx) {
+        IterationConfig config = (IterationConfig) nodeConfigParser.parseExecutionConfig(
+                iterationNode.getNodeType(), iterationNode.getConfig());
+        validateIterationConfig(iterationNode, config);
+        Object input = parentCtx.snapshot().get(config.inputArrayVariable());
+        List<?> items = toIterationItems(iterationNode, input);
+        int maxItems = config.maxItems() == null ? 100 : config.maxItems();
+        if (maxItems <= 0) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                    "ITERATION maxItems 必须大于 0: nodeKey=" + iterationNode.getNodeKey());
+        }
+        if (items.size() > maxItems) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                    "ITERATION 输入数组超过 maxItems: nodeKey=" + iterationNode.getNodeKey());
+        }
+
+        List<Object> results = new ArrayList<>();
+        String itemVariable = StringUtils.hasText(config.itemVariable()) ? config.itemVariable() : "item";
+        for (int index = 0; index < items.size(); index++) {
+            checkTimeout(workflowRun);
+            ExecutionContext childCtx = new ExecutionContext(workflowRun.getId(),
+                    new LinkedHashMap<>(parentCtx.snapshot()));
+            childCtx.set(iterationNode.getNodeKey(), itemVariable, items.get(index));
+            childCtx.set(iterationNode.getNodeKey(), "index", index);
+            Object itemResult = executeIterationSubflow(workflowRun, iterationNode, config.subflowStartNodeKey(),
+                    nodeMap, edgeMap, childCtx, index);
+            results.add(itemResult);
+        }
+        String outputVariable = StringUtils.hasText(config.outputVariable()) ? config.outputVariable() : "results";
+        parentCtx.set(iterationNode.getNodeKey(), outputVariable, results);
+    }
+
+    private Object executeIterationSubflow(WorkflowRunPo workflowRun, WorkflowNodePo iterationNode, String startNodeKey,
+                                           Map<String, WorkflowNodePo> nodeMap,
+                                           Map<String, List<WorkflowEdgePo>> edgeMap,
+                                           ExecutionContext childCtx, int iterationIndex) {
+        String currentKey = startNodeKey;
+        int steps = 0;
+        while (StringUtils.hasText(currentKey)) {
+            if (++steps > MAX_STEPS) {
+                throw new BizException(ErrorCode.WORKFLOW_EXECUTE_FAILED,
+                        "ITERATION 子流程执行步数超过 " + MAX_STEPS + ": nodeKey=" + iterationNode.getNodeKey());
+            }
+            checkTimeout(workflowRun);
+            WorkflowNodePo current = nodeMap.get(currentKey);
+            if (current == null) {
+                throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID, "ITERATION 子流程目标节点不存在: " + currentKey);
+            }
+            if ("ITERATION".equalsIgnoreCase(current.getNodeType())) {
+                throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                        "ITERATION 子流程暂不支持嵌套 ITERATION: nodeKey=" + current.getNodeKey());
+            }
+            if ("START".equalsIgnoreCase(current.getNodeType())
+                    || "END".equalsIgnoreCase(current.getNodeType())
+                    || "HUMAN_REVIEW".equalsIgnoreCase(current.getNodeType())) {
+                throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                        "ITERATION 子流程暂不支持节点类型: " + current.getNodeType());
+            }
+
+            updateWorkflowRunCurrentNode(workflowRun, currentKey);
+            NodeRuntimePolicy runtimePolicy = NodeRuntimePolicy.fromJson(objectMapper, current.getConfig());
+            WorkflowNodeRunPo nodeRun = createNodeRun(workflowRun.getId(), current, runtimePolicy, iterationIndex);
+            captureNodeInput(nodeRun, childCtx);
+            childCtx.bindCurrentNodeRun(nodeRun.getId(), current.getNodeKey(), current.getNodeType(), workflowCallTraceSink);
+            long nodeStartedAt = System.currentTimeMillis();
+            workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_STARTED", currentKey, STATUS_RUNNING,
+                    Map.of("nodeType", current.getNodeType(), "nodeName", current.getName(), "iterationIndex", iterationIndex));
+
+            try {
+                if ("ITERATION_END".equalsIgnoreCase(current.getNodeType())) {
+                    Object result = resolveIterationEndOutput(current, childCtx);
+                    updateNodeRunSuccess(nodeRun, childCtx, nodeStartedAt);
+                    workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_SUCCEEDED", currentKey, STATUS_SUCCESS,
+                            Map.of("nodeType", current.getNodeType(), "elapsedMs", elapsed(nodeStartedAt),
+                                    "iterationIndex", iterationIndex));
+                    return result;
+                }
+                executeNodeWithPolicy(current, childCtx, runtimePolicy, nodeRun);
+                checkTimeout(workflowRun);
+                updateNodeRunSuccess(nodeRun, childCtx, nodeStartedAt);
+                publishReplyEventIfNeeded(workflowRun.getId(), current, childCtx, nodeStartedAt);
+                workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_SUCCEEDED", currentKey, STATUS_SUCCESS,
+                        Map.of("nodeType", current.getNodeType(), "elapsedMs", elapsed(nodeStartedAt),
+                                "iterationIndex", iterationIndex));
+                currentKey = findNext(current, edgeMap, childCtx);
+            } catch (Exception e) {
+                updateNodeRunFailed(nodeRun, childCtx, e, nodeStartedAt);
+                workflowEventPublisher.publishNodeEvent(workflowRun.getId(), "NODE_FAILED", currentKey, STATUS_FAILED,
+                        Map.of("nodeType", current.getNodeType(), "error", shortError(e),
+                                "elapsedMs", elapsed(nodeStartedAt), "iterationIndex", iterationIndex));
+                throw e;
+            } finally {
+                childCtx.clearCurrentNodeRun();
+            }
+        }
+        throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                "ITERATION 子流程未到达 ITERATION_END: nodeKey=" + iterationNode.getNodeKey());
+    }
+
+    private void validateIterationConfig(WorkflowNodePo iterationNode, IterationConfig config) {
+        if (!StringUtils.hasText(config.inputArrayVariable())) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                    "ITERATION inputArrayVariable 不能为空: nodeKey=" + iterationNode.getNodeKey());
+        }
+        if (!StringUtils.hasText(config.subflowStartNodeKey())) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                    "ITERATION subflowStartNodeKey 不能为空: nodeKey=" + iterationNode.getNodeKey());
+        }
+        if (config.maxConcurrency() != null && config.maxConcurrency() > 1) {
+            throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                    "ITERATION 当前仅支持顺序执行 maxConcurrency=1: nodeKey=" + iterationNode.getNodeKey());
+        }
+    }
+
+    private List<?> toIterationItems(WorkflowNodePo iterationNode, Object input) {
+        if (input instanceof List<?> list) {
+            return list;
+        }
+        if (input instanceof Collection<?> collection) {
+            return new ArrayList<>(collection);
+        }
+        if (input != null && input.getClass().isArray()) {
+            int length = Array.getLength(input);
+            List<Object> values = new ArrayList<>(length);
+            for (int i = 0; i < length; i++) {
+                values.add(Array.get(input, i));
+            }
+            return values;
+        }
+        throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
+                "ITERATION 输入必须是数组: nodeKey=" + iterationNode.getNodeKey());
+    }
+
+    private Object resolveIterationEndOutput(WorkflowNodePo iterationEndNode, ExecutionContext ctx) {
+        IterationEndConfig config = (IterationEndConfig) nodeConfigParser.parseExecutionConfig(
+                iterationEndNode.getNodeType(), iterationEndNode.getConfig());
+        if (!StringUtils.hasText(config.outputVariable())) {
+            return new LinkedHashMap<>(ctx.snapshot());
+        }
+        return ctx.snapshot().get(config.outputVariable());
     }
 
     private List<WorkflowEdgePo> loadEdges(Long workflowId) {
@@ -505,6 +657,11 @@ public class WorkflowEngine {
     }
 
     private WorkflowNodeRunPo createNodeRun(Long workflowRunId, WorkflowNodePo node, NodeRuntimePolicy policy) {
+        return createNodeRun(workflowRunId, node, policy, null);
+    }
+
+    private WorkflowNodeRunPo createNodeRun(Long workflowRunId, WorkflowNodePo node, NodeRuntimePolicy policy,
+                                            Integer iterationIndex) {
         WorkflowNodeRunPo po = new WorkflowNodeRunPo();
         po.setWorkflowRunId(workflowRunId);
         po.setNodeKey(node.getNodeKey());
@@ -514,6 +671,7 @@ public class WorkflowEngine {
         po.setMaxAttempts(policy.maxAttempts());
         po.setTimeoutSeconds(policy.timeoutSeconds());
         po.setFailureStrategy(policy.onFailure());
+        po.setIterationIndex(iterationIndex);
         po.setStartedAt(LocalDateTime.now());
         try {
             workflowNodeRunMapper.insert(po);

@@ -449,6 +449,30 @@
               </el-form-item>
             </template>
 
+            <template v-else-if="selectedNode.nodeType === 'ITERATION'">
+              <el-form-item label="输入数组变量">
+                <el-input v-model="selectedConfig.inputArrayVariable" placeholder="seed.items" />
+              </el-form-item>
+              <el-form-item label="元素变量名">
+                <el-input v-model="selectedConfig.itemVariable" placeholder="item" />
+              </el-form-item>
+              <el-form-item label="子流程入口节点 Key">
+                <el-input v-model="selectedConfig.subflowStartNodeKey" placeholder="item_llm" />
+              </el-form-item>
+              <el-form-item label="输出变量">
+                <el-input v-model="selectedConfig.outputVariable" placeholder="results" />
+              </el-form-item>
+              <el-form-item label="最大处理条数">
+                <el-input-number v-model="selectedConfig.maxItems" :min="1" :max="1000" controls-position="right" />
+              </el-form-item>
+            </template>
+
+            <template v-else-if="selectedNode.nodeType === 'ITERATION_END'">
+              <el-form-item label="收集输出变量">
+                <el-input v-model="selectedConfig.outputVariable" placeholder="item_llm.answer" />
+              </el-form-item>
+            </template>
+
             <template v-else-if="selectedNode.nodeType === 'KNOWLEDGE'">
               <el-form-item label="知识库 ID">
                 <el-input-number v-model="selectedConfig.knowledgeBaseId" :min="1" controls-position="right" />
@@ -825,7 +849,7 @@ import { subscribeSse } from '@/api/sse'
 import { useAuthStore } from '@/stores/auth'
 import { notifySuccess } from '@/utils/notify'
 
-type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'TOOL' | 'REPLY' | 'VARIABLE_ASSIGNER' | 'END'
+type NodeType = 'START' | 'LLM' | 'CONDITION' | 'API_CALL' | 'KNOWLEDGE' | 'HUMAN_REVIEW' | 'CODE_TASK' | 'TOOL' | 'REPLY' | 'VARIABLE_ASSIGNER' | 'ITERATION' | 'ITERATION_END' | 'END'
 type NodeConfig = Record<string, any>
 type ValidationIssue = {
   key: string
@@ -899,6 +923,8 @@ const nodeTypes = [
   { type: 'TOOL' as NodeType, label: '工具', short: 'T', description: '调用 MCP 工具' },
   { type: 'REPLY' as NodeType, label: '中间回复', short: 'R', description: '向用户推送过程内容' },
   { type: 'VARIABLE_ASSIGNER' as NodeType, label: '变量赋值', short: 'V', description: '写入工作流变量' },
+  { type: 'ITERATION' as NodeType, label: '迭代', short: 'I', description: '逐项处理数组' },
+  { type: 'ITERATION_END' as NodeType, label: '迭代结束', short: 'IE', description: '收集单次迭代结果' },
   { type: 'HUMAN_REVIEW' as NodeType, label: '人工审核', short: 'H', description: '暂停等待人工确认' },
   { type: 'CODE_TASK' as NodeType, label: '代码任务', short: 'C', description: '调用 Code Worker 实现' },
   { type: 'END' as NodeType, label: '结束', short: 'E', description: '输出最终结果' },
@@ -1034,7 +1060,7 @@ const canvasSize = computed(() => {
 const availableVariables = computed(() => buildVariableOptions(selectedNode.value?.nodeKey))
 const validationIssues = computed<ValidationIssue[]>(() => buildValidationIssues())
 const canDebugSelectedNode = computed(() =>
-  !!selectedNode.value && !['START', 'END'].includes(selectedNode.value.nodeType),
+  !!selectedNode.value && !['START', 'END', 'ITERATION', 'ITERATION_END'].includes(selectedNode.value.nodeType),
 )
 
 function copyConfig<T>(config: T): T {
@@ -1143,7 +1169,17 @@ function buildVariableOptions(currentNodeKey?: string) {
         options.push({ label: key, value: `{{${key}}}` })
       })
     }
-    if (typeof config.outputVariable === 'string' && config.outputVariable.trim()) {
+    if (node.nodeType === 'ITERATION') {
+      const itemVariable = String(config.itemVariable ?? 'item').trim() || 'item'
+      const outputVariable = String(config.outputVariable ?? 'results').trim() || 'results'
+      const itemKey = `${node.nodeKey}.${itemVariable}`
+      const indexKey = `${node.nodeKey}.index`
+      const outputKey = `${node.nodeKey}.${outputVariable}`
+      options.push({ label: itemKey, value: `{{${itemKey}}}` })
+      options.push({ label: indexKey, value: `{{${indexKey}}}` })
+      options.push({ label: outputKey, value: `{{${outputKey}}}` })
+    }
+    if (node.nodeType !== 'ITERATION' && typeof config.outputVariable === 'string' && config.outputVariable.trim()) {
       const key = `${node.nodeKey}.${config.outputVariable.trim()}`
       options.push({ label: key, value: `{{${key}}}` })
     }
@@ -1302,6 +1338,31 @@ function buildValidationIssues(): ValidationIssue[] {
         issues.push({ key: `assignments-json-${node.nodeKey}`, level: 'error', message: `变量赋值节点「${node.name}」的变量赋值 JSON 不合法`, nodeKey: node.nodeKey })
       }
     }
+    if (node.nodeType === 'ITERATION') {
+      const variablePattern = /^[A-Za-z_][A-Za-z0-9_]*$/
+      if (!String(config.inputArrayVariable ?? '').trim()) {
+        issues.push({ key: `iteration-input-${node.nodeKey}`, level: 'error', message: `迭代节点「${node.name}」缺少输入数组变量`, nodeKey: node.nodeKey })
+      }
+      if (!String(config.subflowStartNodeKey ?? '').trim()) {
+        issues.push({ key: `iteration-start-${node.nodeKey}`, level: 'error', message: `迭代节点「${node.name}」缺少子流程入口节点`, nodeKey: node.nodeKey })
+      } else if (!nodes.some((item) => item.nodeKey === config.subflowStartNodeKey)) {
+        issues.push({ key: `iteration-start-missing-${node.nodeKey}`, level: 'error', message: `迭代节点「${node.name}」的子流程入口不存在`, nodeKey: node.nodeKey })
+      }
+      if (!variablePattern.test(String(config.itemVariable ?? 'item'))) {
+        issues.push({ key: `iteration-item-${node.nodeKey}`, level: 'error', message: `迭代节点「${node.name}」元素变量名不合法`, nodeKey: node.nodeKey })
+      }
+      if (!String(config.outputVariable ?? '').trim()) {
+        issues.push({ key: `iteration-output-${node.nodeKey}`, level: 'error', message: `迭代节点「${node.name}」缺少输出变量`, nodeKey: node.nodeKey })
+      }
+      if (Number(config.maxConcurrency ?? 1) > 1) {
+        issues.push({ key: `iteration-concurrency-${node.nodeKey}`, level: 'error', message: `迭代节点「${node.name}」当前仅支持顺序执行`, nodeKey: node.nodeKey })
+      }
+    }
+    if (node.nodeType === 'ITERATION_END') {
+      if (!String(config.outputVariable ?? '').trim()) {
+        issues.push({ key: `iteration-end-output-${node.nodeKey}`, level: 'error', message: `迭代结束节点「${node.name}」缺少收集输出变量`, nodeKey: node.nodeKey })
+      }
+    }
     if (node.nodeType === 'CODE_TASK') {
       if (!String(config.task ?? '').trim()) {
         issues.push({ key: `code-task-${node.nodeKey}`, level: 'error', message: `代码任务节点「${node.name}」缺少任务描述`, nodeKey: node.nodeKey })
@@ -1362,6 +1423,8 @@ function defaultConfig(type: NodeType): NodeConfig {
   if (type === 'TOOL') return { mcpServerId: undefined, toolName: '', inputMappingText: '{\n  "query": "{{start.userMessage}}"\n}', outputVariable: 'result' }
   if (type === 'REPLY') return { content: '正在处理：{{start.userMessage}}' }
   if (type === 'VARIABLE_ASSIGNER') return { assignmentsText: '{\n  "summary": "{{start.userMessage}}"\n}' }
+  if (type === 'ITERATION') return { inputArrayVariable: '', itemVariable: 'item', subflowStartNodeKey: '', outputVariable: 'results', maxConcurrency: 1, maxItems: 100 }
+  if (type === 'ITERATION_END') return { outputVariable: '' }
   if (type === 'END') return { outputVariable: '' }
   return {}
 }
@@ -1533,6 +1596,10 @@ function insertVariable(value: string) {
     config.content = `${config.content ?? ''}${value}`
   } else if (selectedNode.value.nodeType === 'VARIABLE_ASSIGNER') {
     config.assignmentsText = `${config.assignmentsText ?? ''}${value}`
+  } else if (selectedNode.value.nodeType === 'ITERATION') {
+    config.inputArrayVariable = value.replace(/^\{\{|\}\}$/g, '')
+  } else if (selectedNode.value.nodeType === 'ITERATION_END') {
+    config.outputVariable = value.replace(/^\{\{|\}\}$/g, '')
   } else if (selectedNode.value.nodeType === 'END') {
     config.outputVariable = value.replace(/^\{\{|\}\}$/g, '')
   }
@@ -2651,6 +2718,11 @@ onBeforeUnmount(() => {
 
 .workflow-node--reply {
   background: #f8fafc;
+}
+
+.workflow-node--iteration,
+.workflow-node--iteration_end {
+  background: #f5fbf7;
 }
 
 .node-actions {

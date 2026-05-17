@@ -560,6 +560,59 @@ class WorkflowEngineTest {
         });
     }
 
+    @Test
+    void executesIterationNodeSequentiallyAndCollectsSubflowResults() {
+        nodeMapper = selectListMapper(WorkflowNodeMapper.class, List.of(
+                node("start", "START", "{}"),
+                node("seed", "LLM", "{\"outputVariable\":\"items\"}"),
+                node("iterate", "ITERATION", """
+                        {
+                          "inputArrayVariable": "seed.items",
+                          "itemVariable": "item",
+                          "subflowStartNodeKey": "item_llm",
+                          "outputVariable": "results",
+                          "maxConcurrency": 1,
+                          "maxItems": 10
+                        }
+                        """),
+                node("item_llm", "LLM", "{\"outputVariable\":\"answer\"}"),
+                node("iter_end", "ITERATION_END", "{\"outputVariable\":\"item_llm.answer\"}"),
+                node("end", "END", "{\"outputVariable\":\"iterate.results\"}")
+        ));
+        edgeMapper = selectListMapper(WorkflowEdgeMapper.class, List.of(
+                edge("start", "seed", null, 0),
+                edge("seed", "iterate", null, 0),
+                edge("iterate", "end", null, 0),
+                edge("item_llm", "iter_end", null, 0)
+        ));
+        engine = new WorkflowEngine(
+                nodeMapper,
+                edgeMapper,
+                new NodeConfigParser(new ObjectMapper()),
+                new NodeExecutorRegistry(List.of(new IterationAwareLlmExecutor(), new StubConditionExecutor())),
+                runMapper,
+                nodeRunMapper,
+                versionMapper,
+                new ObjectMapper(),
+                new NoopWorkflowEventPublisher(),
+                reviewHandler);
+
+        String output = engine.execute(10L, "hello");
+
+        assertThat(output).isEqualTo("[answer: a#0, answer: b#1]");
+        assertThat(updatedNodeRuns).anySatisfy(run -> {
+            assertThat(run.getNodeKey()).isEqualTo("iterate");
+            assertThat(run.getStatus()).isEqualTo("SUCCESS");
+            assertThat(run.getOutputs()).contains("\"iterate.results\":[\"answer: a#0\",\"answer: b#1\"]");
+        });
+        assertThat(updatedNodeRuns).anySatisfy(run -> {
+            assertThat(run.getNodeKey()).isEqualTo("item_llm");
+            assertThat(run.getIterationIndex()).isEqualTo(1);
+            assertThat(run.getOutputs()).contains("\"iterate.index\":1");
+            assertThat(run.getOutputs()).contains("\"item_llm.answer\":\"answer: b#1\"");
+        });
+    }
+
     private static WorkflowNodePo node(String key, String type, String config) {
         WorkflowNodePo po = new WorkflowNodePo();
         po.setWorkflowId(10L);
@@ -648,6 +701,27 @@ class WorkflowEngineTest {
         @Override
         public String nodeType() {
             return "CONDITION";
+        }
+    }
+
+    private static class IterationAwareLlmExecutor implements NodeExecutor {
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public void execute(WorkflowNode node, NodeConfigDef config, ExecutionContext ctx) {
+            LlmNodeConfig llmConfig = (LlmNodeConfig) config;
+            if ("seed".equals(node.nodeKey())) {
+                ctx.set(node.nodeKey(), llmConfig.outputVariable(), List.of("a", "b"));
+                return;
+            }
+            Object item = ctx.get("iterate", "item");
+            Object index = ctx.get("iterate", "index");
+            ctx.set(node.nodeKey(), llmConfig.outputVariable(), "answer: " + item + "#" + index);
+        }
+
+        @Override
+        public String nodeType() {
+            return "LLM";
         }
     }
 

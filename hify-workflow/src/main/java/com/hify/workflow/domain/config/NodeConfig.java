@@ -8,6 +8,8 @@ public sealed interface NodeConfig permits
         ConditionNodeConfig,
         ReplyNodeConfig,
         VariableAssignerNodeConfig,
+        IterationNodeConfig,
+        IterationEndNodeConfig,
         ApiCallNodeConfig,
         KnowledgeNodeConfig,
         HumanReviewNodeConfig,

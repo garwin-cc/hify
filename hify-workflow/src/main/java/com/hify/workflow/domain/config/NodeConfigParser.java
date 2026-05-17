@@ -33,6 +33,8 @@ public class NodeConfigParser {
                 case CODE_TASK -> objectMapper.treeToValue(businessConfig, CodeTaskNodeConfig.class);
                 case REPLY -> objectMapper.treeToValue(businessConfig, ReplyNodeConfig.class);
                 case VARIABLE_ASSIGNER -> objectMapper.treeToValue(businessConfig, VariableAssignerNodeConfig.class);
+                case ITERATION -> objectMapper.treeToValue(businessConfig, IterationNodeConfig.class);
+                case ITERATION_END -> objectMapper.treeToValue(businessConfig, IterationEndNodeConfig.class);
             };
         } catch (JsonProcessingException | IllegalArgumentException e) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,
@@ -86,6 +88,10 @@ public class NodeConfigParser {
                         com.hify.workflow.engine.executor.ReplyConfig.class);
                 case VARIABLE_ASSIGNER -> objectMapper.treeToValue(safeConfig,
                         com.hify.workflow.engine.executor.VariableAssignerConfig.class);
+                case ITERATION -> objectMapper.treeToValue(safeConfig,
+                        com.hify.workflow.engine.executor.IterationConfig.class);
+                case ITERATION_END -> objectMapper.treeToValue(safeConfig,
+                        com.hify.workflow.engine.executor.IterationEndConfig.class);
             };
         } catch (JsonProcessingException | IllegalArgumentException e) {
             throw new BizException(ErrorCode.WORKFLOW_CONFIG_INVALID,

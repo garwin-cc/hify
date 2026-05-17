@@ -213,6 +213,68 @@ class NodeConfigParserTest {
     }
 
     @Test
+    void should_parse_iteration_config_into_typed_records() throws Exception {
+        NodeConfig config = parser.parse("ITERATION", new ObjectMapper().readTree("""
+                {
+                  "inputArrayVariable": "seed.items",
+                  "itemVariable": "item",
+                  "subflowStartNodeKey": "item_llm",
+                  "outputVariable": "results",
+                  "maxConcurrency": 1,
+                  "maxItems": 10
+                }
+                """));
+
+        assertThat(config).isInstanceOf(IterationNodeConfig.class);
+        IterationNodeConfig iteration = (IterationNodeConfig) config;
+        assertThat(iteration.inputArrayVariable()).isEqualTo("seed.items");
+        assertThat(iteration.itemVariable()).isEqualTo("item");
+        assertThat(iteration.subflowStartNodeKey()).isEqualTo("item_llm");
+        assertThat(iteration.outputVariable()).isEqualTo("results");
+
+        com.hify.workflow.engine.NodeConfigDef executionConfig = parser.parseExecutionConfig("ITERATION", """
+                {
+                  "inputArrayVariable": "seed.items",
+                  "itemVariable": "item",
+                  "subflowStartNodeKey": "item_llm",
+                  "outputVariable": "results",
+                  "maxConcurrency": 1,
+                  "maxItems": 10
+                }
+                """);
+
+        assertThat(executionConfig).isInstanceOf(com.hify.workflow.engine.executor.IterationConfig.class);
+        com.hify.workflow.engine.executor.IterationConfig executionIteration =
+                (com.hify.workflow.engine.executor.IterationConfig) executionConfig;
+        assertThat(executionIteration.inputArrayVariable()).isEqualTo("seed.items");
+        assertThat(executionIteration.outputVariable()).isEqualTo("results");
+    }
+
+    @Test
+    void should_parse_iteration_end_execution_config() throws Exception {
+        NodeConfig config = parser.parse("ITERATION_END", new ObjectMapper().readTree("""
+                {
+                  "outputVariable": "item_llm.answer"
+                }
+                """));
+
+        assertThat(config).isInstanceOf(IterationEndNodeConfig.class);
+        IterationEndNodeConfig iterationEnd = (IterationEndNodeConfig) config;
+        assertThat(iterationEnd.outputVariable()).isEqualTo("item_llm.answer");
+
+        com.hify.workflow.engine.NodeConfigDef executionConfig = parser.parseExecutionConfig("ITERATION_END", """
+                {
+                  "outputVariable": "item_llm.answer"
+                }
+                """);
+
+        assertThat(executionConfig).isInstanceOf(com.hify.workflow.engine.executor.IterationEndConfig.class);
+        com.hify.workflow.engine.executor.IterationEndConfig executionIterationEnd =
+                (com.hify.workflow.engine.executor.IterationEndConfig) executionConfig;
+        assertThat(executionIterationEnd.outputVariable()).isEqualTo("item_llm.answer");
+    }
+
+    @Test
     void rejectsUnsupportedNodeType() {
         assertThatThrownBy(() -> parser.parse("UNKNOWN", new ObjectMapper().createObjectNode()))
                 .isInstanceOf(BizException.class)

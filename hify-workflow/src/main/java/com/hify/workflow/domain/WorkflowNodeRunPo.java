@@ -28,6 +28,8 @@ public class WorkflowNodeRunPo extends BaseEntity {
 
     private String failureStrategy;
 
+    private Integer iterationIndex;
+
     private String inputSnapshot;
 
     private LocalDateTime startedAt;

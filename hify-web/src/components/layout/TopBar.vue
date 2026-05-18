@@ -8,45 +8,70 @@
       </el-breadcrumb-item>
     </el-breadcrumb>
 
-    <!-- 右：用户信息 -->
-    <el-dropdown trigger="click" @command="handleCommand">
-      <div class="topbar-user">
-        <span class="topbar-user__name">{{ auth.user?.displayName || auth.user?.username || '-' }}</span>
-        <div class="topbar-user__avatar">{{ avatarText }}</div>
-      </div>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item disabled>{{ auth.role || '-' }}</el-dropdown-item>
-          <el-dropdown-item command="logout">退出登录</el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
+    <div class="topbar-actions">
+      <el-select
+        :model-value="locale"
+        size="small"
+        class="locale-select"
+        :aria-label="t('topbar.language')"
+        @change="handleLocaleChange"
+      >
+        <el-option
+          v-for="option in localeOptions"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value"
+        />
+      </el-select>
+
+      <!-- 右：用户信息 -->
+      <el-dropdown trigger="click" @command="handleCommand">
+        <div class="topbar-user">
+          <span class="topbar-user__name">{{ auth.user?.displayName || auth.user?.username || '-' }}</span>
+          <div class="topbar-user__avatar">{{ avatarText }}</div>
+        </div>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item disabled>{{ auth.role || '-' }}</el-dropdown-item>
+            <el-dropdown-item command="logout">{{ t('topbar.logout') }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
   </header>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
+import { localeOptions, setLocale, type LocaleCode } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const { t, locale } = useI18n()
 
 const crumbMap: Record<string, string> = {
-  '/providers':    '模型管理',
-  '/agents':       'Agent 管理',
-  '/conversation': '对话',
-  '/knowledge':    '知识库',
-  '/workflows':    '工作流',
-  '/mcp':          'MCP 工具',
-  '/users':        '用户管理',
+  '/providers':    'nav.providers',
+  '/agents':       'nav.agents',
+  '/conversation': 'nav.conversation',
+  '/knowledge':    'nav.knowledge',
+  '/workflows':    'nav.workflows',
+  '/mcp':          'nav.tools',
+  '/users':        'nav.users',
+  '/projects':     'nav.projects',
+  '/analytics':    'nav.analytics',
+  '/logs':         'nav.logs',
+  '/audit':        'nav.audit',
+  '/settings':     'nav.settings',
 }
 
 const currentCrumb = computed(() => {
   const matched = Object.keys(crumbMap)
     .find(prefix => route.path === prefix || route.path.startsWith(prefix + '/'))
-  return matched ? crumbMap[matched] : null
+  return matched ? t(crumbMap[matched]) : null
 })
 
 const avatarText = computed(() => (auth.user?.displayName || auth.user?.username || 'H').slice(0, 1).toUpperCase())
@@ -56,6 +81,10 @@ async function handleCommand(command: string) {
     await auth.logout()
     router.push('/login')
   }
+}
+
+function handleLocaleChange(value: LocaleCode) {
+  setLocale(value)
 }
 </script>
 
@@ -96,6 +125,16 @@ async function handleCommand(command: string) {
 }
 
 /* 用户区 */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.locale-select {
+  width: 118px;
+}
+
 .topbar-user {
   display: flex;
   align-items: center;

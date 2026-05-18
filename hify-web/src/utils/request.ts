@@ -2,6 +2,7 @@ import axios, { type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 import { useAuthStore } from '@/stores/auth'
+import { i18n } from '@/i18n'
 
 interface Result<T = unknown> {
   code: number
@@ -29,11 +30,11 @@ instance.interceptors.response.use(
     if (res.code === 200) {
       return res.data as any
     }
-    ElMessage.error(res.message || '请求失败')
+    ElMessage.error(res.message || i18n.global.t('common.requestFailed'))
     return Promise.reject(new Error(res.message))
   },
   (error) => {
-    const msg: string = error.response?.data?.message ?? error.message ?? '网络错误'
+    const msg: string = error.response?.data?.message ?? error.message ?? i18n.global.t('common.networkError')
     if (error.response?.status === 401 || error.response?.data?.code === 401) {
       useAuthStore().clear()
       router.push('/login')

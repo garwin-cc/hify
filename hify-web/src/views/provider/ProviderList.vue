@@ -1,13 +1,13 @@
 <template>
   <div class="page-content">
     <PageHeader
-      title="模型提供商管理"
-      description="接入 OpenAI / Claude / Gemini / Ollama 等 LLM 提供商，统一管理 API 密钥与接入地址"
+      :title="t('provider.title')"
+      :description="t('provider.description')"
     >
       <template #actions>
         <el-button type="primary" @click="handleCreate">
           <el-icon style="margin-right: 4px"><Plus /></el-icon>
-          新增提供商
+          {{ t('provider.addProvider') }}
         </el-button>
       </template>
     </PageHeader>
@@ -19,18 +19,18 @@
         :api="fetchList"
         :show-pagination="false"
         :row-style="{ height: '52px' }"
-        empty-text="暂无提供商，点击「新增提供商」开始配置"
+        :empty-text="t('provider.empty')"
       >
         <!-- 类型 -->
         <template #type="{ row }">
           <el-tag size="small" :type="TYPE_TAG_TYPE[row.type] ?? 'info'" class="type-tag">
-            {{ TYPE_LABEL[row.type] ?? row.type }}
+            {{ typeLabels[row.type] ?? row.type }}
           </el-tag>
         </template>
 
         <!-- Base URL -->
         <template #baseUrl="{ row }">
-          <span class="url-text">{{ row.baseUrl || '（官方默认）' }}</span>
+          <span class="url-text">{{ row.baseUrl || t('provider.defaultOfficial') }}</span>
         </template>
 
         <!-- 健康状态 -->
@@ -43,10 +43,10 @@
                 </el-tag>
               </template>
               <div class="health-popover">
-                <div><span>最近检测</span><strong>{{ formatDateTime(row.lastCheckAt) }}</strong></div>
-                <div><span>连续失败</span><strong>{{ row.failCount ?? 0 }} 次</strong></div>
-                <div><span>告警状态</span><strong>{{ row.alertStatus || '-' }}</strong></div>
-                <div v-if="row.errorMessage"><span>失败原因</span><strong>{{ row.errorMessage }}</strong></div>
+                <div><span>{{ t('provider.health.lastCheck') }}</span><strong>{{ formatDateTime(row.lastCheckAt) }}</strong></div>
+                <div><span>{{ t('provider.health.failCount') }}</span><strong>{{ row.failCount ?? 0 }}</strong></div>
+                <div><span>{{ t('provider.health.alertStatus') }}</span><strong>{{ row.alertStatus || '-' }}</strong></div>
+                <div v-if="row.errorMessage"><span>{{ t('provider.health.errorReason') }}</span><strong>{{ row.errorMessage }}</strong></div>
               </div>
             </el-popover>
             <span v-if="row.latencyMs !== null" class="latency-text">{{ row.latencyMs }}ms</span>
@@ -63,18 +63,18 @@
           >
             <template #reference>
               <el-button link type="primary" size="small">
-                {{ row.modelCount }} 个
+                {{ t('provider.modelCount', { count: row.modelCount }) }}
               </el-button>
             </template>
             <div class="model-list">
               <div class="model-list__header">
-                <span>已启用的模型</span>
+                <span>{{ t('provider.enabledModels') }}</span>
                 <el-button link type="primary" size="small" @click="handleCreateModel(row)">
-                  新增模型
+                  {{ t('provider.addModel') }}
                 </el-button>
               </div>
               <div v-if="row.models.filter((m: ModelConfig) => m.enabled).length === 0" class="model-list__empty">
-                暂无模型，可手动新增
+                {{ t('provider.noModels') }}
               </div>
               <div
                 v-for="m in row.models.filter((m: ModelConfig) => m.enabled)"
@@ -93,7 +93,7 @@
                   @change="(value: ModelType) => handleUpdateModelType(m, value)"
                 >
                   <el-option
-                    v-for="option in MODEL_TYPE_OPTIONS"
+                    v-for="option in modelTypeOptions"
                     :key="option.value"
                     :label="option.label"
                     :value="option.value"
@@ -107,7 +107,7 @@
         <!-- 状态 -->
         <template #enabled="{ row }">
           <el-tag size="small" :type="row.enabled ? 'success' : 'info'">
-            {{ row.enabled ? '启用' : '禁用' }}
+            {{ row.enabled ? t('provider.enabled') : t('provider.disabled') }}
           </el-tag>
         </template>
 
@@ -118,14 +118,14 @@
 
         <!-- 操作 -->
         <template #actions="{ row }">
-          <el-button size="small" @click="handleEdit(row)">编辑</el-button>
+          <el-button size="small" @click="handleEdit(row)">{{ t('common.edit') }}</el-button>
           <el-button
             size="small"
             :loading="testingIds.has(row.id)"
             style="margin-left: 4px"
             @click="handleTestConnection(row)"
           >
-            测试
+            {{ t('common.test') }}
           </el-button>
           <el-button
             size="small"
@@ -134,7 +134,7 @@
             style="margin-left: 4px"
             @click="handleDelete(row)"
           >
-            删除
+            {{ t('common.delete') }}
           </el-button>
         </template>
       </HifyTable>
@@ -142,7 +142,7 @@
 
     <el-dialog
       v-model="dialogVisible"
-      :title="editingId === null ? '新增提供商' : '编辑提供商'"
+      :title="editingId === null ? t('provider.dialog.createProvider') : t('provider.dialog.editProvider')"
       width="520px"
       destroy-on-close
       @closed="handleDialogClosed"
@@ -154,21 +154,21 @@
         label-width="100px"
         label-position="right"
       >
-        <el-form-item label="名称" prop="name">
-          <el-input v-model="form.name" placeholder="如：OpenAI 官方、本地 Ollama" />
+        <el-form-item :label="t('provider.dialog.name')" prop="name">
+          <el-input v-model="form.name" :placeholder="t('provider.dialog.namePlaceholder')" />
         </el-form-item>
 
-        <el-form-item label="类型" prop="type">
+        <el-form-item :label="t('provider.dialog.type')" prop="type">
           <el-select
             v-model="form.type"
             style="width: 100%"
-            placeholder="请选择提供商类型"
+            :placeholder="t('provider.dialog.typePlaceholder')"
           >
             <el-option
-              v-for="t in PROVIDER_TYPES"
-              :key="t.value"
-              :label="t.label"
-              :value="t.value"
+              v-for="item in providerTypeOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
             />
           </el-select>
         </el-form-item>
@@ -178,38 +178,38 @@
             v-model="form.apiKey"
             type="password"
             show-password
-            :placeholder="editingId !== null ? '留空则不修改' : 'Ollama 等本地部署可留空'"
+            :placeholder="editingId !== null ? t('provider.dialog.apiKeyPlaceholderEdit') : t('provider.dialog.apiKeyPlaceholderCreate')"
           />
         </el-form-item>
 
         <el-form-item label="Base URL">
-          <el-input v-model="form.baseUrl" placeholder="https://api.openai.com（留空使用官方默认）" />
+          <el-input v-model="form.baseUrl" :placeholder="t('provider.dialog.baseUrlPlaceholder')" />
         </el-form-item>
 
-        <el-form-item v-if="editingId !== null" label="状态">
+        <el-form-item v-if="editingId !== null" :label="t('common.status')">
           <el-switch
             v-model="form.enabled"
             :active-value="1"
             :inactive-value="0"
-            active-text="启用"
-            inactive-text="停用"
+            :active-text="t('provider.enabled')"
+            :inactive-text="t('provider.stopped')"
             inline-prompt
           />
-          <div class="form-hint">停用后，该提供商不会再用于模型调用和健康检查。</div>
+          <div class="form-hint">{{ t('provider.dialog.statusHint') }}</div>
         </el-form-item>
       </el-form>
 
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="submitting" @click="handleSubmit">
-          保存
+          {{ t('common.save') }}
         </el-button>
       </template>
     </el-dialog>
 
     <el-dialog
       v-model="modelDialogVisible"
-      title="新增模型"
+      :title="t('provider.dialog.createModel')"
       width="520px"
       destroy-on-close
       @closed="handleModelDialogClosed"
@@ -221,26 +221,26 @@
         label-width="100px"
         label-position="right"
       >
-        <el-form-item label="供应商">
+        <el-form-item :label="t('provider.dialog.provider')">
           <el-input :model-value="selectedProvider?.name || ''" disabled />
         </el-form-item>
-        <el-form-item label="显示名称" prop="name">
-          <el-input v-model="modelForm.name" placeholder="如：text-embedding-v4" />
+        <el-form-item :label="t('provider.dialog.displayName')" prop="name">
+          <el-input v-model="modelForm.name" :placeholder="t('provider.dialog.displayNamePlaceholder')" />
         </el-form-item>
-        <el-form-item label="模型 ID" prop="modelId">
-          <el-input v-model="modelForm.modelId" placeholder="如：text-embedding-v4" />
+        <el-form-item :label="t('provider.dialog.modelId')" prop="modelId">
+          <el-input v-model="modelForm.modelId" :placeholder="t('provider.dialog.modelIdPlaceholder')" />
         </el-form-item>
-        <el-form-item label="模型用途" prop="modelType">
+        <el-form-item :label="t('provider.dialog.modelUsage')" prop="modelType">
           <el-select v-model="modelForm.modelType" style="width: 100%">
             <el-option
-              v-for="option in MODEL_TYPE_OPTIONS"
+              v-for="option in modelTypeOptions"
               :key="option.value"
               :label="option.label"
               :value="option.value"
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="上下文长度">
+        <el-form-item :label="t('provider.dialog.contextSize')">
           <el-input-number
             v-model="modelForm.contextSize"
             :min="1"
@@ -253,9 +253,9 @@
       </el-form>
 
       <template #footer>
-        <el-button @click="modelDialogVisible = false">取消</el-button>
+        <el-button @click="modelDialogVisible = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="modelSubmitting" @click="handleSubmitModel">
-          保存
+          {{ t('common.save') }}
         </el-button>
       </template>
     </el-dialog>
@@ -264,6 +264,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -286,14 +287,32 @@ import {
 
 // ── 常量 ──────────────────────────────────────────────────────────────
 
-const TYPE_LABEL: Record<string, string> = {
-  OPENAI:            'OpenAI',
-  ANTHROPIC:         'Anthropic',
-  DEEPSEEK:          'DeepSeek',
-  ALIBABA:           '阿里百炼',
-  OLLAMA:            'Ollama',
+const { t, locale } = useI18n()
+
+const TYPE_LABEL_ZH: Record<string, string> = {
+  OPENAI: 'OpenAI',
+  ANTHROPIC: 'Anthropic',
+  DEEPSEEK: 'DeepSeek',
+  ALIBABA: '阿里百炼',
+  OLLAMA: 'Ollama',
   OPENAI_COMPATIBLE: 'OpenAI 兼容',
 }
+
+const TYPE_LABEL_EN: Record<string, string> = {
+  OPENAI: 'OpenAI',
+  ANTHROPIC: 'Anthropic',
+  DEEPSEEK: 'DeepSeek',
+  ALIBABA: 'Alibaba Bailian',
+  OLLAMA: 'Ollama',
+  OPENAI_COMPATIBLE: 'OpenAI compatible',
+}
+
+const typeLabels = computed(() => locale.value === 'en-US' ? TYPE_LABEL_EN : TYPE_LABEL_ZH)
+
+const providerTypeOptions = computed(() => PROVIDER_TYPES.map(item => ({
+  value: item.value,
+  label: typeLabels.value[item.value] ?? item.label,
+})))
 
 const TYPE_TAG_TYPE: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
   OPENAI:            'primary',
@@ -311,20 +330,13 @@ const HEALTH_TAG_TYPE: Record<string, 'success' | 'danger' | 'warning' | 'info'>
   UNKNOWN:  'info',
 }
 
-const HEALTH_LABEL: Record<string, string> = {
-  UP:       '正常',
-  DOWN:     '故障',
-  DEGRADED: '降级',
-  UNKNOWN:  '未知',
-}
-
 type ModelType = ModelConfig['modelType']
 
-const MODEL_TYPE_OPTIONS: Array<{ label: string; value: ModelType; successMessage: string }> = [
-  { label: '对话', value: 'CHAT', successMessage: '已标记为对话模型' },
-  { label: '向量', value: 'EMBEDDING', successMessage: '已标记为向量模型' },
-  { label: '重排', value: 'RERANK', successMessage: '已标记为重排模型' },
-]
+const modelTypeOptions = computed<Array<{ label: string; value: ModelType; successMessage: string }>>(() => [
+  { label: t('provider.modelType.chat'), value: 'CHAT', successMessage: t('provider.modelType.chatSuccess') },
+  { label: t('provider.modelType.embedding'), value: 'EMBEDDING', successMessage: t('provider.modelType.embeddingSuccess') },
+  { label: t('provider.modelType.rerank'), value: 'RERANK', successMessage: t('provider.modelType.rerankSuccess') },
+])
 
 // ── 工具方法 ──────────────────────────────────────────────────────────
 
@@ -333,7 +345,13 @@ function healthTagType(status: string | null): 'success' | 'danger' | 'warning' 
 }
 
 function healthLabel(status: string | null): string {
-  return HEALTH_LABEL[status ?? ''] ?? '未检测'
+  const labels: Record<string, string> = {
+    UP: t('provider.health.up'),
+    DOWN: t('provider.health.down'),
+    DEGRADED: t('provider.health.degraded'),
+    UNKNOWN: t('provider.health.unknown'),
+  }
+  return labels[status ?? ''] ?? t('provider.health.unchecked')
 }
 
 function formatDateTime(value: string | null): string {
@@ -345,18 +363,18 @@ function formatDateTime(value: string | null): string {
 const { isNarrow } = useBreakpoint()
 
 const columns = computed<HifyColumn[]>(() => [
-  { label: '名称',     prop: 'name',       minWidth: '150' },
-  { label: '类型',     slot: 'type',       width: '120'    },
+  { label: t('table.name'),     prop: 'name',       minWidth: '150' },
+  { label: t('table.type'),     slot: 'type',       width: '120'    },
   ...(!isNarrow.value ? [
     { label: 'Base URL', slot: 'baseUrl',  minWidth: '180' } as HifyColumn,
   ] : []),
-  { label: '健康状态', slot: 'health',     width: '130'    },
-  { label: '模型数',   slot: 'modelCount', width: '80', align: 'center' as const },
-  { label: '状态',     slot: 'enabled',    width: '80'     },
+  { label: t('table.health'), slot: 'health',     width: '130'    },
+  { label: t('table.modelCount'),   slot: 'modelCount', width: '100', align: 'center' as const },
+  { label: t('table.status'),     slot: 'enabled',    width: '90'     },
   ...(!isNarrow.value ? [
-    { label: '创建时间', slot: 'createdAt', width: '110'   } as HifyColumn,
+    { label: t('table.createdAt'), slot: 'createdAt', width: '110'   } as HifyColumn,
   ] : []),
-  { label: '操作',     slot: 'actions',    width: '185', align: 'right' as const },
+  { label: t('table.actions'),     slot: 'actions',    width: '185', align: 'right' as const },
 ])
 
 // ── 表格 & API ────────────────────────────────────────────────────────
@@ -377,10 +395,10 @@ async function handleTestConnection(row: ProviderListItem) {
   try {
     const result = await testConnection(row.id)
     if (result.success) {
-      const models = result.modelCount != null ? ` · ${result.modelCount} 个模型` : ''
-      ElMessage.success(`连通正常 · 延迟 ${result.latencyMs}ms${models}`)
+      const models = result.modelCount != null ? t('provider.connectivityModels', { count: result.modelCount }) : ''
+      ElMessage.success(t('provider.connectivityOk', { latency: result.latencyMs, models }))
     } else {
-      ElMessage.error(result.errorMessage || '连通性测试失败')
+      ElMessage.error(result.errorMessage || t('provider.connectivityFailed'))
     }
     tableRef.value?.load()
   } finally {
@@ -394,7 +412,7 @@ async function handleUpdateModelType(model: ModelConfig, modelType: ModelType) {
   updatingModelTypeIds.add(model.id)
   try {
     await updateModelConfigType(model.id, modelType)
-    notifySuccess(MODEL_TYPE_OPTIONS.find(option => option.value === modelType)?.successMessage ?? '模型用途已更新')
+    notifySuccess(modelTypeOptions.value.find(option => option.value === modelType)?.successMessage ?? t('provider.modelUsageUpdated'))
     tableRef.value?.load()
   } catch {
     // request interceptor has shown the error message
@@ -418,9 +436,9 @@ const modelForm = reactive({
 })
 
 const modelRules: FormRules = {
-  name: [{ required: true, message: '显示名称不能为空', trigger: 'blur' }],
-  modelId: [{ required: true, message: '模型 ID 不能为空', trigger: 'blur' }],
-  modelType: [{ required: true, message: '请选择模型用途', trigger: 'change' }],
+  name: [{ required: true, message: () => t('provider.validation.displayNameRequired'), trigger: 'blur' }],
+  modelId: [{ required: true, message: () => t('provider.validation.modelIdRequired'), trigger: 'blur' }],
+  modelType: [{ required: true, message: () => t('provider.validation.modelUsageRequired'), trigger: 'change' }],
 }
 
 function handleCreateModel(row: ProviderListItem) {
@@ -451,7 +469,7 @@ async function handleSubmitModel() {
       modelType: modelForm.modelType,
       contextSize: modelForm.contextSize,
     })
-    notifySuccess('模型已新增')
+    notifySuccess(t('provider.modelCreated'))
     modelDialogVisible.value = false
     tableRef.value?.load()
   } catch {
@@ -477,8 +495,8 @@ const form = reactive({
 })
 
 const rules: FormRules = {
-  name: [{ required: true, message: '名称不能为空', trigger: 'blur' }],
-  type: [{ required: true, message: '请选择提供商类型', trigger: 'change' }],
+  name: [{ required: true, message: () => t('provider.validation.nameRequired'), trigger: 'blur' }],
+  type: [{ required: true, message: () => t('provider.validation.typeRequired'), trigger: 'change' }],
 }
 
 function handleCreate() {
@@ -525,7 +543,7 @@ async function handleSubmit() {
         baseUrl: form.baseUrl,
         enabled: form.enabled,
       })
-      notifySuccess('提供商已更新')
+      notifySuccess(t('provider.providerUpdated'))
     } else {
       await createProvider({
         name:    form.name,
@@ -533,7 +551,7 @@ async function handleSubmit() {
         apiKey:  form.apiKey  || undefined,
         baseUrl: form.baseUrl || undefined,
       })
-      notifySuccess('提供商已创建')
+      notifySuccess(t('provider.providerCreated'))
     }
     dialogVisible.value = false
     tableRef.value?.refresh()
@@ -550,7 +568,7 @@ const { confirm } = useConfirm()
 
 async function handleDelete(row: ProviderListItem) {
   const deleted = await confirm(
-    `确定删除提供商「${row.name}」？关联的 Agent 配置将无法使用。`,
+    t('provider.deleteConfirm', { name: row.name }),
     () => deleteProvider(row.id),
   )
   if (deleted) tableRef.value?.refresh()

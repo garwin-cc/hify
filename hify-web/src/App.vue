@@ -1,6 +1,7 @@
 <template>
-  <RouterView v-if="route.path === '/login'" />
-  <div v-else class="app-layout">
+  <el-config-provider :locale="elementLocale">
+    <RouterView v-if="route.path === '/login'" />
+    <div v-else class="app-layout">
 
     <!-- ── 深色侧边栏 ─────────────────────────────────────────────────── -->
     <aside class="sidebar" :class="{ 'is-collapsed': isCollapsed }">
@@ -66,7 +67,7 @@
         </Transition>
         <button
           class="sidebar-toggle"
-          :title="isCollapsed ? '展开侧边栏' : '折叠侧边栏'"
+          :title="isCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')"
           @click="isCollapsed = !isCollapsed"
         >
           <el-icon>
@@ -86,12 +87,16 @@
       </main>
     </div>
 
-  </div>
+    </div>
+  </el-config-provider>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import en from 'element-plus/es/locale/lang/en'
 import {
   Setting,
   User,
@@ -112,6 +117,7 @@ import { useBreakpoint } from '@/composables/useBreakpoint'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const { t, locale } = useI18n()
 const { isNarrow } = useBreakpoint()
 const auth = useAuthStore()
 
@@ -124,6 +130,8 @@ const isCollapsed = computed({
   set: (v: boolean) => { userCollapsed.value = v },
 })
 
+const elementLocale = computed(() => locale.value === 'en-US' ? en : zhCn)
+
 interface NavItem {
   path: string
   label: string
@@ -133,31 +141,31 @@ interface NavItem {
 const navGroups = computed(() => {
   const groups: Array<{ label: string; items: NavItem[] }> = [
     {
-      label: '运行',
+      label: t('nav.run'),
       items: [
-        { path: '/conversation', label: '对话', icon: ChatDotRound },
-        { path: '/apps', label: '应用', icon: Grid },
+        { path: '/conversation', label: t('nav.conversation'), icon: ChatDotRound },
+        { path: '/apps', label: t('nav.apps'), icon: Grid },
       ],
     },
     {
-      label: '编排',
+      label: t('nav.orchestration'),
       items: [
-        { path: '/agents', label: 'Agent', icon: User },
-        { path: '/workflows', label: '工作流', icon: Share },
-        { path: '/knowledge', label: '知识库', icon: Cpu },
-        auth.isAdmin ? { path: '/mcp', label: '工具', icon: Tools } : null,
+        { path: '/agents', label: t('nav.agents'), icon: User },
+        { path: '/workflows', label: t('nav.workflows'), icon: Share },
+        { path: '/knowledge', label: t('nav.knowledge'), icon: Cpu },
+        auth.isAdmin ? { path: '/mcp', label: t('nav.tools'), icon: Tools } : null,
       ].filter(Boolean) as NavItem[],
     },
     {
-      label: '治理',
+      label: t('nav.governance'),
       items: [
-        auth.isAdmin ? { path: '/projects', label: '项目管理', icon: User } : null,
-        auth.isAdmin ? { path: '/analytics', label: '运营分析', icon: TrendCharts } : null,
-        auth.isAdmin ? { path: '/logs', label: '日志', icon: Tickets } : null,
-        auth.isAdmin ? { path: '/audit', label: '审计', icon: Lock } : null,
-        auth.isAdmin ? { path: '/settings', label: '系统设置', icon: Setting } : null,
-        auth.isAdmin ? { path: '/providers', label: '模型管理', icon: DataLine } : null,
-        auth.isAdmin ? { path: '/users', label: '用户管理', icon: User } : null,
+        auth.isAdmin ? { path: '/projects', label: t('nav.projects'), icon: User } : null,
+        auth.isAdmin ? { path: '/analytics', label: t('nav.analytics'), icon: TrendCharts } : null,
+        auth.isAdmin ? { path: '/logs', label: t('nav.logs'), icon: Tickets } : null,
+        auth.isAdmin ? { path: '/audit', label: t('nav.audit'), icon: Lock } : null,
+        auth.isAdmin ? { path: '/settings', label: t('nav.settings'), icon: Setting } : null,
+        auth.isAdmin ? { path: '/providers', label: t('nav.providers'), icon: DataLine } : null,
+        auth.isAdmin ? { path: '/users', label: t('nav.users'), icon: User } : null,
       ].filter(Boolean) as NavItem[],
     },
   ]

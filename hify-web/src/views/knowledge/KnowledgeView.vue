@@ -1,13 +1,13 @@
 <template>
   <div class="page-content">
     <PageHeader
-      title="知识库管理"
-      description="管理 RAG 知识库，维护文档数量、启用状态和基础信息"
+      :title="t('knowledge.title')"
+      :description="t('knowledge.description')"
     >
       <template #actions>
         <el-button type="primary" @click="handleCreate">
           <el-icon style="margin-right: 4px"><Plus /></el-icon>
-          新建知识库
+          {{ t('knowledge.create') }}
         </el-button>
       </template>
     </PageHeader>
@@ -15,7 +15,7 @@
     <div class="hify-card search-bar">
       <el-input
         v-model="filterName"
-        placeholder="搜索知识库名称"
+        :placeholder="t('knowledge.searchPlaceholder')"
         clearable
         style="width: 280px"
         @keyup.enter="tableRef?.refresh()"
@@ -34,7 +34,7 @@
         :columns="columns"
         :api="fetchList"
         :row-style="{ height: '56px' }"
-        empty-text="暂无知识库，点击「新建知识库」开始创建"
+        :empty-text="t('knowledge.empty')"
       >
         <template #name="{ row }">
           <el-button link type="primary" class="name-link" @click="goDocuments(row)">
@@ -49,7 +49,7 @@
 
         <template #enabled="{ row }">
           <el-tag size="small" :type="row.enabled === 1 ? 'success' : 'info'">
-            {{ row.enabled === 1 ? '启用' : '禁用' }}
+            {{ row.enabled === 1 ? t('knowledge.enabled') : t('knowledge.disabled') }}
           </el-tag>
         </template>
 
@@ -63,16 +63,16 @@
         </template>
 
         <template #actions="{ row }">
-          <el-button size="small" @click="handleEdit(row)">编辑</el-button>
-          <el-button size="small" @click="openRetrievalTest(row)">召回测试</el-button>
-          <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
+          <el-button size="small" @click="handleEdit(row)">{{ t('common.edit') }}</el-button>
+          <el-button size="small" @click="openRetrievalTest(row)">{{ t('knowledge.retrievalTest') }}</el-button>
+          <el-button size="small" type="danger" text @click="handleDelete(row)">{{ t('common.delete') }}</el-button>
         </template>
       </HifyTable>
     </div>
 
     <el-dialog
       v-model="dialogVisible"
-      :title="editingId === null ? '新建知识库' : '编辑知识库'"
+      :title="editingId === null ? t('knowledge.createTitle') : t('knowledge.editTitle')"
       width="560px"
       destroy-on-close
       @closed="handleDialogClosed"
@@ -84,30 +84,30 @@
         label-width="90px"
         label-position="right"
       >
-        <el-form-item label="名称" prop="name">
+        <el-form-item :label="t('knowledge.name')" prop="name">
           <el-input
             v-model="form.name"
-            placeholder="请输入知识库名称"
+            :placeholder="t('knowledge.namePlaceholder')"
             maxlength="100"
             show-word-limit
           />
         </el-form-item>
 
-        <el-form-item label="描述">
+        <el-form-item :label="t('knowledge.descriptionLabel')">
           <el-input
             v-model="form.description"
             type="textarea"
             :rows="4"
-            placeholder="描述知识库用途（可选）"
+            :placeholder="t('knowledge.descriptionPlaceholder')"
             maxlength="500"
             show-word-limit
           />
         </el-form-item>
 
-        <el-form-item label="向量模型" prop="embeddingModelConfigId">
+        <el-form-item :label="t('knowledge.embeddingModel')" prop="embeddingModelConfigId">
           <el-select
             v-model="form.embeddingModelConfigId"
-            placeholder="请选择向量模型"
+            :placeholder="t('knowledge.embeddingModelPlaceholder')"
             filterable
             :loading="loadingEmbeddingModels"
             :disabled="editingId !== null && editingDocumentCount > 0"
@@ -116,46 +116,46 @@
             <el-option
               v-for="model in embeddingModels"
               :key="model.id"
-              :label="`${model.name}（${model.modelId}）`"
+              :label="modelOptionLabel(model)"
               :value="model.id"
             />
           </el-select>
           <div v-if="editingId !== null && editingDocumentCount > 0" class="form-hint">
-            已有文档的知识库不能切换向量模型，避免新旧分块向量维度不一致。
+            {{ t('knowledge.lockedEmbeddingHint') }}
           </div>
           <div v-else-if="embeddingModels.length === 0" class="form-hint">
-            请先在模型管理中把可用模型标记为“向量”。
+            {{ t('knowledge.embeddingModelHint') }}
           </div>
         </el-form-item>
 
-        <el-divider content-position="left">检索配置</el-divider>
+        <el-divider content-position="left">{{ t('knowledge.retrievalConfig') }}</el-divider>
 
-        <el-form-item label="检索模式">
+        <el-form-item :label="t('knowledge.retrievalMode')">
           <el-segmented
             v-model="form.retrievalMode"
             :options="[
-              { label: '向量', value: 'VECTOR' },
-              { label: '全文', value: 'FULLTEXT' },
-              { label: '混合', value: 'HYBRID' },
+              { label: t('knowledge.vector'), value: 'VECTOR' },
+              { label: t('knowledge.fulltext'), value: 'FULLTEXT' },
+              { label: t('knowledge.hybrid'), value: 'HYBRID' },
             ]"
           />
         </el-form-item>
 
-        <el-form-item v-if="form.retrievalMode === 'HYBRID'" label="混合权重">
+        <el-form-item v-if="form.retrievalMode === 'HYBRID'" :label="t('knowledge.hybridWeight')">
           <el-slider v-model="form.hybridAlpha" :min="0" :max="1" :step="0.05" style="width: 280px" />
-          <div class="form-hint">越接近 1 越偏向向量召回，越接近 0 越偏向关键词召回。</div>
+          <div class="form-hint">{{ t('knowledge.hybridHint') }}</div>
         </el-form-item>
 
         <el-form-item label="TopK">
           <el-input-number v-model="form.topK" :min="1" :max="50" controls-position="right" />
         </el-form-item>
 
-        <el-form-item label="候选数">
+        <el-form-item :label="t('knowledge.candidateTopK')">
           <el-input-number v-model="form.candidateTopK" :min="1" :max="100" controls-position="right" />
-          <div class="form-hint">阶段 2.1 用于召回候选并按阈值过滤，必须大于等于 TopK。</div>
+          <div class="form-hint">{{ t('knowledge.candidateHint') }}</div>
         </el-form-item>
 
-        <el-form-item label="分数阈值">
+        <el-form-item :label="t('knowledge.scoreThreshold')">
           <el-input-number
             v-model="form.scoreThreshold"
             :min="0"
@@ -166,31 +166,31 @@
           />
         </el-form-item>
 
-        <el-form-item label="分块大小">
+        <el-form-item :label="t('knowledge.chunkSize')">
           <el-input-number v-model="form.chunkSize" :min="128" :max="4000" controls-position="right" />
         </el-form-item>
 
-        <el-form-item label="分块重叠">
+        <el-form-item :label="t('knowledge.chunkOverlap')">
           <el-input-number v-model="form.chunkOverlap" :min="0" :max="1000" controls-position="right" />
           <div v-if="editingId !== null && editingDocumentCount > 0" class="form-hint">
-            修改分块参数只影响后续上传文档；已有文档需后续重建索引后才会重新分块。
+            {{ t('knowledge.chunkConfigHint') }}
           </div>
         </el-form-item>
 
-        <el-form-item label="上下文预算">
+        <el-form-item :label="t('knowledge.contextBudget')">
           <el-input-number v-model="form.maxContextTokens" :min="512" :max="16000" controls-position="right" />
         </el-form-item>
 
-        <el-divider content-position="left">Rerank 与过滤</el-divider>
+        <el-divider content-position="left">{{ t('knowledge.rerankAndFilter') }}</el-divider>
 
-        <el-form-item label="启用精排">
+        <el-form-item :label="t('knowledge.enableRerank')">
           <el-switch v-model="form.rerankEnabled" :active-value="1" :inactive-value="0" />
         </el-form-item>
 
-        <el-form-item v-if="form.rerankEnabled === 1" label="精排模型">
+        <el-form-item v-if="form.rerankEnabled === 1" :label="t('knowledge.rerankModel')">
           <el-select
             v-model="form.rerankModelConfigId"
-            placeholder="请选择 Rerank 模型"
+            :placeholder="t('knowledge.rerankModelPlaceholder')"
             filterable
             :loading="loadingRerankModels"
             style="width: 100%"
@@ -198,58 +198,58 @@
             <el-option
               v-for="model in rerankModels"
               :key="model.id"
-              :label="`${model.name}（${model.modelId}）`"
+              :label="modelOptionLabel(model)"
               :value="model.id"
             />
           </el-select>
         </el-form-item>
 
-        <el-form-item v-if="form.rerankEnabled === 1" label="精排候选">
+        <el-form-item v-if="form.rerankEnabled === 1" :label="t('knowledge.rerankTopN')">
           <el-input-number v-model="form.rerankTopN" :min="1" :max="100" controls-position="right" />
         </el-form-item>
 
-        <el-form-item label="默认过滤">
+        <el-form-item :label="t('knowledge.defaultFilter')">
           <el-switch v-model="form.metadataFilterEnabled" :active-value="1" :inactive-value="0" />
         </el-form-item>
 
         <template v-if="form.metadataFilterEnabled === 1">
-          <el-form-item label="部门">
-            <el-input v-model="form.defaultDepartment" placeholder="例如 finance" />
+          <el-form-item :label="t('knowledge.department')">
+            <el-input v-model="form.defaultDepartment" :placeholder="t('knowledge.departmentPlaceholder')" />
           </el-form-item>
-          <el-form-item label="文档类型">
-            <el-input v-model="form.defaultDocumentType" placeholder="例如 policy" />
+          <el-form-item :label="t('knowledge.documentType')">
+            <el-input v-model="form.defaultDocumentType" :placeholder="t('knowledge.documentTypePlaceholder')" />
           </el-form-item>
-          <el-form-item label="标签">
-            <el-input v-model="form.defaultTagsText" placeholder="多个标签用逗号分隔" />
+          <el-form-item :label="t('knowledge.tags')">
+            <el-input v-model="form.defaultTagsText" :placeholder="t('knowledge.tagsPlaceholder')" />
           </el-form-item>
         </template>
       </el-form>
 
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="submitting" @click="handleSubmit">
-          保存
+          {{ t('common.save') }}
         </el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="retrievalDialogVisible" title="召回测试" width="760px">
+    <el-dialog v-model="retrievalDialogVisible" :title="t('knowledge.retrievalDialogTitle')" width="760px">
       <el-form label-width="90px">
-        <el-form-item label="查询">
-          <el-input v-model="retrievalForm.queryText" placeholder="输入要测试的用户问题" />
+        <el-form-item :label="t('knowledge.query')">
+          <el-input v-model="retrievalForm.queryText" :placeholder="t('knowledge.queryPlaceholder')" />
         </el-form-item>
-        <el-form-item label="部门">
-          <el-input v-model="retrievalForm.department" placeholder="可选" />
+        <el-form-item :label="t('knowledge.department')">
+          <el-input v-model="retrievalForm.department" :placeholder="t('knowledge.optionalPlaceholder')" />
         </el-form-item>
-        <el-form-item label="标签">
-          <el-input v-model="retrievalForm.tagsText" placeholder="多个标签用逗号分隔" />
+        <el-form-item :label="t('knowledge.tags')">
+          <el-input v-model="retrievalForm.tagsText" :placeholder="t('knowledge.tagsPlaceholder')" />
         </el-form-item>
       </el-form>
-      <el-table :data="retrievalHits" v-loading="retrievalLoading" max-height="360" empty-text="暂无召回结果">
+      <el-table :data="retrievalHits" v-loading="retrievalLoading" max-height="360" :empty-text="t('knowledge.retrievalEmpty')">
         <el-table-column prop="rank" label="#" width="56" />
-        <el-table-column prop="documentName" label="文档" min-width="130" />
-        <el-table-column prop="content" label="内容" min-width="260" show-overflow-tooltip />
-        <el-table-column label="分数" width="180">
+        <el-table-column prop="documentName" :label="t('knowledge.document')" min-width="130" />
+        <el-table-column prop="content" :label="t('knowledge.content')" min-width="260" show-overflow-tooltip />
+        <el-table-column :label="t('knowledge.score')" width="180">
           <template #default="{ row }">
             <div class="score-stack">
               <span>Final {{ formatScore(row.finalScore ?? row.score) }}</span>
@@ -261,8 +261,8 @@
         </el-table-column>
       </el-table>
       <template #footer>
-        <el-button @click="retrievalDialogVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="retrievalLoading" @click="runRetrievalTest">运行测试</el-button>
+        <el-button @click="retrievalDialogVisible = false">{{ t('knowledge.close') }}</el-button>
+        <el-button type="primary" :loading="retrievalLoading" @click="runRetrievalTest">{{ t('knowledge.runTest') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -271,6 +271,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Plus, Search } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -292,20 +293,21 @@ import {
 import { getEnabledModelConfigs, type ModelConfig } from '@/api/provider'
 
 const router = useRouter()
+const { t } = useI18n()
 const { isNarrow } = useBreakpoint()
 const projectStore = useProjectStore()
 
 const columns = computed<HifyColumn[]>(() => [
-  { label: '名称', slot: 'name', minWidth: '180' },
+  { label: t('table.name'), slot: 'name', minWidth: '180' },
   ...(!isNarrow.value ? [
-    { label: '描述', slot: 'description', minWidth: '260' } as HifyColumn,
+    { label: t('table.description'), slot: 'description', minWidth: '260' } as HifyColumn,
   ] : []),
-  { label: '状态', slot: 'enabled', width: '90' },
-  { label: '文档数量', slot: 'documentCount', width: '110', align: 'center' },
+  { label: t('table.status'), slot: 'enabled', width: '90' },
+  { label: t('table.documentCount'), slot: 'documentCount', width: '110', align: 'center' },
   ...(!isNarrow.value ? [
-    { label: '创建时间', slot: 'createdAt', width: '120' } as HifyColumn,
+    { label: t('table.createdAt'), slot: 'createdAt', width: '120' } as HifyColumn,
   ] : []),
-  { label: '操作', slot: 'actions', width: '150', align: 'right' },
+  { label: t('table.actions'), slot: 'actions', width: '150', align: 'right' },
 ])
 
 const tableRef = ref<{ refresh: () => void; load: () => void }>()
@@ -353,11 +355,11 @@ const rerankModels = ref<ModelConfig[]>([])
 
 const rules: FormRules = {
   name: [
-    { required: true, message: '知识库名称不能为空', trigger: 'blur' },
-    { min: 1, max: 100, message: '名称长度不能超过 100 个字符', trigger: 'blur' },
+    { required: true, message: () => t('knowledge.validation.nameRequired'), trigger: 'blur' },
+    { min: 1, max: 100, message: () => t('knowledge.validation.nameLength'), trigger: 'blur' },
   ],
   embeddingModelConfigId: [
-    { required: true, message: '请选择向量模型', trigger: 'change' },
+    { required: true, message: () => t('knowledge.validation.embeddingRequired'), trigger: 'change' },
   ],
 }
 
@@ -485,11 +487,11 @@ async function handleSubmit() {
     if (editingId.value === null) {
       const created = await createKnowledgeBase(payload)
       await updateKnowledgeRetrievalConfig(created.id, retrievalPayload)
-      notifySuccess('知识库已创建')
+      notifySuccess(t('knowledge.messages.created'))
     } else {
       await updateKnowledgeBase(editingId.value, payload)
       await updateKnowledgeRetrievalConfig(editingId.value, retrievalPayload)
-      notifySuccess('知识库已更新')
+      notifySuccess(t('knowledge.messages.updated'))
     }
     dialogVisible.value = false
     tableRef.value?.refresh()
@@ -551,6 +553,10 @@ function splitTags(value: string) {
   return value.split(',').map(item => item.trim()).filter(Boolean)
 }
 
+function modelOptionLabel(model: ModelConfig) {
+  return `${model.name} (${model.modelId})`
+}
+
 function formatScore(value?: number) {
   return value == null ? '-' : value.toFixed(4)
 }
@@ -559,9 +565,9 @@ const { confirm } = useConfirm()
 
 async function handleDelete(row: KnowledgeBaseItem) {
   const deleted = await confirm(
-    `确定删除知识库「${row.name}」？关联文档和分块会一起删除。`,
+    t('knowledge.messages.deleteConfirm', { name: row.name }),
     () => deleteKnowledgeBase(row.id),
-    { successMsg: '知识库已删除' },
+    { successMsg: t('knowledge.messages.deleted') },
   )
   if (deleted) tableRef.value?.refresh()
 }

@@ -1,18 +1,32 @@
 <template>
   <main class="login-page">
     <section class="login-panel">
+      <el-select
+        :model-value="locale"
+        size="small"
+        class="login-locale"
+        :aria-label="t('topbar.language')"
+        @change="handleLocaleChange"
+      >
+        <el-option
+          v-for="option in localeOptions"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value"
+        />
+      </el-select>
       <div class="brand-mark">H</div>
       <h1>Hify</h1>
-      <p>内部 AI Agent 平台</p>
+      <p>{{ t('login.tagline') }}</p>
       <el-form label-position="top" @submit.prevent>
-        <el-form-item label="用户名">
+        <el-form-item :label="t('login.username')">
           <el-input v-model="form.username" autofocus placeholder="admin" @keyup.enter="handleLogin" />
         </el-form-item>
-        <el-form-item label="密码">
+        <el-form-item :label="t('login.password')">
           <el-input v-model="form.password" type="password" show-password @keyup.enter="handleLogin" />
         </el-form-item>
         <el-button type="primary" :loading="loading" class="login-button" @click="handleLogin">
-          登录
+          {{ t('login.submit') }}
         </el-button>
       </el-form>
     </section>
@@ -22,12 +36,15 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { localeOptions, setLocale, type LocaleCode } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const { t, locale } = useI18n()
 const loading = ref(false)
 const form = reactive({
   username: '',
@@ -36,7 +53,7 @@ const form = reactive({
 
 async function handleLogin() {
   if (!form.username.trim() || !form.password) {
-    ElMessage.error('请输入用户名和密码')
+    ElMessage.error(t('login.missingCredentials'))
     return
   }
   loading.value = true
@@ -48,6 +65,10 @@ async function handleLogin() {
   } finally {
     loading.value = false
   }
+}
+
+function handleLocaleChange(value: LocaleCode) {
+  setLocale(value)
 }
 </script>
 
@@ -62,12 +83,20 @@ async function handleLogin() {
 }
 
 .login-panel {
+  position: relative;
   width: min(420px, calc(100vw - 32px));
   padding: 34px;
   background: var(--bg-surface);
   border: 1px solid var(--border-light);
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
+}
+
+.login-locale {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 118px;
 }
 
 .brand-mark {

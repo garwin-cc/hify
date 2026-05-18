@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { pinia } from './stores'
 import router from './router'
 import App from './App.vue'
+import { i18n } from './i18n'
 
 // 1. Element Plus 基础样式（先加载，后续 CSS 可覆盖其变量）
 import 'element-plus/dist/index.css'
@@ -18,4 +19,5 @@ import './assets/main.css'
 createApp(App)
   .use(pinia)
   .use(router)
+  .use(i18n)
   .mount('#app')

@@ -5,7 +5,7 @@
         <div class="sidebar-kicker">Agent</div>
         <el-select
           v-model="selectedAgentId"
-          placeholder="选择 Agent"
+          :placeholder="t('conversation.selectAgent')"
           size="small"
           style="width: 100%"
           @change="onAgentChange"
@@ -18,13 +18,13 @@
           />
         </el-select>
         <div class="sidebar-actions">
-          <el-button size="small" type="primary" :icon="Plus" @click="newSession">新建</el-button>
+          <el-button size="small" type="primary" :icon="Plus" @click="newSession">{{ t('conversation.new') }}</el-button>
           <el-dropdown trigger="click">
             <el-button size="small" :icon="MoreFilled" />
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item :disabled="!currentSessionId || isStreaming" @click="clearCurrentSummary">
-                  清空记忆摘要
+                  {{ t('conversation.clearSummary') }}
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -56,8 +56,8 @@
           />
         </div>
         <div v-if="sessionList.length === 0" class="session-empty">
-          <span>暂无会话</span>
-          <el-button link type="primary" size="small" @click="newSession">新建会话</el-button>
+          <span>{{ t('conversation.emptySessions') }}</span>
+          <el-button link type="primary" size="small" @click="newSession">{{ t('conversation.newSession') }}</el-button>
         </div>
       </div>
     </aside>
@@ -68,13 +68,13 @@
           <div class="chat-title">{{ currentSessionTitle }}</div>
           <div class="chat-subtitle">{{ selectedAgentName }}</div>
         </div>
-        <el-tag v-if="isStreaming" size="small" type="primary" effect="plain">正在生成</el-tag>
+        <el-tag v-if="isStreaming" size="small" type="primary" effect="plain">{{ t('conversation.generating') }}</el-tag>
       </header>
 
       <div ref="messagesEl" class="messages">
         <div v-if="messages.length === 0" class="messages-placeholder">
-          <div class="placeholder-title">开始新的对话</div>
-          <div class="placeholder-desc">选择 Agent 后输入问题，回答会保留运行详情用于排障。</div>
+          <div class="placeholder-title">{{ t('conversation.placeholderTitle') }}</div>
+          <div class="placeholder-desc">{{ t('conversation.placeholderDesc') }}</div>
         </div>
 
         <div
@@ -119,7 +119,7 @@
               type="textarea"
               :autosize="{ minRows: 1, maxRows: 5 }"
               :disabled="isStreaming"
-              :placeholder="`问问 ${selectedAgentName}`"
+              :placeholder="t('conversation.askAgent', { name: selectedAgentName })"
               resize="none"
               class="composer-input"
               @keydown="onKeydown"
@@ -134,31 +134,31 @@
               @click="send"
             />
           </div>
-          <div class="composer-hint">Enter 发送，Shift + Enter 换行</div>
+          <div class="composer-hint">{{ t('conversation.composerHint') }}</div>
         </div>
       </div>
     </div>
 
-    <el-drawer v-model="traceDrawerVisible" title="运行详情" size="520px">
-      <div v-if="traceLoading" class="trace-empty">加载中...</div>
+    <el-drawer v-model="traceDrawerVisible" :title="t('conversation.traceTitle')" size="520px">
+      <div v-if="traceLoading" class="trace-empty">{{ t('conversation.loadingTrace') }}</div>
       <div v-else-if="traceDetail" class="trace-panel">
         <el-tabs class="trace-tabs">
-          <el-tab-pane label="概览">
+          <el-tab-pane :label="t('conversation.trace.overview')">
             <section class="trace-section">
               <dl>
                 <dt>traceId</dt><dd>{{ traceDetail.traceId }}</dd>
-                <dt>状态</dt><dd>{{ traceDetail.status }}</dd>
+                <dt>{{ t('conversation.trace.status') }}</dt><dd>{{ traceDetail.status }}</dd>
                 <dt>Agent</dt><dd>{{ traceDetail.agent?.name || '-' }}</dd>
-                <dt>模型</dt><dd>{{ traceDetail.model?.providerName || '-' }} / {{ traceDetail.model?.modelId || '-' }}</dd>
-                <dt>错误</dt><dd>{{ traceDetail.errorMessage || '-' }}</dd>
+                <dt>{{ t('conversation.trace.model') }}</dt><dd>{{ traceDetail.model?.providerName || '-' }} / {{ traceDetail.model?.modelId || '-' }}</dd>
+                <dt>{{ t('conversation.trace.error') }}</dt><dd>{{ traceDetail.errorMessage || '-' }}</dd>
               </dl>
             </section>
           </el-tab-pane>
 
           <el-tab-pane label="RAG">
             <section class="trace-section">
-              <div v-if="!traceDetail.rag?.triggered" class="trace-empty">未触发</div>
-              <div v-else-if="!traceDetail.rag?.hits.length" class="trace-empty">已触发，无命中或检索失败</div>
+              <div v-if="!traceDetail.rag?.triggered" class="trace-empty">{{ t('conversation.trace.notTriggered') }}</div>
+              <div v-else-if="!traceDetail.rag?.hits.length" class="trace-empty">{{ t('conversation.trace.noRagHits') }}</div>
               <div v-for="hit in traceDetail.rag?.hits ?? []" :key="`${hit.documentId}-${hit.chunkIndex}`" class="trace-item">
                 <div class="trace-item-title">{{ hit.documentName || hit.documentId || '-' }}</div>
                 <div class="trace-meta">chunk #{{ hit.chunkIndex ?? '-' }} · score {{ formatScore(hit.score) }}</div>
@@ -169,11 +169,11 @@
 
           <el-tab-pane label="MCP">
             <section class="trace-section">
-              <div v-if="!traceDetail.mcp?.triggered" class="trace-empty">未触发</div>
+              <div v-if="!traceDetail.mcp?.triggered" class="trace-empty">{{ t('conversation.trace.notTriggered') }}</div>
               <div v-for="tool in traceDetail.mcp?.toolCalls ?? []" :key="tool.toolName" class="trace-item">
                 <div class="trace-item-title">{{ tool.toolName }}</div>
                 <div class="trace-meta">
-                  {{ tool.success ? '成功' : '失败' }} · {{ tool.elapsedMs ?? '-' }}ms · 参数 {{ tool.argumentKeys?.join(', ') || '-' }}
+                  {{ tool.success ? t('conversation.trace.yes') : t('conversation.trace.no') }} · {{ tool.elapsedMs ?? '-' }}ms · {{ tool.argumentKeys?.join(', ') || '-' }}
                 </div>
                 <p v-if="tool.errorMessage">{{ tool.errorMessage }}</p>
               </div>
@@ -185,10 +185,10 @@
               <dl>
                 <dt>Provider</dt><dd>{{ traceDetail.llm?.providerName || '-' }}</dd>
                 <dt>modelId</dt><dd>{{ traceDetail.llm?.modelId || '-' }}</dd>
-                <dt>首 token</dt><dd>{{ traceDetail.llm?.firstTokenLatencyMs ?? '-' }}ms</dd>
-                <dt>总耗时</dt><dd>{{ traceDetail.llm?.totalLatencyMs ?? '-' }}ms</dd>
-                <dt>tokens</dt><dd>{{ traceDetail.llm?.inputTokens ?? '-' }} / {{ traceDetail.llm?.outputTokens ?? '-' }}</dd>
-                <dt>错误</dt><dd>{{ traceDetail.llm?.errorMessage || '-' }}</dd>
+                <dt>{{ t('conversation.trace.firstToken') }}</dt><dd>{{ traceDetail.llm?.firstTokenLatencyMs ?? '-' }}ms</dd>
+                <dt>{{ t('conversation.trace.totalLatency') }}</dt><dd>{{ traceDetail.llm?.totalLatencyMs ?? '-' }}ms</dd>
+                <dt>{{ t('conversation.trace.tokens') }}</dt><dd>{{ traceDetail.llm?.inputTokens ?? '-' }} / {{ traceDetail.llm?.outputTokens ?? '-' }}</dd>
+                <dt>{{ t('conversation.trace.error') }}</dt><dd>{{ traceDetail.llm?.errorMessage || '-' }}</dd>
               </dl>
             </section>
           </el-tab-pane>
@@ -196,21 +196,21 @@
           <el-tab-pane label="Workflow">
             <section class="trace-section">
               <dl>
-                <dt>触发</dt><dd>{{ traceDetail.workflow?.triggered ? '是' : '否' }}</dd>
+                <dt>{{ t('conversation.trace.triggered') }}</dt><dd>{{ traceDetail.workflow?.triggered ? t('conversation.trace.yes') : t('conversation.trace.no') }}</dd>
                 <dt>workflowId</dt><dd>{{ traceDetail.workflow?.workflowId ?? '-' }}</dd>
                 <dt>runId</dt><dd>{{ traceDetail.workflow?.workflowRunId ?? '-' }}</dd>
               </dl>
             </section>
           </el-tab-pane>
 
-          <el-tab-pane label="Memory">
+          <el-tab-pane :label="t('conversation.trace.memory')">
             <section class="trace-section">
               <dl>
-                <dt>启用</dt><dd>{{ traceDetail.memory?.enabled ? '是' : '否' }}</dd>
-                <dt>使用摘要</dt><dd>{{ traceDetail.memory?.summaryUsed ? '是' : '否' }}</dd>
-                <dt>摘要版本</dt><dd>{{ traceDetail.memory?.summaryVersion ?? '-' }}</dd>
-                <dt>摘要耗时</dt><dd>{{ traceDetail.memory?.summaryLatencyMs ?? '-' }}ms</dd>
-                <dt>摘要错误</dt><dd>{{ traceDetail.memory?.summaryErrorMessage || '-' }}</dd>
+                <dt>{{ t('conversation.trace.enabled') }}</dt><dd>{{ traceDetail.memory?.enabled ? t('conversation.trace.yes') : t('conversation.trace.no') }}</dd>
+                <dt>{{ t('conversation.trace.summaryUsed') }}</dt><dd>{{ traceDetail.memory?.summaryUsed ? t('conversation.trace.yes') : t('conversation.trace.no') }}</dd>
+                <dt>{{ t('conversation.trace.summaryVersion') }}</dt><dd>{{ traceDetail.memory?.summaryVersion ?? '-' }}</dd>
+                <dt>{{ t('conversation.trace.summaryLatency') }}</dt><dd>{{ traceDetail.memory?.summaryLatencyMs ?? '-' }}ms</dd>
+                <dt>{{ t('conversation.trace.summaryError') }}</dt><dd>{{ traceDetail.memory?.summaryErrorMessage || '-' }}</dd>
               </dl>
             </section>
           </el-tab-pane>
@@ -222,6 +222,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ChatDotRound, Delete as DeleteIcon, InfoFilled, MoreFilled, Plus, Promotion } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
@@ -255,6 +256,7 @@ interface Message {
 }
 
 const agents         = ref<AgentOption[]>([])
+const { t } = useI18n()
 const selectedAgentId = ref<number | null>(null)
 const sessionList    = ref<SessionMeta[]>([])
 const currentSessionId = ref<number | null>(null)
@@ -272,7 +274,7 @@ const selectedAgentName = computed(() => {
 })
 
 const currentSessionTitle = computed(() => {
-  return sessionList.value.find(s => s.id === currentSessionId.value)?.title ?? '新会话'
+  return sessionList.value.find(s => s.id === currentSessionId.value)?.title ?? t('conversation.newConversation')
 })
 
 let cancelStream: (() => void) | null = null
@@ -383,7 +385,7 @@ async function switchSession(s: SessionMeta, persist = true) {
   } catch {
     messages.value = [{
       role: 'assistant',
-      content: '会话历史加载失败，请稍后重试',
+      content: t('conversation.messages.historyLoadFailed'),
       error: true,
     }]
   }
@@ -392,10 +394,10 @@ async function switchSession(s: SessionMeta, persist = true) {
 async function deleteSession(s: SessionMeta) {
   if (isStreaming.value) return
   try {
-    await ElMessageBox.confirm(`确定删除会话「${s.title}」？`, '删除会话', {
+    await ElMessageBox.confirm(t('conversation.confirm.deleteMessage', { title: s.title }), t('conversation.confirm.deleteTitle'), {
       type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
+      confirmButtonText: t('conversation.confirm.deleteConfirm'),
+      cancelButtonText: t('common.cancel'),
       confirmButtonClass: 'el-button--danger',
     })
   } catch {
@@ -412,22 +414,22 @@ async function deleteSession(s: SessionMeta) {
     messages.value = []
     saveActiveState(selectedAgentId.value, null)
   }
-  ElMessage.success('会话已删除')
+  ElMessage.success(t('conversation.messages.sessionDeleted'))
 }
 
 async function clearCurrentSummary() {
   if (!currentSessionId.value || isStreaming.value) return
   try {
-    await ElMessageBox.confirm('确定清空当前会话的记忆摘要？对话消息不会被删除。', '清空记忆摘要', {
+    await ElMessageBox.confirm(t('conversation.confirm.clearSummaryMessage'), t('conversation.confirm.clearSummaryTitle'), {
       type: 'warning',
-      confirmButtonText: '清空',
-      cancelButtonText: '取消',
+      confirmButtonText: t('conversation.confirm.clearSummaryConfirm'),
+      cancelButtonText: t('common.cancel'),
     })
   } catch {
     return
   }
   await clearConversationSummary(currentSessionId.value)
-  ElMessage.success('记忆摘要已清空')
+  ElMessage.success(t('conversation.messages.summaryCleared'))
 }
 
 // ── 发送消息 ──────────────────────────────────────────────────────────────
@@ -473,7 +475,7 @@ function send() {
       },
       onWorkflowStart(ev) {
         messages.value[aiIdx].waiting = false
-        messages.value[aiIdx].workflowEvents = [`工作流 #${ev.workflowRunId} 已开始`]
+        messages.value[aiIdx].workflowEvents = [t('conversation.messages.workflowStarted', { id: ev.workflowRunId })]
         subscribeWorkflowEvents(ev.workflowRunId, aiIdx)
         scrollBottom()
       },
@@ -484,7 +486,7 @@ function send() {
         messages.value[aiIdx].streaming = false
         messages.value[aiIdx].waiting   = false
         messages.value[aiIdx].error     = true
-        messages.value[aiIdx].content   = errMsg || '请求失败，请稍后重试'
+        messages.value[aiIdx].content   = errMsg || t('conversation.messages.requestFailed')
         isStreaming.value = false
       },
     },
@@ -551,7 +553,7 @@ async function loadWorkflowFinalResult(runId: number, aiIdx: number) {
       messages.value[aiIdx].error = !!run.error
     }
   } catch {
-    appendWorkflowEvent(aiIdx, '工作流结果加载失败')
+    appendWorkflowEvent(aiIdx, t('conversation.messages.workflowResultFailed'))
   }
 }
 
@@ -585,7 +587,7 @@ function persistSession(sessionId: number) {
   const all = loadSessions()
   if (sessionList.value.find(s => s.id === sessionId)) return
 
-  const title = messages.value.find(m => m.role === 'user')?.content ?? '新会话'
+  const title = messages.value.find(m => m.role === 'user')?.content ?? t('conversation.newConversation')
   const meta: SessionMeta = {
     id: sessionId,
     title: title.length > 30 ? title.slice(0, 30) + '…' : title,
@@ -635,22 +637,22 @@ function renderContent(msg: Message): string {
 }
 
 function assistantStatus(msg: Message): string {
-  if (msg.error) return '失败'
-  if (msg.workflowEvents?.length) return '工作流运行中'
-  if (msg.waiting) return '准备回答'
-  if (msg.streaming) return '正在生成'
-  return '已完成'
+  if (msg.error) return t('conversation.status.failed')
+  if (msg.workflowEvents?.length) return t('conversation.status.workflowRunning')
+  if (msg.waiting) return t('conversation.status.preparing')
+  if (msg.streaming) return t('conversation.status.streaming')
+  return t('conversation.status.done')
 }
 
 function formatSessionTime(value?: string): string {
-  if (!value) return '刚刚'
+  if (!value) return t('conversation.time.justNow')
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value.slice(0, 10)
   const now = Date.now()
   const diff = now - date.getTime()
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  if (diff < 60_000) return t('conversation.time.justNow')
+  if (diff < 3_600_000) return t('conversation.time.minutesAgo', { count: Math.floor(diff / 60_000) })
+  if (diff < 86_400_000) return t('conversation.time.hoursAgo', { count: Math.floor(diff / 3_600_000) })
   return value.slice(0, 10)
 }
 

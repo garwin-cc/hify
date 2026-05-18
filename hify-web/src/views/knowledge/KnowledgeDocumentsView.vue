@@ -1,17 +1,17 @@
 <template>
   <div class="page-content">
     <PageHeader
-      :title="knowledgeBase?.name || '文档管理'"
-      description="上传文档后自动解析、分块、向量化，并通过状态列跟踪处理进度"
+      :title="knowledgeBase?.name || t('documents.titleFallback')"
+      :description="t('documents.description')"
     >
       <template #actions>
         <el-button @click="goBack">
           <el-icon style="margin-right: 4px"><ArrowLeft /></el-icon>
-          返回知识库
+          {{ t('documents.back') }}
         </el-button>
         <el-button type="primary" @click="uploadDialogVisible = true">
           <el-icon style="margin-right: 4px"><UploadFilled /></el-icon>
-          上传文档
+          {{ t('documents.upload') }}
         </el-button>
       </template>
     </PageHeader>
@@ -20,7 +20,7 @@
       <div class="retrieval-test__bar">
         <el-input
           v-model="retrievalQuery"
-          placeholder="输入问题测试知识库检索命中"
+          :placeholder="t('documents.retrievalPlaceholder')"
           clearable
           @keyup.enter="handleRetrievalTest"
         >
@@ -45,26 +45,26 @@
           class="retrieval-test__number"
         />
         <el-button type="primary" :loading="testingRetrieval" @click="handleRetrievalTest">
-          测试检索
+          {{ t('documents.retrievalTest') }}
         </el-button>
       </div>
 
       <div v-if="retrievalTraceId" class="retrieval-test__trace">
-        Trace: <span class="mono-text">{{ retrievalTraceId }}</span>
+        {{ t('documents.trace') }}: <span class="mono-text">{{ retrievalTraceId }}</span>
       </div>
 
       <el-empty
         v-if="retrievalTested && !testingRetrieval && retrievalHits.length === 0"
-        description="未命中高相关分块"
+        :description="t('documents.noHits')"
       />
       <div v-else-if="retrievalHits.length > 0" class="retrieval-hit-list">
         <div v-for="hit in retrievalHits" :key="hit.id" class="retrieval-hit">
           <div class="retrieval-hit__header">
-            <span>#{{ hit.rank || '-' }} {{ hit.documentName || `文档 ${hit.documentId}` }}</span>
-            <span class="mono-text">score {{ formatScore(hit.finalScore ?? hit.score) }}</span>
+            <span>#{{ hit.rank || '-' }} {{ hit.documentName || `${t('documents.document')} ${hit.documentId}` }}</span>
+            <span class="mono-text">{{ t('documents.score') }} {{ formatScore(hit.finalScore ?? hit.score) }}</span>
           </div>
           <div class="retrieval-hit__meta">
-            Chunk #{{ hit.chunkIndex + 1 }}
+            {{ t('documents.chunk') }} #{{ hit.chunkIndex + 1 }}
             <span v-if="hit.vectorScore !== undefined"> · vector {{ formatScore(hit.vectorScore) }}</span>
           </div>
           <div class="retrieval-hit__content">{{ hit.content }}</div>
@@ -74,34 +74,34 @@
 
     <div class="hify-card task-panel">
       <div class="hify-card__header">
-        <span class="hify-card__title">处理队列</span>
+        <span class="hify-card__title">{{ t('documents.taskQueue') }}</span>
         <div class="task-panel__actions">
-          <el-button size="small" :loading="loadingTasks" @click="loadTasks">刷新队列</el-button>
-          <el-button size="small" type="primary" @click="rebuildDialogVisible = true">重建索引</el-button>
+          <el-button size="small" :loading="loadingTasks" @click="loadTasks">{{ t('documents.refreshQueue') }}</el-button>
+          <el-button size="small" type="primary" @click="rebuildDialogVisible = true">{{ t('documents.rebuildIndex') }}</el-button>
         </div>
       </div>
       <el-table :data="tasks" size="small" v-loading="loadingTasks">
-        <el-table-column prop="taskType" label="任务" width="130" />
-        <el-table-column prop="documentId" label="文档" width="90">
+        <el-table-column prop="taskType" :label="t('documents.task')" width="130" />
+        <el-table-column prop="documentId" :label="t('documents.document')" width="90">
           <template #default="{ row }">{{ row.documentId || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="120">
+        <el-table-column prop="status" :label="t('common.status')" width="120">
           <template #default="{ row }">
             <el-tag size="small" :type="taskStatusType(row.status)">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="processStage" label="阶段" width="120">
+        <el-table-column prop="processStage" :label="t('documents.stage')" width="120">
           <template #default="{ row }">{{ row.processStage || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="processProgress" label="进度" width="160">
+        <el-table-column prop="processProgress" :label="t('documents.progress')" width="160">
           <template #default="{ row }">
             <el-progress :percentage="safeProgress(row.processProgress)" :show-text="false" :stroke-width="5" />
           </template>
         </el-table-column>
-        <el-table-column prop="progressMessage" label="说明" min-width="180" />
-        <el-table-column prop="errorMessage" label="错误" min-width="160" />
+        <el-table-column prop="progressMessage" :label="t('documents.note')" min-width="180" />
+        <el-table-column prop="errorMessage" :label="t('documents.error')" min-width="160" />
       </el-table>
-      <el-empty v-if="!loadingTasks && tasks.length === 0" description="暂无排队或处理中任务" :image-size="80" />
+      <el-empty v-if="!loadingTasks && tasks.length === 0" :description="t('documents.emptyQueue')" :image-size="80" />
     </div>
 
     <div class="hify-card hify-card--flush">
@@ -110,7 +110,7 @@
         :columns="columns"
         :api="fetchList"
         :row-style="{ height: '56px' }"
-        empty-text="暂无文档，点击「上传文档」开始构建知识库"
+        :empty-text="t('documents.empty')"
       >
         <template #name="{ row }">
           <span class="file-name">{{ row.name }}</span>
@@ -171,7 +171,7 @@
               size="small"
               @click="handleViewChunks(row)"
             >
-              查看分块
+              {{ t('documents.viewChunks') }}
             </el-button>
             <el-button
               v-if="row.status === 'DONE'"
@@ -179,7 +179,7 @@
               size="small"
               @click="handleRevectorize(row)"
             >
-              重向量化
+              {{ t('documents.revectorize') }}
             </el-button>
             <el-button
               v-if="row.status === 'FAILED' || row.status === 'CANCELED'"
@@ -189,7 +189,7 @@
               :disabled="row.status === 'FAILED' && row.retryable !== 1"
               @click="handleRetry(row)"
             >
-              重试
+              {{ t('documents.retry') }}
             </el-button>
             <el-button
               v-if="row.status === 'PENDING' || row.status === 'PROCESSING'"
@@ -198,7 +198,7 @@
               plain
               @click="handleCancel(row)"
             >
-              取消
+              {{ t('documents.cancelProcess') }}
             </el-button>
             <el-button
               size="small"
@@ -207,7 +207,7 @@
               plain
               @click="handleDelete(row)"
             >
-              删除
+              {{ t('common.delete') }}
             </el-button>
           </div>
         </template>
@@ -216,7 +216,7 @@
 
     <el-dialog
       v-model="uploadDialogVisible"
-      title="上传文档"
+      :title="t('documents.uploadTitle')"
       width="520px"
       destroy-on-close
     >
@@ -229,10 +229,10 @@
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">
-          将 txt / md / pdf / csv 文件拖到此处，或<em>点击上传</em>
+          {{ t('documents.uploadText') }}<em>{{ t('documents.clickUpload') }}</em>
         </div>
         <template #tip>
-          <div class="el-upload__tip">仅支持 txt、md、pdf、csv，单个文件不超过 200MB。</div>
+          <div class="el-upload__tip">{{ t('documents.uploadTip') }}</div>
         </template>
       </el-upload>
     </el-dialog>
@@ -245,12 +245,12 @@
       @closed="handleChunkDialogClosed"
     >
       <div v-loading="loadingChunks" class="chunk-list">
-        <el-empty v-if="!loadingChunks && chunks.length === 0" description="暂无分块内容" />
+        <el-empty v-if="!loadingChunks && chunks.length === 0" :description="t('documents.emptyChunks')" />
         <div v-for="chunk in chunks" v-else :key="chunk.id" class="chunk-item">
           <div class="chunk-item__header">
-            <span>Chunk #{{ chunk.chunkIndex + 1 }}</span>
+            <span>{{ t('documents.chunk') }} #{{ chunk.chunkIndex + 1 }}</span>
             <el-button link type="primary" @click="toggleChunk(chunk.id)">
-              {{ expandedChunkIds.has(chunk.id) ? '收起' : '展开全文' }}
+              {{ expandedChunkIds.has(chunk.id) ? t('documents.collapse') : t('documents.expandFull') }}
             </el-button>
           </div>
           <div class="chunk-item__content">
@@ -260,12 +260,12 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="rebuildDialogVisible" title="重建知识库索引" width="520px">
+    <el-dialog v-model="rebuildDialogVisible" :title="t('documents.rebuildTitle')" width="520px">
       <el-form label-width="120px">
-        <el-form-item label="原因">
-          <el-input v-model="rebuildForm.reason" placeholder="例如：embedding 模型或 chunk 策略变更" />
+        <el-form-item :label="t('documents.reason')">
+          <el-input v-model="rebuildForm.reason" :placeholder="t('documents.reasonPlaceholder')" />
         </el-form-item>
-        <el-form-item label="Embedding 模型">
+        <el-form-item :label="t('documents.embeddingModel')">
           <el-input-number v-model="rebuildForm.embeddingModelConfigId" :min="1" controls-position="right" />
         </el-form-item>
         <el-form-item label="Chunk Size">
@@ -276,8 +276,8 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="rebuildDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="rebuilding" @click="handleRebuildIndex">提交重建</el-button>
+        <el-button @click="rebuildDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="rebuilding" @click="handleRebuildIndex">{{ t('documents.submitRebuild') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -286,6 +286,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Loading, Search, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps, type UploadRequestOptions } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -317,16 +318,9 @@ import {
 const MAX_FILE_SIZE = 200 * 1024 * 1024
 const ALLOWED_EXTENSIONS = new Set(['txt', 'md', 'pdf', 'csv'])
 
-const STATUS_LABEL: Record<DocumentStatus, string> = {
-  PENDING: '等待处理',
-  PROCESSING: '处理中',
-  DONE: '完成',
-  FAILED: '失败',
-  CANCELED: '已取消',
-}
-
 const router = useRouter()
 const route = useRoute()
+const { t } = useI18n()
 const { isNarrow } = useBreakpoint()
 const knowledgeBaseId = computed(() => Number(route.params.id))
 
@@ -351,17 +345,17 @@ const rebuildForm = reactive({
 })
 
 const columns = computed<HifyColumn[]>(() => [
-  { label: '文件名', slot: 'name', minWidth: '220' },
-  { label: '类型', slot: 'fileType', width: '90' },
+  { label: t('documents.fileName'), slot: 'name', minWidth: '220' },
+  { label: t('table.type'), slot: 'fileType', width: '90' },
   ...(!isNarrow.value ? [
-    { label: '文件大小', slot: 'fileSize', width: '110' } as HifyColumn,
+    { label: t('documents.fileSize'), slot: 'fileSize', width: '110' } as HifyColumn,
   ] : []),
-  { label: '分块数量', slot: 'chunkCount', width: '100', align: 'center' },
-  { label: '处理状态', slot: 'status', width: '120' },
+  { label: t('documents.chunkCount'), slot: 'chunkCount', width: '100', align: 'center' },
+  { label: t('documents.processStatus'), slot: 'status', width: '120' },
   ...(!isNarrow.value ? [
-    { label: '创建时间', slot: 'createdAt', width: '120' } as HifyColumn,
+    { label: t('documents.createdAt'), slot: 'createdAt', width: '120' } as HifyColumn,
   ] : []),
-  { label: '操作', slot: 'actions', width: isNarrow.value ? '170' : '320', align: 'right' },
+  { label: t('documents.actions'), slot: 'actions', width: isNarrow.value ? '170' : '320', align: 'right' },
 ])
 
 function goBack() {
@@ -403,7 +397,14 @@ function statusTagType(status: DocumentStatus) {
 }
 
 function statusLabel(status: DocumentStatus) {
-  return STATUS_LABEL[status] ?? status
+  const labels: Record<DocumentStatus, string> = {
+    PENDING: t('documents.status.pending'),
+    PROCESSING: t('documents.status.processing'),
+    DONE: t('documents.status.done'),
+    FAILED: t('documents.status.failed'),
+    CANCELED: t('documents.status.canceled'),
+  }
+  return labels[status] ?? status
 }
 
 function taskStatusType(status?: string) {
@@ -416,20 +417,20 @@ function taskStatusType(status?: string) {
 function processLabel(row: KnowledgeDocumentItem) {
   if (row.status !== 'PROCESSING') return statusLabel(row.status)
   const stageLabels: Record<string, string> = {
-    EXTRACTING: '解析中',
-    CHUNKING: '分块中',
-    EMBEDDING: '向量化中',
-    SAVING: '写入中',
+    EXTRACTING: t('documents.processStage.extracting'),
+    CHUNKING: t('documents.processStage.chunking'),
+    EMBEDDING: t('documents.processStage.embedding'),
+    SAVING: t('documents.processStage.saving'),
   }
   return stageLabels[row.processStage] ?? statusLabel(row.status)
 }
 
 function documentErrorText(row: KnowledgeDocumentItem) {
   const parts = [
-    row.failedStage ? `失败阶段：${row.failedStage}` : '',
-    row.errorCode ? `错误类型：${row.errorCode}` : '',
-    `是否可重试：${row.retryable === 1 ? '是' : '否'}`,
-    row.errorMessage ? `原因：${row.errorMessage}` : '',
+    row.failedStage ? t('documents.statusStage', { stage: row.failedStage }) : '',
+    row.errorCode ? t('documents.errorCode', { code: row.errorCode }) : '',
+    t('documents.retryable', { value: row.retryable === 1 ? t('documents.yes') : t('documents.no') }),
+    row.errorMessage ? t('documents.reasonText', { reason: row.errorMessage }) : '',
   ].filter(Boolean)
   return parts.join('\n')
 }
@@ -453,7 +454,7 @@ function formatScore(score?: number) {
 async function handleRetrievalTest() {
   const query = retrievalQuery.value.trim()
   if (!query) {
-    ElMessage.warning('请输入检索问题')
+    ElMessage.warning(t('documents.enterRetrievalQuestion'))
     return
   }
   testingRetrieval.value = true
@@ -478,11 +479,11 @@ const uploadDialogVisible = ref(false)
 const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
   const extension = rawFile.name.split('.').pop()?.toLowerCase() ?? ''
   if (!ALLOWED_EXTENSIONS.has(extension)) {
-    ElMessage.error('仅支持 txt、md、pdf、csv 文件')
+    ElMessage.error(t('documents.unsupportedFile'))
     return false
   }
   if (rawFile.size > MAX_FILE_SIZE) {
-    ElMessage.error('文件大小不能超过 200MB')
+    ElMessage.error(t('documents.fileTooLarge'))
     return false
   }
   return true
@@ -491,7 +492,7 @@ const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
 async function handleUpload(options: UploadRequestOptions) {
   try {
     const documentId = await uploadKnowledgeDocument(knowledgeBaseId.value, options.file)
-    notifySuccess('文档已提交处理')
+    notifySuccess(t('documents.messages.uploaded'))
     uploadDialogVisible.value = false
     tableRef.value?.refresh()
     startPolling(documentId)
@@ -560,9 +561,9 @@ const { confirm } = useConfirm()
 
 async function handleDelete(row: KnowledgeDocumentItem) {
   const deleted = await confirm(
-    `确定删除文档「${row.name}」？对应分块会一起删除。`,
+    t('documents.messages.deleteConfirm', { name: row.name }),
     () => deleteDocument(row.id),
-    { successMsg: '文档已删除' },
+    { successMsg: t('documents.messages.deleted') },
   )
   if (deleted) {
     stopPolling(row.id)
@@ -572,12 +573,12 @@ async function handleDelete(row: KnowledgeDocumentItem) {
 
 async function handleRetry(row: KnowledgeDocumentItem) {
   const retried = await confirm(
-    `确定重试文档「${row.name}」？旧的半成品分块会先被清理。`,
+    t('documents.messages.retryConfirm', { name: row.name }),
     () => retryDocument(row.id),
     {
-      title: '重试确认',
-      confirmText: '重试',
-      successMsg: '文档已重新提交处理',
+      title: t('documents.messages.retryTitle'),
+      confirmText: t('documents.messages.retryConfirmText'),
+      successMsg: t('documents.messages.retrySubmitted'),
     },
   )
   if (retried) {
@@ -588,12 +589,12 @@ async function handleRetry(row: KnowledgeDocumentItem) {
 
 async function handleCancel(row: KnowledgeDocumentItem) {
   const canceled = await confirm(
-    `确定取消文档「${row.name}」的处理任务？`,
+    t('documents.messages.cancelConfirm', { name: row.name }),
     () => cancelDocument(row.id),
     {
-      title: '取消处理确认',
-      confirmText: '取消处理',
-      successMsg: '已请求取消文档处理',
+      title: t('documents.messages.cancelTitle'),
+      confirmText: t('documents.messages.cancelConfirmText'),
+      successMsg: t('documents.messages.cancelRequested'),
     },
   )
   if (canceled) {
@@ -604,12 +605,12 @@ async function handleCancel(row: KnowledgeDocumentItem) {
 
 async function handleRevectorize(row: KnowledgeDocumentItem) {
   const submitted = await confirm(
-    `确定重新向量化文档「${row.name}」？会创建后台任务并刷新 pgvector 分块。`,
+    t('documents.messages.revectorizeConfirm', { name: row.name }),
     () => revectorizeDocument(row.id, { reason: 'manual revectorize from web' }),
     {
-      title: '重向量化确认',
-      confirmText: '提交',
-      successMsg: '已提交重向量化任务',
+      title: t('documents.messages.revectorizeTitle'),
+      confirmText: t('documents.messages.submit'),
+      successMsg: t('documents.messages.revectorizeSubmitted'),
     },
   )
   if (submitted) {
@@ -628,7 +629,7 @@ async function handleRebuildIndex() {
       chunkOverlap: rebuildForm.chunkOverlap,
     })
     rebuildDialogVisible.value = false
-    notifySuccess('已提交重建索引任务')
+    notifySuccess(t('documents.messages.rebuildSubmitted'))
     await loadTasks()
     tableRef.value?.refresh()
   } finally {
@@ -641,7 +642,9 @@ const loadingChunks = ref(false)
 const chunks = ref<KnowledgeChunkItem[]>([])
 const activeDocument = ref<KnowledgeDocumentItem | null>(null)
 const expandedChunkIds = reactive(new Set<number>())
-const chunkDialogTitle = computed(() => activeDocument.value ? `分块：${activeDocument.value.name}` : '查看分块')
+const chunkDialogTitle = computed(() => activeDocument.value
+  ? t('documents.chunkDialogTitle', { name: activeDocument.value.name })
+  : t('documents.viewChunksTitle'))
 
 async function handleViewChunks(row: KnowledgeDocumentItem) {
   activeDocument.value = row

@@ -11,10 +11,10 @@ Chinese documentation: [README_CN.md](README_CN.md)
 | Module | Description |
 |---|---|
 | Account System | User login, session tokens, ADMIN / EDITOR / VIEWER roles, and API authorization |
-| Model Management | Manage OpenAI, Anthropic, DeepSeek, Ollama, OpenAI-compatible providers, and model configs |
+| Model Management | Manage OpenAI, Anthropic, DeepSeek, Ollama, OpenAI-compatible providers, and CHAT / EMBEDDING / RERANK model configs |
 | Agent Configuration | Configure agents, system prompts, model bindings, knowledge bases, and MCP tools |
 | Conversation Engine | Multi-turn chat, message history, SSE streaming responses, and function calling |
-| Knowledge Base RAG | Knowledge bases, documents, chunks, vector retrieval, and context injection |
+| Knowledge Base RAG | Knowledge bases, documents, chunks, hybrid retrieval, optional rerank, metadata filtering, and context injection |
 | MCP Tool Integration | Manage MCP servers and tools for agent conversations and workflows |
 | Lightweight Workflow | Visual orchestration with START, LLM, CONDITION, KNOWLEDGE, API_CALL, HUMAN_REVIEW, CODE_TASK, and END nodes |
 | Template Library | Create workflows from templates, save workflows as templates, version snapshots, and export templates |

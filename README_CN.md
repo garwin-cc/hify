@@ -11,10 +11,10 @@ English documentation: [README.md](README.md)
 | 模块 | 说明 |
 |---|---|
 | 账号体系 | 用户登录、Session Token、ADMIN / EDITOR / VIEWER 角色和接口鉴权 |
-| 模型管理 | 管理 OpenAI、Anthropic、DeepSeek、Ollama、OpenAI Compatible 等 Provider 和模型配置 |
+| 模型管理 | 管理 OpenAI、Anthropic、DeepSeek、Ollama、OpenAI Compatible 等 Provider，以及 CHAT / EMBEDDING / RERANK 模型配置 |
 | Agent 配置 | 配置 Agent 名称、系统提示词、绑定模型、知识库和 MCP 工具 |
 | 对话引擎 | 多轮对话、历史消息、SSE 流式响应、Function Calling |
-| 知识库 RAG | 知识库、文档、切片、向量检索和上下文注入 |
+| 知识库 RAG | 知识库、文档、切片、混合检索、可选 Rerank、元数据过滤和上下文注入 |
 | MCP 工具接入 | 管理 MCP Server 和工具，供 Agent 对话调用 |
 | 简版工作流 | 可视化编排，支持 START、LLM、CONDITION、KNOWLEDGE、API_CALL、HUMAN_REVIEW、CODE_TASK、END 节点 |
 | 模板库 | 从模板创建工作流、从已有工作流沉淀模板、模板版本快照和导出 |

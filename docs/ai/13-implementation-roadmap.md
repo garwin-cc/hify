@@ -209,6 +209,7 @@ Hify 不按 Dify 的功能广度推进，而按内部生产可用性推进。Dif
 - `hify-model` 新增 `RERANK` 模型类型，接入 Cohere / BGE-Reranker 等 rerank 接口
 - `KnowledgeService.searchSimilar` 检索后可选调用 Rerank 服务精排
 - `UpdateKnowledgeRetrievalConfigReq` 新增 `rerankEnabled`、`rerankModelConfigId`
+- 已落地基础闭环：模型管理页可手动新增或切换 `RERANK` 模型；知识库检索配置的精排模型只读取已启用的 `RERANK` 模型，避免把向量模型误用于精排。
 
 ### 5-3 元数据过滤
 

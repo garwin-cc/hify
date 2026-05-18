@@ -11,8 +11,10 @@
 - `model_config.type` 必须区分：
   - `CHAT`：用于 Agent、LLM 节点、普通对话。
   - `EMBEDDING`：用于知识库文档向量化和 RAG 检索。
+  - `RERANK`：用于知识库检索后的候选片段精排。
 - 前端选择模型时必须展示模型名称、modelId 和 Provider 名称，禁止只展示数据库 ID。
-- 向量模型无法通过供应商 models 接口稳定枚举时，允许手动新增模型并标记为 `EMBEDDING`。
+- 前端模型管理必须允许模型用途在 `CHAT` / `EMBEDDING` / `RERANK` 之间切换；知识库精排模型下拉只读取已启用的 `RERANK` 模型。
+- 向量模型和重排模型无法通过供应商 models 接口稳定枚举时，允许手动新增模型并标记为 `EMBEDDING` 或 `RERANK`。
 
 ### 线程池配置
 

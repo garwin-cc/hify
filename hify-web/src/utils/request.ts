@@ -1,5 +1,4 @@
 import axios, { type AxiosRequestConfig } from 'axios'
-import { ElMessage } from 'element-plus'
 import router from '@/router'
 import { useAuthStore } from '@/stores/auth'
 import { i18n } from '@/i18n'
@@ -16,6 +15,14 @@ const instance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+async function showError(message: string) {
+  const [{ ElMessage }] = await Promise.all([
+    import('element-plus/es/components/message/index'),
+    import('element-plus/es/components/message/style/css'),
+  ])
+  ElMessage.error(message)
+}
+
 instance.interceptors.request.use((config) => {
   const auth = useAuthStore()
   if (auth.token) {
@@ -30,7 +37,7 @@ instance.interceptors.response.use(
     if (res.code === 200) {
       return res.data as any
     }
-    ElMessage.error(res.message || i18n.global.t('common.requestFailed'))
+    void showError(res.message || i18n.global.t('common.requestFailed'))
     return Promise.reject(new Error(res.message))
   },
   (error) => {
@@ -39,7 +46,7 @@ instance.interceptors.response.use(
       useAuthStore().clear()
       router.push('/login')
     }
-    ElMessage.error(msg)
+    void showError(msg)
     return Promise.reject(error)
   },
 )

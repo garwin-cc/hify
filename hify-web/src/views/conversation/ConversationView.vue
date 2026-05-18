@@ -787,6 +787,7 @@ function formatScore(score?: number): string {
 }
 
 .chat-panel {
+  --chat-content-width: 960px;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -822,11 +823,13 @@ function formatScore(score?: number): string {
   padding: 26px 32px 148px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 22px;
 }
 
 .messages-placeholder {
   flex: 1;
+  width: min(var(--chat-content-width), 100%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -846,6 +849,7 @@ function formatScore(score?: number): string {
 }
 
 .message-row {
+  width: min(var(--chat-content-width), 100%);
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -870,14 +874,14 @@ function formatScore(score?: number): string {
 }
 
 .bubble {
-  max-width: min(760px, 76%);
+  max-width: calc(100% - 38px);
   font-size: 14px;
   line-height: 1.7;
   word-break: break-word;
 }
 
 .bubble.user {
-  max-width: min(620px, 64%);
+  max-width: min(720px, 72%);
   padding: 10px 14px;
   border-radius: 14px 14px 4px 14px;
   background: #2f66e8;
@@ -1040,7 +1044,7 @@ function formatScore(score?: number): string {
 }
 
 .input-card {
-  width: min(760px, 100%);
+  width: min(var(--chat-content-width), 100%);
   padding: 9px 10px 8px;
   border: 1px solid #dde4f0;
   border-radius: 12px;

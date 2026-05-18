@@ -2,6 +2,7 @@
   <div class="chat-layout">
     <aside class="sidebar">
       <div class="sidebar-header">
+        <div class="sidebar-kicker">Agent</div>
         <el-select
           v-model="selectedAgentId"
           placeholder="选择 Agent"
@@ -16,19 +17,19 @@
             :value="a.id"
           />
         </el-select>
-        <el-button
-          size="small"
-          type="primary"
-          :icon="Plus"
-          style="margin-top: 8px; width: 100%"
-          @click="newSession"
-        >新建会话</el-button>
-        <el-button
-          size="small"
-          style="margin-top: 8px; width: 100%"
-          :disabled="!currentSessionId || isStreaming"
-          @click="clearCurrentSummary"
-        >清空记忆摘要</el-button>
+        <div class="sidebar-actions">
+          <el-button size="small" type="primary" :icon="Plus" @click="newSession">新建</el-button>
+          <el-dropdown trigger="click">
+            <el-button size="small" :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item :disabled="!currentSessionId || isStreaming" @click="clearCurrentSummary">
+                  清空记忆摘要
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </div>
 
       <div class="session-list">
@@ -40,7 +41,10 @@
           @click="switchSession(s)"
         >
           <el-icon><ChatDotRound /></el-icon>
-          <span class="session-title">{{ s.title }}</span>
+          <div class="session-main">
+            <span class="session-title">{{ s.title }}</span>
+            <span class="session-meta">{{ formatSessionTime(s.createdAt) }}</span>
+          </div>
           <el-button
             class="session-delete"
             text
@@ -51,14 +55,26 @@
             @click.stop="deleteSession(s)"
           />
         </div>
-        <div v-if="sessionList.length === 0" class="session-empty">暂无会话</div>
+        <div v-if="sessionList.length === 0" class="session-empty">
+          <span>暂无会话</span>
+          <el-button link type="primary" size="small" @click="newSession">新建会话</el-button>
+        </div>
       </div>
     </aside>
 
     <div class="chat-panel">
+      <header class="chat-header">
+        <div>
+          <div class="chat-title">{{ currentSessionTitle }}</div>
+          <div class="chat-subtitle">{{ selectedAgentName }}</div>
+        </div>
+        <el-tag v-if="isStreaming" size="small" type="primary" effect="plain">正在生成</el-tag>
+      </header>
+
       <div ref="messagesEl" class="messages">
         <div v-if="messages.length === 0" class="messages-placeholder">
-          选择 Agent 开始对话
+          <div class="placeholder-title">开始新的对话</div>
+          <div class="placeholder-desc">选择 Agent 后输入问题，回答会保留运行详情用于排障。</div>
         </div>
 
         <div
@@ -67,7 +83,19 @@
           class="message-row"
           :class="msg.role"
         >
+          <div v-if="msg.role === 'assistant'" class="message-avatar">H</div>
           <div class="bubble" :class="[msg.role, { 'bubble--error': msg.error }]">
+            <div v-if="msg.role === 'assistant'" class="assistant-meta">
+              <span>{{ assistantStatus(msg) }}</span>
+              <el-button
+                v-if="msg.id"
+                class="trace-button"
+                text
+                size="small"
+                :icon="InfoFilled"
+                @click="openTrace(msg)"
+              />
+            </div>
             <span v-if="msg.role === 'assistant' && msg.waiting" class="typing-dots">
               <span /><span /><span />
             </span>
@@ -78,39 +106,35 @@
               v-html="renderContent(msg)"
             />
             <span v-else>{{ msg.content }}</span>
-            <div v-if="msg.role === 'assistant' && msg.id" class="message-actions">
-              <el-button
-                text
-                size="small"
-                :icon="InfoFilled"
-                @click="openTrace(msg)"
-              >
-                运行详情
-              </el-button>
-            </div>
           </div>
         </div>
       </div>
 
       <div class="input-bar">
         <div class="input-card">
-          <el-input
-            v-model="inputText"
-            type="textarea"
-            :autosize="{ minRows: 1, maxRows: 5 }"
-            :disabled="isStreaming"
-            :placeholder="`问问 ${selectedAgentName}`"
-            resize="none"
-            @keydown="onKeydown"
-          />
-          <el-button
-            type="primary"
-            :icon="isStreaming ? undefined : Promotion"
-            :loading="isStreaming"
-            :disabled="isStreaming || !selectedAgentId || !inputText.trim()"
-            style="align-self: flex-end"
-            @click="send"
-          >{{ isStreaming ? '生成中' : '发送' }}</el-button>
+          <div class="input-agent">{{ selectedAgentName }}</div>
+          <div class="composer-row">
+            <el-input
+              v-model="inputText"
+              type="textarea"
+              :autosize="{ minRows: 1, maxRows: 5 }"
+              :disabled="isStreaming"
+              :placeholder="`问问 ${selectedAgentName}`"
+              resize="none"
+              class="composer-input"
+              @keydown="onKeydown"
+            />
+            <el-button
+              class="send-button"
+              type="primary"
+              :icon="isStreaming ? undefined : Promotion"
+              :loading="isStreaming"
+              :disabled="isStreaming || !selectedAgentId || !inputText.trim()"
+              circle
+              @click="send"
+            />
+          </div>
+          <div class="composer-hint">Enter 发送，Shift + Enter 换行</div>
         </div>
       </div>
     </div>
@@ -118,71 +142,79 @@
     <el-drawer v-model="traceDrawerVisible" title="运行详情" size="520px">
       <div v-if="traceLoading" class="trace-empty">加载中...</div>
       <div v-else-if="traceDetail" class="trace-panel">
-        <section class="trace-section">
-          <h3>基础信息</h3>
-          <dl>
-            <dt>traceId</dt><dd>{{ traceDetail.traceId }}</dd>
-            <dt>状态</dt><dd>{{ traceDetail.status }}</dd>
-            <dt>Agent</dt><dd>{{ traceDetail.agent?.name || '-' }}</dd>
-            <dt>模型</dt><dd>{{ traceDetail.model?.providerName || '-' }} / {{ traceDetail.model?.modelId || '-' }}</dd>
-            <dt>错误</dt><dd>{{ traceDetail.errorMessage || '-' }}</dd>
-          </dl>
-        </section>
+        <el-tabs class="trace-tabs">
+          <el-tab-pane label="概览">
+            <section class="trace-section">
+              <dl>
+                <dt>traceId</dt><dd>{{ traceDetail.traceId }}</dd>
+                <dt>状态</dt><dd>{{ traceDetail.status }}</dd>
+                <dt>Agent</dt><dd>{{ traceDetail.agent?.name || '-' }}</dd>
+                <dt>模型</dt><dd>{{ traceDetail.model?.providerName || '-' }} / {{ traceDetail.model?.modelId || '-' }}</dd>
+                <dt>错误</dt><dd>{{ traceDetail.errorMessage || '-' }}</dd>
+              </dl>
+            </section>
+          </el-tab-pane>
 
-        <section class="trace-section">
-          <h3>RAG</h3>
-          <div v-if="!traceDetail.rag?.triggered" class="trace-empty">未触发</div>
-          <div v-else-if="!traceDetail.rag?.hits.length" class="trace-empty">已触发，无命中或检索失败</div>
-          <div v-for="hit in traceDetail.rag?.hits ?? []" :key="`${hit.documentId}-${hit.chunkIndex}`" class="trace-item">
-            <div class="trace-item-title">{{ hit.documentName || hit.documentId || '-' }}</div>
-            <div class="trace-meta">chunk #{{ hit.chunkIndex ?? '-' }} · score {{ formatScore(hit.score) }}</div>
-            <p>{{ hit.contentPreview }}</p>
-          </div>
-        </section>
+          <el-tab-pane label="RAG">
+            <section class="trace-section">
+              <div v-if="!traceDetail.rag?.triggered" class="trace-empty">未触发</div>
+              <div v-else-if="!traceDetail.rag?.hits.length" class="trace-empty">已触发，无命中或检索失败</div>
+              <div v-for="hit in traceDetail.rag?.hits ?? []" :key="`${hit.documentId}-${hit.chunkIndex}`" class="trace-item">
+                <div class="trace-item-title">{{ hit.documentName || hit.documentId || '-' }}</div>
+                <div class="trace-meta">chunk #{{ hit.chunkIndex ?? '-' }} · score {{ formatScore(hit.score) }}</div>
+                <p>{{ hit.contentPreview }}</p>
+              </div>
+            </section>
+          </el-tab-pane>
 
-        <section class="trace-section">
-          <h3>Memory</h3>
-          <dl>
-            <dt>启用</dt><dd>{{ traceDetail.memory?.enabled ? '是' : '否' }}</dd>
-            <dt>使用摘要</dt><dd>{{ traceDetail.memory?.summaryUsed ? '是' : '否' }}</dd>
-            <dt>摘要版本</dt><dd>{{ traceDetail.memory?.summaryVersion ?? '-' }}</dd>
-            <dt>摘要耗时</dt><dd>{{ traceDetail.memory?.summaryLatencyMs ?? '-' }}ms</dd>
-            <dt>摘要错误</dt><dd>{{ traceDetail.memory?.summaryErrorMessage || '-' }}</dd>
-          </dl>
-        </section>
+          <el-tab-pane label="MCP">
+            <section class="trace-section">
+              <div v-if="!traceDetail.mcp?.triggered" class="trace-empty">未触发</div>
+              <div v-for="tool in traceDetail.mcp?.toolCalls ?? []" :key="tool.toolName" class="trace-item">
+                <div class="trace-item-title">{{ tool.toolName }}</div>
+                <div class="trace-meta">
+                  {{ tool.success ? '成功' : '失败' }} · {{ tool.elapsedMs ?? '-' }}ms · 参数 {{ tool.argumentKeys?.join(', ') || '-' }}
+                </div>
+                <p v-if="tool.errorMessage">{{ tool.errorMessage }}</p>
+              </div>
+            </section>
+          </el-tab-pane>
 
-        <section class="trace-section">
-          <h3>MCP</h3>
-          <div v-if="!traceDetail.mcp?.triggered" class="trace-empty">未触发</div>
-          <div v-for="tool in traceDetail.mcp?.toolCalls ?? []" :key="tool.toolName" class="trace-item">
-            <div class="trace-item-title">{{ tool.toolName }}</div>
-            <div class="trace-meta">
-              {{ tool.success ? '成功' : '失败' }} · {{ tool.elapsedMs ?? '-' }}ms · 参数 {{ tool.argumentKeys?.join(', ') || '-' }}
-            </div>
-            <p v-if="tool.errorMessage">{{ tool.errorMessage }}</p>
-          </div>
-        </section>
+          <el-tab-pane label="LLM">
+            <section class="trace-section">
+              <dl>
+                <dt>Provider</dt><dd>{{ traceDetail.llm?.providerName || '-' }}</dd>
+                <dt>modelId</dt><dd>{{ traceDetail.llm?.modelId || '-' }}</dd>
+                <dt>首 token</dt><dd>{{ traceDetail.llm?.firstTokenLatencyMs ?? '-' }}ms</dd>
+                <dt>总耗时</dt><dd>{{ traceDetail.llm?.totalLatencyMs ?? '-' }}ms</dd>
+                <dt>tokens</dt><dd>{{ traceDetail.llm?.inputTokens ?? '-' }} / {{ traceDetail.llm?.outputTokens ?? '-' }}</dd>
+                <dt>错误</dt><dd>{{ traceDetail.llm?.errorMessage || '-' }}</dd>
+              </dl>
+            </section>
+          </el-tab-pane>
 
-        <section class="trace-section">
-          <h3>LLM</h3>
-          <dl>
-            <dt>Provider</dt><dd>{{ traceDetail.llm?.providerName || '-' }}</dd>
-            <dt>modelId</dt><dd>{{ traceDetail.llm?.modelId || '-' }}</dd>
-            <dt>首 token</dt><dd>{{ traceDetail.llm?.firstTokenLatencyMs ?? '-' }}ms</dd>
-            <dt>总耗时</dt><dd>{{ traceDetail.llm?.totalLatencyMs ?? '-' }}ms</dd>
-            <dt>tokens</dt><dd>{{ traceDetail.llm?.inputTokens ?? '-' }} / {{ traceDetail.llm?.outputTokens ?? '-' }}</dd>
-            <dt>错误</dt><dd>{{ traceDetail.llm?.errorMessage || '-' }}</dd>
-          </dl>
-        </section>
+          <el-tab-pane label="Workflow">
+            <section class="trace-section">
+              <dl>
+                <dt>触发</dt><dd>{{ traceDetail.workflow?.triggered ? '是' : '否' }}</dd>
+                <dt>workflowId</dt><dd>{{ traceDetail.workflow?.workflowId ?? '-' }}</dd>
+                <dt>runId</dt><dd>{{ traceDetail.workflow?.workflowRunId ?? '-' }}</dd>
+              </dl>
+            </section>
+          </el-tab-pane>
 
-        <section class="trace-section">
-          <h3>Workflow</h3>
-          <dl>
-            <dt>触发</dt><dd>{{ traceDetail.workflow?.triggered ? '是' : '否' }}</dd>
-            <dt>workflowId</dt><dd>{{ traceDetail.workflow?.workflowId ?? '-' }}</dd>
-            <dt>runId</dt><dd>{{ traceDetail.workflow?.workflowRunId ?? '-' }}</dd>
-          </dl>
-        </section>
+          <el-tab-pane label="Memory">
+            <section class="trace-section">
+              <dl>
+                <dt>启用</dt><dd>{{ traceDetail.memory?.enabled ? '是' : '否' }}</dd>
+                <dt>使用摘要</dt><dd>{{ traceDetail.memory?.summaryUsed ? '是' : '否' }}</dd>
+                <dt>摘要版本</dt><dd>{{ traceDetail.memory?.summaryVersion ?? '-' }}</dd>
+                <dt>摘要耗时</dt><dd>{{ traceDetail.memory?.summaryLatencyMs ?? '-' }}ms</dd>
+                <dt>摘要错误</dt><dd>{{ traceDetail.memory?.summaryErrorMessage || '-' }}</dd>
+              </dl>
+            </section>
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </el-drawer>
   </div>
@@ -190,7 +222,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Delete as DeleteIcon, InfoFilled, Plus, Promotion } from '@element-plus/icons-vue'
+import { ChatDotRound, Delete as DeleteIcon, InfoFilled, MoreFilled, Plus, Promotion } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import {
@@ -237,6 +269,10 @@ const traceDetail = ref<ConversationTraceDetail | null>(null)
 
 const selectedAgentName = computed(() => {
   return agents.value.find(a => a.id === selectedAgentId.value)?.name ?? 'Gemini'
+})
+
+const currentSessionTitle = computed(() => {
+  return sessionList.value.find(s => s.id === currentSessionId.value)?.title ?? '新会话'
 })
 
 let cancelStream: (() => void) | null = null
@@ -598,6 +634,26 @@ function renderContent(msg: Message): string {
   return msg.streaming ? html + '<span class="cursor">▋</span>' : html
 }
 
+function assistantStatus(msg: Message): string {
+  if (msg.error) return '失败'
+  if (msg.workflowEvents?.length) return '工作流运行中'
+  if (msg.waiting) return '准备回答'
+  if (msg.streaming) return '正在生成'
+  return '已完成'
+}
+
+function formatSessionTime(value?: string): string {
+  if (!value) return '刚刚'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10)
+  const now = Date.now()
+  const diff = now - date.getTime()
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  return value.slice(0, 10)
+}
+
 function escapeHtml(text: string): string {
   return text
     .replaceAll('&', '&amp;')
@@ -613,63 +669,99 @@ function formatScore(score?: number): string {
 </script>
 
 <style scoped>
-/* ── 整体布局 ── */
 .chat-layout {
   display: flex;
-  height: 100%;
+  height: calc(100vh - 56px);
+  min-height: 560px;
   overflow: hidden;
-  background: var(--bg-surface, #f5f5f5);
+  background: #f4f6fb;
 }
 
-/* ── 左侧边栏 ── */
 .sidebar {
-  width: 220px;
-  min-width: 220px;
+  width: 260px;
+  min-width: 260px;
   background: #fff;
-  border-right: 1px solid #e4e7ed;
+  border-right: 1px solid #e6eaf2;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .sidebar-header {
-  padding: 16px 12px 8px;
-  border-bottom: 1px solid #e4e7ed;
+  padding: 16px 14px 12px;
+  border-bottom: 1px solid #edf0f6;
+}
+
+.sidebar-kicker {
+  margin-bottom: 8px;
+  color: #7d879b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sidebar-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .session-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: 10px 8px;
 }
 
 .session-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  min-height: 58px;
+  padding: 9px 8px 9px 10px;
   cursor: pointer;
   font-size: 13px;
-  color: #606266;
-  border-left: 3px solid transparent;
-  transition: background 0.15s;
+  color: #4b5568;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: background 0.15s, border-color 0.15s;
   overflow: hidden;
 }
 
-.session-item:hover { background: #f5f7fa; }
-.session-item.active { background: #ecf5ff; border-left-color: #409eff; color: #409eff; }
+.session-item:hover {
+  background: #f7f9fc;
+}
+
+.session-item.active {
+  background: #edf3ff;
+  border-color: #d8e4ff;
+  color: #2f5fe8;
+}
+
+.session-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
 
 .session-title {
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+}
+
+.session-meta {
+  color: #99a2b6;
+  font-size: 12px;
 }
 
 .session-delete {
   flex: 0 0 auto;
   opacity: 0;
-  color: #909399;
+  color: #8d96aa;
+  transition: opacity 0.15s, color 0.15s;
 }
 
 .session-item:hover .session-delete,
@@ -682,13 +774,16 @@ function formatScore(score?: number): string {
 }
 
 .session-empty {
-  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 0;
   text-align: center;
   font-size: 13px;
-  color: #c0c4cc;
+  color: #9aa3b6;
 }
 
-/* ── 右侧聊天面板 ── */
 .chat-panel {
   flex: 1;
   display: flex;
@@ -696,92 +791,147 @@ function formatScore(score?: number): string {
   overflow: hidden;
 }
 
-/* ── 消息列表 ── */
+.chat-header {
+  height: 64px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  background: rgba(255, 255, 255, 0.86);
+  border-bottom: 1px solid #e7ebf3;
+}
+
+.chat-title {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.chat-subtitle {
+  margin-top: 3px;
+  color: #7d879b;
+  font-size: 12px;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 20px 138px;
+  padding: 26px 32px 148px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 22px;
 }
 
 .messages-placeholder {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #c0c4cc;
+  gap: 8px;
+  color: #8a94aa;
+}
+
+.placeholder-title {
+  color: #313849;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.placeholder-desc {
   font-size: 14px;
 }
 
 .message-row {
   display: flex;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .message-row.user      { justify-content: flex-end; }
 .message-row.assistant { justify-content: flex-start; }
 
-/* ── 气泡 ── */
+.message-avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: #1f2937;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .bubble {
-  max-width: 68%;
-  padding: 10px 14px;
-  border-radius: 12px;
+  max-width: min(760px, 76%);
   font-size: 14px;
-  line-height: 1.65;
+  line-height: 1.7;
   word-break: break-word;
 }
 
 .bubble.user {
-  background: #409eff;
+  max-width: min(620px, 64%);
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: #2f66e8;
   color: #fff;
-  border-bottom-right-radius: 3px;
+  box-shadow: 0 6px 16px rgba(47, 102, 232, 0.16);
 }
 
 .bubble.assistant {
-  background: #fff;
-  color: #303133;
-  border: 1px solid #e4e7ed;
-  border-bottom-left-radius: 3px;
+  padding: 0;
+  color: #222938;
+}
+
+.assistant-meta {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8b95a8;
+  font-size: 12px;
+}
+
+.trace-button {
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+  color: #6f7a90;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.message-row.assistant:hover .trace-button {
+  opacity: 1;
+}
+
+.trace-button:hover {
+  color: #2f66e8;
 }
 
 .bubble--error {
-  background: #fff0f0;
-  border-color: #fbc4c4;
+  padding: 10px 12px;
+  border: 1px solid #f4c7c7;
+  border-radius: 8px;
+  background: #fff5f5;
 }
 
 .error-text {
-  color: #f56c6c;
+  color: #d94a4a;
   font-size: 13px;
-}
-
-.message-actions {
-  margin-top: 6px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.message-actions :deep(.el-button) {
-  height: 22px;
-  padding: 0;
-  font-size: 12px;
 }
 
 .trace-panel {
   display: flex;
   flex-direction: column;
-  gap: 18px;
 }
 
 .trace-section {
-  border-bottom: 1px solid #ebeef5;
-  padding-bottom: 14px;
-}
-
-.trace-section h3 {
-  margin: 0 0 10px;
-  font-size: 14px;
-  color: #303133;
+  padding-top: 4px;
 }
 
 .trace-section dl {
@@ -793,12 +943,12 @@ function formatScore(score?: number): string {
 }
 
 .trace-section dt {
-  color: #909399;
+  color: #8b95a8;
 }
 
 .trace-section dd {
   margin: 0;
-  color: #303133;
+  color: #252c3a;
   word-break: break-word;
 }
 
@@ -815,27 +965,26 @@ function formatScore(score?: number): string {
 .trace-item-title {
   font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: #252c3a;
 }
 
 .trace-meta,
 .trace-empty {
   font-size: 12px;
-  color: #909399;
+  color: #8b95a8;
 }
 
 .trace-item p {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #606266;
+  color: #566176;
   line-height: 1.5;
   word-break: break-word;
 }
 
-/* Markdown 内容样式重置 */
 .md-body :deep(p)     { margin: 0 0 .5em; }
 .md-body :deep(p:last-child) { margin-bottom: 0; }
-.md-body :deep(pre)   { background: #f5f7fa; border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: .5em 0; }
+.md-body :deep(pre)   { background: #111827; color: #f8fafc; border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: .7em 0; }
 .md-body :deep(code)  { font-family: 'Fira Code', 'Cascadia Code', 'Consolas', 'Menlo', monospace; font-size: 13px; }
 .md-body :deep(pre code) { background: none; padding: 0; }
 .md-body :deep(ul), .md-body :deep(ol) { padding-left: 1.4em; margin: .4em 0; }
@@ -845,7 +994,6 @@ function formatScore(score?: number): string {
 .md-body :deep(th)     { background: #f5f7fa; }
 .md-body :deep(.workflow-events) { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ebeef5; color: #606266; font-size: 12px; line-height: 1.5; }
 
-/* 光标动画 */
 :deep(.cursor) {
   display: inline-block;
   margin-left: 2px;
@@ -856,7 +1004,6 @@ function formatScore(score?: number): string {
   50% { opacity: 0; }
 }
 
-/* 等待跳点 */
 .typing-dots {
   display: inline-flex;
   gap: 4px;
@@ -880,35 +1027,122 @@ function formatScore(score?: number): string {
   40%           { transform: scale(1);  opacity: 1; }
 }
 
-/* ── 底部输入区：保留参考图的圆角会话框样式 ── */
 .input-bar {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  padding: 0 20px 20px;
+  padding: 0 32px 22px;
   display: flex;
   justify-content: center;
-  background: linear-gradient(180deg, rgba(245, 245, 245, 0), rgba(245, 245, 245, .72) 58%);
+  background: linear-gradient(180deg, rgba(244, 246, 251, 0), rgba(244, 246, 251, 0.96) 45%);
 }
 
 .input-card {
   width: min(760px, 100%);
-  padding: 16px 18px;
-  border: 1px solid rgba(60, 64, 67, .08);
-  border-radius: 28px;
-  background: rgba(255, 255, 255, .92);
-  box-shadow: 0 1px 4px rgba(60, 64, 67, .08);
+  padding: 9px 10px 8px;
+  border: 1px solid #dde4f0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 8px 22px rgba(24, 35, 58, 0.07);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.input-card:focus-within {
+  border-color: #c6d2ee;
+  box-shadow: 0 10px 24px rgba(24, 35, 58, 0.08);
+}
+
+.input-agent {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  height: 22px;
+  margin: 0 2px 7px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f2f5fb;
+  color: #6f7a90;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: flex-end;
 }
 
 .input-card :deep(.el-textarea__inner) {
-  box-shadow: none;
-  border: 0;
+  border: 0 !important;
   border-radius: 0;
   padding: 0;
+  background: transparent;
+  box-shadow: none !important;
+  color: #202838;
+  font-size: 14px;
+  line-height: 1.55;
+  outline: none !important;
+}
+
+.composer-input :deep(.el-textarea__inner:focus) {
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.composer-input :deep(.el-textarea__inner:focus-visible) {
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.input-card :deep(.el-textarea__inner::placeholder) {
+  color: #aab3c4;
+}
+
+.send-button {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  margin-bottom: 1px;
+}
+
+.send-button :deep(.el-icon) {
   font-size: 15px;
-  line-height: 1.6;
+}
+
+.composer-hint {
+  margin: 6px 3px 0;
+  color: #b0b8c8;
+  font-size: 11px;
+}
+
+.trace-tabs :deep(.el-tabs__header) {
+  margin-bottom: 16px;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    width: 220px;
+    min-width: 220px;
+  }
+
+  .messages {
+    padding: 20px 18px 144px;
+  }
+
+  .chat-header,
+  .input-bar {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .bubble,
+  .bubble.user {
+    max-width: 86%;
+  }
 }
 </style>

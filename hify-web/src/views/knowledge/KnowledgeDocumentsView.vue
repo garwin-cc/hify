@@ -167,6 +167,7 @@
           <div class="document-actions">
             <el-button
               v-if="row.status === 'DONE'"
+              class="document-action document-action--secondary"
               size="small"
               @click="handleViewChunks(row)"
             >
@@ -174,9 +175,8 @@
             </el-button>
             <el-button
               v-if="row.status === 'DONE'"
+              class="document-action document-action--revectorize"
               size="small"
-              type="primary"
-              plain
               @click="handleRevectorize(row)"
             >
               重向量化
@@ -202,6 +202,7 @@
             </el-button>
             <el-button
               size="small"
+              class="document-action"
               type="danger"
               plain
               @click="handleDelete(row)"
@@ -360,7 +361,7 @@ const columns = computed<HifyColumn[]>(() => [
   ...(!isNarrow.value ? [
     { label: '创建时间', slot: 'createdAt', width: '120' } as HifyColumn,
   ] : []),
-  { label: '操作', slot: 'actions', width: isNarrow.value ? '150' : '280', align: 'right' },
+  { label: '操作', slot: 'actions', width: isNarrow.value ? '170' : '320', align: 'right' },
 ])
 
 function goBack() {
@@ -808,12 +809,46 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 8px 10px;
   min-width: 0;
 }
 
 .document-actions :deep(.el-button) {
   margin-left: 0;
+}
+
+.document-action {
+  min-width: 76px;
+  justify-content: center;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.document-action--secondary {
+  border-color: #d8deea;
+  background: #fff;
+  color: #34405a;
+}
+
+.document-action--secondary:hover,
+.document-action--secondary:focus {
+  border-color: #9fb3e8;
+  background: #f5f8ff;
+  color: #2f5fe8;
+}
+
+.document-action--revectorize {
+  border-color: #2f66e8;
+  background: #2f66e8;
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(47, 102, 232, 0.18);
+}
+
+.document-action--revectorize:hover,
+.document-action--revectorize:focus {
+  border-color: #2456cf;
+  background: #2456cf;
+  color: #fff;
 }
 
 .chunk-list {

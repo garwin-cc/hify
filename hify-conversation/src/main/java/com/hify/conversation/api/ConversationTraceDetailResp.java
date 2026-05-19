@@ -86,6 +86,9 @@ public class ConversationTraceDetailResp {
     public static class ToolCallTrace {
         private String toolName;
         private List<String> argumentKeys;
+        private String argumentSummary;
+        private String resultSummary;
+        private String errorCategory;
         private Long elapsedMs;
         private Boolean success;
         private String errorMessage;

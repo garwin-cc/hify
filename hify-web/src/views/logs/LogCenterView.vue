@@ -35,6 +35,11 @@
           </el-table-column>
           <el-table-column prop="startedAt" label="开始时间" width="180" />
           <el-table-column prop="errorMessage" label="错误" min-width="180" />
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link @click="openTraceDetail(row.traceId)">详情</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <div class="cursor-actions">
           <el-button :disabled="!conversationHasMore" @click="loadConversationLogs(false)">加载更多</el-button>
@@ -83,7 +88,11 @@
           <el-descriptions-item label="问题" :span="2">{{ ragTrace.queryText || '-' }}</el-descriptions-item>
           <el-descriptions-item label="错误" :span="2">{{ ragTrace.errorMessage || '-' }}</el-descriptions-item>
         </el-descriptions>
-        <el-empty v-else description="输入 traceId 查询 RAG 检索详情" :image-size="80" />
+        <section v-if="ragTrace?.detail" class="trace-section">
+          <div class="section-title">召回解释</div>
+          <pre class="json-block">{{ formatJson(ragTrace.detail) }}</pre>
+        </section>
+        <el-empty v-if="!ragTrace" description="输入 traceId 查询 RAG 检索详情" :image-size="80" />
       </el-tab-pane>
 
       <el-tab-pane label="MCP 调用" name="mcp">
@@ -101,6 +110,7 @@
             <el-tag size="small" :type="row.success ? 'success' : 'danger'">{{ row.success ? '成功' : '失败' }}</el-tag>
           </template>
           <template #argumentKeys="{ row }">{{ row.argumentKeys?.join(', ') || '-' }}</template>
+          <template #errorCategory="{ row }">{{ row.errorCategory || '-' }}</template>
           <template #elapsedMs="{ row }">{{ row.elapsedMs ?? '-' }}ms</template>
         </HifyTable>
       </el-tab-pane>
@@ -128,6 +138,73 @@
         </el-table>
       </el-tab-pane>
     </el-tabs>
+
+    <el-drawer v-model="traceDrawerVisible" title="对话上下文详情" size="720px" append-to-body>
+      <div v-if="traceDetail" class="trace-detail">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="traceId" :span="2">
+            <span class="mono-text">{{ traceDetail.traceId }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag size="small" :type="statusType(traceDetail.status)">{{ traceDetail.status || '-' }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="Agent">{{ traceDetail.agent?.name || traceDetail.agent?.id || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="模型">{{ traceDetail.model?.modelId || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="Provider">{{ traceDetail.model?.providerType || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="首 token">{{ traceDetail.llm?.firstTokenLatencyMs ?? '-' }}ms</el-descriptions-item>
+          <el-descriptions-item label="总耗时">{{ traceDetail.llm?.totalLatencyMs ?? '-' }}ms</el-descriptions-item>
+          <el-descriptions-item label="Tokens" :span="2">
+            输入 {{ traceDetail.llm?.inputTokens ?? 0 }} / 输出 {{ traceDetail.llm?.outputTokens ?? 0 }}
+          </el-descriptions-item>
+          <el-descriptions-item label="错误" :span="2">{{ traceDetail.errorMessage || traceDetail.llm?.errorMessage || '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <section class="trace-section">
+          <div class="section-title">上下文层</div>
+          <div class="context-tags">
+            <el-tag :type="traceDetail.rag?.triggered ? 'success' : 'info'">RAG {{ traceDetail.rag?.triggered ? '已触发' : '未触发' }}</el-tag>
+            <el-tag :type="traceDetail.mcp?.triggered ? 'warning' : 'info'">MCP {{ traceDetail.mcp?.triggered ? '已触发' : '未触发' }}</el-tag>
+            <el-tag :type="traceDetail.workflow?.triggered ? 'success' : 'info'">Workflow {{ traceDetail.workflow?.triggered ? '已触发' : '未触发' }}</el-tag>
+            <el-tag :type="traceDetail.memory?.summaryUsed ? 'success' : 'info'">摘要记忆 {{ traceDetail.memory?.summaryUsed ? '已使用' : '未使用' }}</el-tag>
+          </div>
+        </section>
+
+        <section class="trace-section">
+          <div class="section-title">RAG 命中</div>
+          <el-table :data="traceDetail.rag?.hits || []" size="small" empty-text="暂无 RAG 命中">
+            <el-table-column prop="knowledgeBaseName" label="知识库" min-width="130" />
+            <el-table-column prop="documentName" label="文档" min-width="140" />
+            <el-table-column prop="score" label="分数" width="90">
+              <template #default="{ row }">{{ row.score ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="contentPreview" label="预览" min-width="220" />
+          </el-table>
+        </section>
+
+        <section class="trace-section">
+          <div class="section-title">MCP 工具调用</div>
+          <el-table :data="traceDetail.mcp?.toolCalls || []" size="small" empty-text="暂无 MCP 调用">
+            <el-table-column prop="toolName" label="工具" min-width="140" />
+            <el-table-column prop="success" label="结果" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.success ? 'success' : 'danger'">{{ row.success ? '成功' : '失败' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="argumentSummary" label="参数摘要" min-width="160" />
+            <el-table-column prop="errorCategory" label="错误分类" width="110" />
+            <el-table-column prop="elapsedMs" label="耗时" width="90">
+              <template #default="{ row }">{{ row.elapsedMs ?? '-' }}ms</template>
+            </el-table-column>
+          </el-table>
+        </section>
+
+        <section v-if="traceDetail.llm?.requestSummary" class="trace-section">
+          <div class="section-title">LLM 请求摘要</div>
+          <pre class="json-block">{{ formatJson(traceDetail.llm.requestSummary) }}</pre>
+        </section>
+      </div>
+      <el-empty v-else description="暂无详情" :image-size="80" />
+    </el-drawer>
   </div>
 </template>
 
@@ -137,11 +214,13 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import HifyTable, { type HifyColumn, type PageData } from '@/components/HifyTable.vue'
 import {
   getConversationLogs,
+  getConversationTraceDetail,
   getLlmUsageStats,
   getMcpToolAudits,
   getRagRetrievalTrace,
   getWorkflowRunLogs,
   type ConversationLog,
+  type ConversationTraceDetail,
   type LlmUsageStats,
   type RagRetrievalTrace,
 } from '@/api/logs'
@@ -155,6 +234,8 @@ const conversationHasMore = ref(false)
 const conversationCursorId = ref<number | undefined>()
 const conversationCursorTime = ref<string | undefined>()
 const conversationQuery = reactive({ traceId: '', agentId: '', status: '' })
+const traceDrawerVisible = ref(false)
+const traceDetail = ref<ConversationTraceDetail | null>(null)
 
 const workflowTableRef = ref<{ refresh: () => void }>()
 const mcpTableRef = ref<{ refresh: () => void }>()
@@ -181,6 +262,7 @@ const mcpColumns: HifyColumn[] = [
   { prop: 'toolName', label: '工具', minWidth: 160 },
   { prop: 'success', label: '结果', slot: 'success', width: 100 },
   { prop: 'argumentKeys', label: '参数', slot: 'argumentKeys', minWidth: 180 },
+  { prop: 'errorCategory', label: '错误分类', slot: 'errorCategory', width: 120 },
   { prop: 'elapsedMs', label: '耗时', slot: 'elapsedMs', width: 100 },
   { prop: 'createdAt', label: '创建时间', width: 180 },
 ]
@@ -213,6 +295,13 @@ async function loadConversationLogs(reset: boolean) {
   } finally {
     loading.value = false
   }
+}
+
+async function openTraceDetail(traceId?: string) {
+  if (!traceId) return
+  traceDrawerVisible.value = true
+  traceDetail.value = null
+  traceDetail.value = await getConversationTraceDetail(traceId)
 }
 
 function fetchWorkflowRuns(page: number, size: number): Promise<PageData<WorkflowRun>> {
@@ -255,6 +344,11 @@ function statusType(status?: string) {
   if (status === 'ERROR' || status === 'FAILED' || status === 'TIMEOUT') return 'danger'
   return 'info'
 }
+
+function formatJson(value: unknown) {
+  if (typeof value === 'string') return value
+  return JSON.stringify(value, null, 2)
+}
 </script>
 
 <style scoped>
@@ -283,6 +377,44 @@ function statusType(status?: string) {
 .mono-text {
   font-family: var(--font-mono);
   word-break: break-all;
+}
+
+.trace-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.trace-section {
+  margin-top: 16px;
+}
+
+.section-title {
+  margin-bottom: 10px;
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+
+.context-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.json-block {
+  margin: 0;
+  padding: 12px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media (max-width: 800px) {

@@ -109,6 +109,40 @@
         <el-table-column prop="lastSeenAt" label="最近出现" width="180" />
       </el-table>
     </section>
+
+    <div class="analytics-grid">
+      <section class="hify-card">
+        <div class="hify-card__header">
+          <span class="hify-card__title">慢 LLM 调用</span>
+        </div>
+        <el-table :data="overview.slowLlmCalls" size="small" v-loading="loading" empty-text="暂无慢调用数据">
+          <el-table-column prop="traceId" label="traceId" min-width="180" />
+          <el-table-column prop="modelId" label="模型" min-width="140" />
+          <el-table-column prop="latencyMs" label="耗时" width="100">
+            <template #default="{ row }">{{ row.latencyMs }}ms</template>
+          </el-table-column>
+          <el-table-column prop="totalTokens" label="Tokens" width="100">
+            <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
+          </el-table-column>
+          <el-table-column prop="errorCode" label="错误码" min-width="120" />
+        </el-table>
+      </section>
+
+      <section class="hify-card">
+        <div class="hify-card__header">
+          <span class="hify-card__title">风险对话</span>
+        </div>
+        <el-table :data="overview.riskConversations" size="small" v-loading="loading" empty-text="暂无风险对话">
+          <el-table-column prop="traceId" label="traceId" min-width="180" />
+          <el-table-column prop="agentName" label="Agent" min-width="130" />
+          <el-table-column prop="status" label="状态" width="100" />
+          <el-table-column prop="ragHit" label="RAG" width="100">
+            <template #default="{ row }">{{ row.ragTriggered ? (row.ragHit ? '命中' : '未命中') : '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="errorMessage" label="错误摘要" min-width="160" />
+        </el-table>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -147,6 +181,8 @@ const emptyOverview = (): OperationsAnalyticsOverview => ({
   workflows: [],
   mcpTools: [],
   errors: [],
+  slowLlmCalls: [],
+  riskConversations: [],
 })
 
 const overview = reactive<OperationsAnalyticsOverview>(emptyOverview())

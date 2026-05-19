@@ -39,6 +39,8 @@ public class OperationsAnalyticsServiceImpl implements OperationsAnalyticsServic
         overview.setWorkflows(loadWorkflows(params));
         overview.setMcpTools(loadMcpTools(params));
         overview.setErrors(loadErrors(params));
+        overview.setSlowLlmCalls(loadSlowLlmCalls(params));
+        overview.setRiskConversations(loadRiskConversations(params));
         return overview;
     }
 
@@ -277,6 +279,67 @@ public class OperationsAnalyticsServiceImpl implements OperationsAnalyticsServic
         });
     }
 
+    private List<OperationsAnalyticsOverview.SlowLlmCall> loadSlowLlmCalls(MapSqlParameterSource params) {
+        return jdbcTemplate.query("""
+                SELECT trace_id, agent_id, model_id, latency_ms,
+                       COALESCE(input_tokens + output_tokens, 0) total_tokens,
+                       success, error_code, created_at
+                  FROM t_llm_call_stat
+                 WHERE deleted = 0
+                   AND created_at >= :from AND created_at < :to
+                   AND (:projectId IS NULL OR project_id = :projectId)
+                 ORDER BY latency_ms DESC, created_at DESC
+                 LIMIT %d
+                """.formatted(LIMIT), params, (rs, rowNum) -> {
+            OperationsAnalyticsOverview.SlowLlmCall item = new OperationsAnalyticsOverview.SlowLlmCall();
+            item.setTraceId(rs.getString("trace_id"));
+            item.setAgentId(nullableLong(rs.getLong("agent_id"), rs.wasNull()));
+            item.setModelId(rs.getString("model_id"));
+            item.setLatencyMs(rs.getLong("latency_ms"));
+            item.setTotalTokens(rs.getLong("total_tokens"));
+            item.setSuccess(rs.getInt("success") == 1);
+            item.setErrorCode(rs.getString("error_code"));
+            Timestamp createdAt = rs.getTimestamp("created_at");
+            item.setCreatedAt(createdAt == null ? null : createdAt.toLocalDateTime().toString());
+            return item;
+        });
+    }
+
+    private List<OperationsAnalyticsOverview.RiskConversation> loadRiskConversations(MapSqlParameterSource params) {
+        return jdbcTemplate.query("""
+                SELECT c.trace_id, c.agent_id, c.agent_name, c.status,
+                       c.rag_triggered, c.mcp_triggered, c.error_code, c.error_message, c.started_at,
+                       COUNT(r.id) rag_hit_count
+                  FROM t_conversation_trace c
+                  LEFT JOIN t_conversation_rag_trace r ON r.trace_id = c.trace_id AND r.deleted = 0
+                 WHERE c.deleted = 0
+                   AND c.started_at >= :from AND c.started_at < :to
+                   AND (:projectId IS NULL OR c.project_id = :projectId)
+                   AND (c.status IN ('ERROR','TIMEOUT','BACKEND_ERROR','FAILED')
+                        OR (c.rag_triggered = 1 AND r.id IS NULL)
+                        OR c.mcp_triggered = 1)
+                 GROUP BY c.trace_id, c.agent_id, c.agent_name, c.status, c.rag_triggered,
+                          c.mcp_triggered, c.error_code, c.error_message, c.started_at
+                 ORDER BY CASE WHEN c.status IN ('ERROR','TIMEOUT','BACKEND_ERROR','FAILED') THEN 0 ELSE 1 END,
+                          c.started_at DESC
+                 LIMIT %d
+                """.formatted(LIMIT), params, (rs, rowNum) -> {
+            OperationsAnalyticsOverview.RiskConversation item = new OperationsAnalyticsOverview.RiskConversation();
+            item.setTraceId(rs.getString("trace_id"));
+            item.setAgentId(nullableLong(rs.getLong("agent_id"), rs.wasNull()));
+            item.setAgentName(rs.getString("agent_name"));
+            item.setStatus(rs.getString("status"));
+            item.setRagTriggered(rs.getInt("rag_triggered") == 1);
+            item.setRagHit(rs.getLong("rag_hit_count") > 0);
+            item.setMcpTriggered(rs.getInt("mcp_triggered") == 1);
+            item.setErrorCode(rs.getString("error_code"));
+            item.setErrorMessage(rs.getString("error_message"));
+            Timestamp startedAt = rs.getTimestamp("started_at");
+            item.setStartedAt(startedAt == null ? null : startedAt.toLocalDateTime().toString());
+            return item;
+        });
+    }
+
     private MapSqlParameterSource params(Long projectId, LocalDateTime from, LocalDateTime to) {
         return new MapSqlParameterSource()
                 .addValue("projectId", projectId)
@@ -316,5 +379,9 @@ public class OperationsAnalyticsServiceImpl implements OperationsAnalyticsServic
 
     private double round2(double value) {
         return Math.round(value * 100.0) / 100.0;
+    }
+
+    private Long nullableLong(long value, boolean wasNull) {
+        return wasNull ? null : value;
     }
 }

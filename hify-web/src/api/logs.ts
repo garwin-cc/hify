@@ -48,10 +48,91 @@ export interface McpToolCallAudit {
   toolName: string
   status: string
   argumentKeys?: string[]
+  argumentSummary?: string
+  resultSummary?: string
+  errorCategory?: string
   elapsedMs?: number
   success?: boolean
   errorSummary?: string
   createdAt: string
+}
+
+export interface ConversationTraceDetail {
+  traceId: string
+  status?: string
+  errorCode?: string
+  errorMessage?: string
+  startedAt?: string
+  firstTokenAt?: string
+  finishedAt?: string
+  agent?: {
+    id?: number
+    name?: string
+    versionId?: number
+    versionNo?: number
+    systemPrompt?: string
+    maxToolRounds?: number
+  }
+  model?: {
+    modelConfigId?: number
+    providerId?: number
+    providerName?: string
+    providerType?: string
+    modelId?: string
+  }
+  workflow?: {
+    triggered?: boolean
+    workflowId?: number
+    workflowRunId?: number
+  }
+  rag?: {
+    triggered?: boolean
+    hits?: Array<{
+      knowledgeBaseId?: number
+      knowledgeBaseName?: string
+      documentId?: string
+      documentName?: string
+      chunkId?: number
+      chunkIndex?: number
+      score?: number
+      contentPreview?: string
+    }>
+  }
+  memory?: {
+    enabled?: boolean
+    summaryUsed?: boolean
+    summaryVersion?: number
+    summaryLatencyMs?: number
+    summaryErrorMessage?: string
+  }
+  mcp?: {
+    triggered?: boolean
+    toolCalls?: Array<{
+      toolName?: string
+      argumentKeys?: string[]
+      argumentSummary?: string
+      resultSummary?: string
+      errorCategory?: string
+      elapsedMs?: number
+      success?: boolean
+      errorMessage?: string
+    }>
+  }
+  llm?: {
+    providerId?: number
+    providerName?: string
+    providerType?: string
+    modelConfigId?: number
+    modelId?: string
+    inputTokens?: number
+    outputTokens?: number
+    firstTokenLatencyMs?: number
+    totalLatencyMs?: number
+    requestSummary?: unknown
+    status?: string
+    errorCode?: string
+    errorMessage?: string
+  }
 }
 
 export interface LlmUsageStats {
@@ -83,11 +164,15 @@ export interface RagRetrievalTrace {
   latencyMs?: number
   status?: string
   errorMessage?: string
+  detail?: Record<string, unknown>
   createdAt?: string
 }
 
 export const getConversationLogs = (params: Record<string, unknown>): Promise<CursorPageData<ConversationLog>> =>
   get('/v1/conversations/logs', params)
+
+export const getConversationTraceDetail = (traceId: string): Promise<ConversationTraceDetail> =>
+  get(`/v1/conversations/traces/${traceId}`)
 
 export const getWorkflowRunLogs = (
   page: number,

@@ -263,13 +263,18 @@ public class ConversationServiceImpl implements ConversationService {
     public CursorPageResp<ConversationLogResp> listConversationLogs(ConversationLogQuery query) {
         ConversationLogQuery q = query == null ? new ConversationLogQuery() : query;
         int limit = normalizeLimit(q.getLimit(), DEFAULT_SESSION_LIMIT);
+        Long currentUserId = currentReadUserId();
         List<ConversationTracePo> rows = conversationTraceMapper.selectList(
                 Wrappers.lambdaQuery(ConversationTracePo.class)
-                        .eq(q.getUserId() != null, ConversationTracePo::getUserId, q.getUserId())
+                        .eq(currentUserId != null, ConversationTracePo::getUserId, currentUserId)
+                        .eq(currentUserId == null && q.getUserId() != null,
+                                ConversationTracePo::getUserId, q.getUserId())
                         .eq(q.getAgentId() != null, ConversationTracePo::getAgentId, q.getAgentId())
                         .eq(q.getProjectId() != null, ConversationTracePo::getProjectId, q.getProjectId())
-                        .eq(q.getAppId() != null, ConversationTracePo::getAppId, q.getAppId())
-                        .eq(q.getApiKeyId() != null, ConversationTracePo::getApiKeyId, q.getApiKeyId())
+                        .eq(currentUserId == null && q.getAppId() != null,
+                                ConversationTracePo::getAppId, q.getAppId())
+                        .eq(currentUserId == null && q.getApiKeyId() != null,
+                                ConversationTracePo::getApiKeyId, q.getApiKeyId())
                         .eq(q.getModelConfigId() != null, ConversationTracePo::getModelConfigId, q.getModelConfigId())
                         .eq(StringUtils.hasText(q.getTraceId()), ConversationTracePo::getTraceId, q.getTraceId())
                         .eq(StringUtils.hasText(q.getStatus()), ConversationTracePo::getStatus, q.getStatus())
@@ -309,6 +314,21 @@ public class ConversationServiceImpl implements ConversationService {
         if (trace == null) {
             throw new BizException(ErrorCode.NOT_FOUND, "对话运行记录不存在: " + message.getTraceId());
         }
+        return buildTraceDetail(trace);
+    }
+
+    @Override
+    public ConversationTraceDetailResp getTraceDetail(String traceId) {
+        if (!StringUtils.hasText(traceId)) {
+            throw new BizException(ErrorCode.NOT_FOUND, "对话运行记录不存在: " + traceId);
+        }
+        ConversationTracePo trace = conversationTraceMapper.selectOne(
+                Wrappers.lambdaQuery(ConversationTracePo.class)
+                        .eq(ConversationTracePo::getTraceId, traceId));
+        if (trace == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "对话运行记录不存在: " + traceId);
+        }
+        ensureTraceAccessible(trace);
         return buildTraceDetail(trace);
     }
 
@@ -1673,6 +1693,21 @@ public class ConversationServiceImpl implements ConversationService {
         }
     }
 
+    private void ensureTraceAccessible(ConversationTracePo trace) {
+        if (trace.getSessionId() != null) {
+            ChatSessionPo session = sessionMapper.selectById(trace.getSessionId());
+            if (session == null) {
+                throw new BizException(ErrorCode.NOT_FOUND, "会话不存在: " + trace.getSessionId());
+            }
+            ensureSessionAccessible(session, null);
+            return;
+        }
+        CurrentUser user = currentUser();
+        if (user != null && user.getRole() != UserRole.ADMIN && !identityEquals(trace.getUserId(), user.getId())) {
+            throw new BizException(ErrorCode.FORBIDDEN, "会话不属于当前调用身份");
+        }
+    }
+
     private boolean identityEquals(Long left, Long right) {
         long normalizedLeft = left == null ? 0L : left;
         long normalizedRight = right == null ? 0L : right;
@@ -1930,6 +1965,9 @@ public class ConversationServiceImpl implements ConversationService {
             ConversationTraceDetailResp.ToolCallTrace call = new ConversationTraceDetailResp.ToolCallTrace();
             call.setToolName(audit.getToolName());
             call.setArgumentKeys(audit.getArgumentKeys());
+            call.setArgumentSummary(audit.getArgumentSummary());
+            call.setResultSummary(audit.getResultSummary());
+            call.setErrorCategory(audit.getErrorCategory());
             call.setElapsedMs(audit.getElapsedMs());
             call.setSuccess(audit.getSuccess());
             call.setErrorMessage(audit.getErrorSummary());

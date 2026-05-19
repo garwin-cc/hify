@@ -13,6 +13,8 @@ public class OperationsAnalyticsOverview {
     private List<WorkflowUsage> workflows = new ArrayList<>();
     private List<McpToolUsage> mcpTools = new ArrayList<>();
     private List<ErrorUsage> errors = new ArrayList<>();
+    private List<SlowLlmCall> slowLlmCalls = new ArrayList<>();
+    private List<RiskConversation> riskConversations = new ArrayList<>();
 
     @Data
     public static class Summary {
@@ -87,5 +89,31 @@ public class OperationsAnalyticsOverview {
         private String errorMessage;
         private long count;
         private String lastSeenAt;
+    }
+
+    @Data
+    public static class SlowLlmCall {
+        private String traceId;
+        private Long agentId;
+        private String modelId;
+        private long latencyMs;
+        private long totalTokens;
+        private Boolean success;
+        private String errorCode;
+        private String createdAt;
+    }
+
+    @Data
+    public static class RiskConversation {
+        private String traceId;
+        private Long agentId;
+        private String agentName;
+        private String status;
+        private Boolean ragTriggered;
+        private Boolean ragHit;
+        private Boolean mcpTriggered;
+        private String errorCode;
+        private String errorMessage;
+        private String startedAt;
     }
 }

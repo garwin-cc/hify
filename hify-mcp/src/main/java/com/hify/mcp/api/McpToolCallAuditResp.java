@@ -19,6 +19,9 @@ public class McpToolCallAuditResp {
     private String toolName;
     private String status;
     private List<String> argumentKeys;
+    private String argumentSummary;
+    private String resultSummary;
+    private String errorCategory;
     private Long elapsedMs;
     private Boolean success;
     private String errorSummary;

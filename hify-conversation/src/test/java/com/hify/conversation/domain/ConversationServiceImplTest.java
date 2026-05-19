@@ -22,6 +22,7 @@ import com.hify.conversation.api.ConversationMessageCursorQuery;
 import com.hify.conversation.api.ConversationMessageResp;
 import com.hify.conversation.api.ConversationSessionCursorQuery;
 import com.hify.conversation.api.ConversationSessionResp;
+import com.hify.conversation.api.ConversationTraceDetailResp;
 import com.hify.conversation.api.CursorPageResp;
 import com.hify.conversation.api.MessageFeedbackReq;
 import com.hify.conversation.api.MessageFeedbackResp;
@@ -387,6 +388,60 @@ class ConversationServiceImplTest {
 
         assertThat(detail.getRag().getHits()).singleElement()
                 .satisfies(hit -> assertThat(hit.getKnowledgeBaseName()).isEqualTo("客服知识库"));
+    }
+
+    @Test
+    void should_return_trace_detail_by_trace_id_when_session_accessible() {
+        CurrentUser user = new CurrentUser();
+        user.setId(5L);
+        user.setRole(UserRole.VIEWER);
+        when(authService.getCurrentUser()).thenReturn(user);
+
+        ConversationTracePo trace = new ConversationTracePo();
+        trace.setTraceId("trace-1");
+        trace.setSessionId(11L);
+        trace.setUserId(5L);
+        trace.setAgentId(3L);
+        trace.setAgentName("客服助手");
+        trace.setRagTriggered(1);
+        trace.setMcpTriggered(0);
+        trace.setStatus("DONE");
+        when(conversationTraceMapper.selectOne(any())).thenReturn(trace);
+
+        ChatSessionPo session = session(11L, LocalDateTime.of(2026, 5, 14, 10, 1));
+        session.setUserId(5L);
+        when(sessionMapper.selectById(11L)).thenReturn(session);
+        when(conversationRagTraceMapper.selectList(any())).thenReturn(List.of());
+        when(conversationLlmTraceMapper.selectOne(any())).thenReturn(null);
+        when(mcpToolCallAuditService.listByTraceId("trace-1")).thenReturn(List.of());
+
+        ConversationTraceDetailResp detail = conversationService.getTraceDetail("trace-1");
+
+        assertThat(detail.getTraceId()).isEqualTo("trace-1");
+        assertThat(detail.getAgent().getName()).isEqualTo("客服助手");
+        assertThat(detail.getRag().getTriggered()).isTrue();
+    }
+
+    @Test
+    void should_reject_trace_detail_by_trace_id_when_session_belongs_to_different_user() {
+        CurrentUser user = new CurrentUser();
+        user.setId(5L);
+        user.setRole(UserRole.VIEWER);
+        when(authService.getCurrentUser()).thenReturn(user);
+
+        ConversationTracePo trace = new ConversationTracePo();
+        trace.setTraceId("trace-1");
+        trace.setSessionId(11L);
+        trace.setUserId(9L);
+        when(conversationTraceMapper.selectOne(any())).thenReturn(trace);
+
+        ChatSessionPo session = session(11L, LocalDateTime.of(2026, 5, 14, 10, 1));
+        session.setUserId(9L);
+        when(sessionMapper.selectById(11L)).thenReturn(session);
+
+        assertThatThrownBy(() -> conversationService.getTraceDetail("trace-1"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("会话不属于当前调用身份");
     }
 
     @Test

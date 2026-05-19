@@ -70,6 +70,11 @@ public class ConversationController {
         return Result.ok(conversationService.getMessageTrace(messageId));
     }
 
+    @GetMapping("/traces/{traceId}")
+    public Result<ConversationTraceDetailResp> getTraceDetail(@PathVariable String traceId) {
+        return Result.ok(conversationService.getTraceDetail(traceId));
+    }
+
     @GetMapping("/{sessionId}/summary")
     public Result<ConversationSummaryResp> getSessionSummary(@PathVariable Long sessionId) {
         return Result.ok(conversationService.getSessionSummary(sessionId));

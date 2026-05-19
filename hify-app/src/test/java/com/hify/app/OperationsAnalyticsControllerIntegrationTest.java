@@ -70,5 +70,9 @@ class OperationsAnalyticsControllerIntegrationTest extends HifyMockIntegrationTe
         assertThat(data.path("workflows").get(0).path("workflowName").asText()).isEqualTo("Support Workflow");
         assertThat(data.path("mcpTools").get(0).path("toolName").asText()).isEqualTo("search_customer");
         assertThat(data.path("errors").get(0).path("errorCode").asText()).isEqualTo("LLM_TIMEOUT");
+        assertThat(data.path("slowLlmCalls").get(0).path("traceId").asText()).isEqualTo("ops-t2");
+        assertThat(data.path("slowLlmCalls").get(0).path("latencyMs").asInt()).isEqualTo(3000);
+        assertThat(data.path("riskConversations").get(0).path("traceId").asText()).isEqualTo("ops-t2");
+        assertThat(data.path("riskConversations").get(0).path("ragHit").asBoolean()).isFalse();
     }
 }

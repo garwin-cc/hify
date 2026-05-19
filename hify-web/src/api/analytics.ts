@@ -69,6 +69,30 @@ export interface ErrorUsage {
   lastSeenAt?: string
 }
 
+export interface SlowLlmCall {
+  traceId: string
+  agentId?: number
+  modelId?: string
+  latencyMs: number
+  totalTokens: number
+  success?: boolean
+  errorCode?: string
+  createdAt?: string
+}
+
+export interface RiskConversation {
+  traceId: string
+  agentId?: number
+  agentName?: string
+  status?: string
+  ragTriggered?: boolean
+  ragHit?: boolean
+  mcpTriggered?: boolean
+  errorCode?: string
+  errorMessage?: string
+  startedAt?: string
+}
+
 export interface OperationsAnalyticsOverview {
   summary: OperationsSummary
   agents: AgentUsage[]
@@ -76,6 +100,8 @@ export interface OperationsAnalyticsOverview {
   workflows: WorkflowUsage[]
   mcpTools: McpToolUsage[]
   errors: ErrorUsage[]
+  slowLlmCalls: SlowLlmCall[]
+  riskConversations: RiskConversation[]
 }
 
 export interface OperationsAnalyticsQuery {

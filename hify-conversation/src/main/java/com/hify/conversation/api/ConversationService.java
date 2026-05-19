@@ -19,6 +19,8 @@ public interface ConversationService {
 
     ConversationTraceDetailResp getMessageTrace(Long messageId);
 
+    ConversationTraceDetailResp getTraceDetail(String traceId);
+
     ConversationSummaryResp getSessionSummary(Long sessionId);
 
     void clearSessionSummary(Long sessionId);

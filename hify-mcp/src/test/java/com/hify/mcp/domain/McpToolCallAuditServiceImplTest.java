@@ -9,9 +9,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class McpToolCallAuditServiceImplTest {
@@ -73,5 +76,29 @@ class McpToolCallAuditServiceImplTest {
         assertThat(inserted.getArgumentKeys()).containsExactly("task");
         assertThat(inserted.getSuccess()).isZero();
         assertThat(inserted.getErrorSummary()).contains("connection refused");
+    }
+
+    @Test
+    void listByTraceIdReturnsGovernanceSummariesAndErrorCategory() {
+        McpToolCallAuditServiceImpl service = new McpToolCallAuditServiceImpl(mapper);
+        McpToolCallAuditPo po = new McpToolCallAuditPo();
+        po.setTraceId("trace-1");
+        po.setToolName("search");
+        po.setStatus("FAILED");
+        po.setArgumentKeys(List.of("query"));
+        po.setArgumentSummary("argumentKeys=[query]");
+        po.setResultSummary("partial result");
+        po.setErrorSummary("request timeout after 3000ms");
+        po.setSuccess(0);
+        when(mapper.selectList(any())).thenReturn(List.of(po));
+
+        var records = service.listByTraceId("trace-1");
+
+        assertThat(records).singleElement()
+                .satisfies(resp -> {
+                    assertThat(resp.getArgumentSummary()).isEqualTo("argumentKeys=[query]");
+                    assertThat(resp.getResultSummary()).isEqualTo("partial result");
+                    assertThat(resp.getErrorCategory()).isEqualTo("TIMEOUT");
+                });
     }
 }

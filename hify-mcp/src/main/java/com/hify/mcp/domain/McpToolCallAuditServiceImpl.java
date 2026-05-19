@@ -105,6 +105,9 @@ public class McpToolCallAuditServiceImpl implements McpToolCallAuditService {
         resp.setToolName(po.getToolName());
         resp.setStatus(po.getStatus());
         resp.setArgumentKeys(po.getArgumentKeys());
+        resp.setArgumentSummary(po.getArgumentSummary());
+        resp.setResultSummary(po.getResultSummary());
+        resp.setErrorCategory(errorCategory(po.getErrorSummary()));
         resp.setElapsedMs(po.getElapsedMs());
         resp.setSuccess(po.getSuccess() != null && po.getSuccess() == 1);
         resp.setErrorSummary(po.getErrorSummary());
@@ -129,5 +132,24 @@ public class McpToolCallAuditServiceImpl implements McpToolCallAuditService {
         }
         String compact = value.replaceAll("\\s+", " ").trim();
         return compact.length() <= SUMMARY_LIMIT ? compact : compact.substring(0, SUMMARY_LIMIT);
+    }
+
+    private static String errorCategory(String errorSummary) {
+        if (errorSummary == null || errorSummary.isBlank()) {
+            return null;
+        }
+        String lower = errorSummary.toLowerCase();
+        if (lower.contains("timeout") || lower.contains("timed out") || errorSummary.contains("超时")) {
+            return "TIMEOUT";
+        }
+        if (lower.contains("param") || lower.contains("argument")
+                || lower.contains("validation") || errorSummary.contains("参数")) {
+            return "PARAM_ERROR";
+        }
+        if (lower.contains("connection") || lower.contains("connect")
+                || lower.contains("refused") || errorSummary.contains("连接")) {
+            return "CONNECTION_ERROR";
+        }
+        return "MCP_ERROR";
     }
 }

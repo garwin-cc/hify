@@ -17,6 +17,10 @@
     <dependencies>
         <dependency>
             <groupId>com.hify</groupId>
+            <artifactId>hify-auth</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.hify</groupId>
             <artifactId>hify-common</artifactId>
         </dependency>
 

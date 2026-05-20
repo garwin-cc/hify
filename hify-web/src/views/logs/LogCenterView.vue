@@ -6,8 +6,9 @@
       </template>
     </PageHeader>
 
-    <el-tabs v-model="activeTab" class="hify-card log-tabs" @tab-change="refreshActive">
-      <el-tab-pane label="对话日志" name="conversation">
+    <div class="page-stack">
+      <el-tabs v-model="activeTab" class="hify-card log-tabs" @tab-change="refreshActive">
+        <el-tab-pane label="对话日志" name="conversation">
         <div class="filter-bar">
           <el-input v-model="conversationQuery.traceId" placeholder="traceId" clearable />
           <el-input v-model="conversationQuery.agentId" placeholder="agentId" clearable />
@@ -137,7 +138,8 @@
           </el-table-column>
         </el-table>
       </el-tab-pane>
-    </el-tabs>
+      </el-tabs>
+    </div>
 
     <el-drawer v-model="traceDrawerVisible" title="对话上下文详情" size="720px" append-to-body>
       <div v-if="traceDetail" class="trace-detail">

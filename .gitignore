@@ -29,3 +29,4 @@ hify-app/upload/
 hify-web/node_modules/
 hify-web/dist/
 hify-web/.vite/
+hify-web/test-results/

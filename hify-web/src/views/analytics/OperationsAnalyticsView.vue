@@ -19,129 +19,131 @@
       </template>
     </PageHeader>
 
-    <div class="metric-grid">
-      <section v-for="metric in metrics" :key="metric.key" class="hify-card metric-card">
-        <span class="metric-card__label">{{ metric.label }}</span>
-        <strong class="metric-card__value">{{ metric.value }}</strong>
-        <span class="metric-card__hint">{{ metric.hint }}</span>
-      </section>
-    </div>
-
-    <div class="analytics-grid">
-      <section class="hify-card">
-        <div class="hify-card__header">
-          <span class="hify-card__title">Agent 使用排行</span>
-        </div>
-        <el-table :data="overview.agents" size="small" v-loading="loading" empty-text="暂无 Agent 使用数据">
-          <el-table-column prop="agentName" label="Agent" min-width="160" />
-          <el-table-column prop="conversationCount" label="对话" width="90" />
-          <el-table-column prop="totalTokens" label="Tokens" width="110">
-            <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
-          </el-table-column>
-          <el-table-column prop="failureRate" label="失败率" width="120">
-            <template #default="{ row }">
-              <el-progress :percentage="percent(row.failureRate)" :stroke-width="8" :show-text="false" />
-              <span class="rate-text">{{ formatRate(row.failureRate) }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </section>
-
-      <section class="hify-card">
-        <div class="hify-card__header">
-          <span class="hify-card__title">模型与 Token</span>
-        </div>
-        <el-table :data="overview.models" size="small" v-loading="loading" empty-text="暂无模型调用数据">
-          <el-table-column prop="modelId" label="模型" min-width="150" />
-          <el-table-column prop="providerType" label="Provider" width="110" />
-          <el-table-column prop="callCount" label="调用" width="80" />
-          <el-table-column prop="totalTokens" label="Tokens" width="110">
-            <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
-          </el-table-column>
-          <el-table-column prop="avgLatencyMs" label="平均耗时" width="110">
-            <template #default="{ row }">{{ Math.round(row.avgLatencyMs) }}ms</template>
-          </el-table-column>
-        </el-table>
-      </section>
-    </div>
-
-    <div class="analytics-grid">
-      <section class="hify-card">
-        <div class="hify-card__header">
-          <span class="hify-card__title">Workflow 成功率</span>
-        </div>
-        <el-table :data="overview.workflows" size="small" v-loading="loading" empty-text="暂无 Workflow 运行数据">
-          <el-table-column prop="workflowName" label="工作流" min-width="160" />
-          <el-table-column prop="runCount" label="运行" width="80" />
-          <el-table-column prop="successCount" label="成功" width="80" />
-          <el-table-column prop="failureCount" label="失败" width="80" />
-          <el-table-column prop="successRate" label="成功率" width="120">
-            <template #default="{ row }">{{ formatRate(row.successRate) }}</template>
-          </el-table-column>
-        </el-table>
-      </section>
-
-      <section class="hify-card">
-        <div class="hify-card__header">
-          <span class="hify-card__title">MCP 失败率</span>
-        </div>
-        <el-table :data="overview.mcpTools" size="small" v-loading="loading" empty-text="暂无 MCP 调用数据">
-          <el-table-column prop="toolName" label="工具" min-width="160" />
-          <el-table-column prop="callCount" label="调用" width="80" />
-          <el-table-column prop="failureCount" label="失败" width="80" />
-          <el-table-column prop="failureRate" label="失败率" width="120">
-            <template #default="{ row }">{{ formatRate(row.failureRate) }}</template>
-          </el-table-column>
-          <el-table-column prop="lastErrorSummary" label="最近错误" min-width="150" />
-        </el-table>
-      </section>
-    </div>
-
-    <section class="hify-card">
-      <div class="hify-card__header">
-        <span class="hify-card__title">错误原因排行</span>
+    <div class="page-stack">
+      <div class="page-grid page-grid--metrics">
+        <section v-for="metric in metrics" :key="metric.key" class="hify-card metric-card">
+          <span class="metric-card__label">{{ metric.label }}</span>
+          <strong class="metric-card__value">{{ metric.value }}</strong>
+          <span class="metric-card__hint">{{ metric.hint }}</span>
+        </section>
       </div>
-      <el-table :data="overview.errors" size="small" v-loading="loading" empty-text="暂无失败记录">
-        <el-table-column prop="sourceType" label="来源" width="140" />
-        <el-table-column prop="errorCode" label="错误码" width="180" />
-        <el-table-column prop="errorMessage" label="错误摘要" min-width="220" />
-        <el-table-column prop="count" label="次数" width="90" />
-        <el-table-column prop="lastSeenAt" label="最近出现" width="180" />
-      </el-table>
-    </section>
 
-    <div class="analytics-grid">
+      <div class="page-grid page-grid--2">
+        <section class="hify-card">
+          <div class="hify-card__header">
+            <span class="hify-card__title">Agent 使用排行</span>
+          </div>
+          <el-table :data="overview.agents" size="small" v-loading="loading" empty-text="暂无 Agent 使用数据">
+            <el-table-column prop="agentName" label="Agent" min-width="160" />
+            <el-table-column prop="conversationCount" label="对话" width="90" />
+            <el-table-column prop="totalTokens" label="Tokens" width="110">
+              <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
+            </el-table-column>
+            <el-table-column prop="failureRate" label="失败率" width="120">
+              <template #default="{ row }">
+                <el-progress :percentage="percent(row.failureRate)" :stroke-width="8" :show-text="false" />
+                <span class="rate-text">{{ formatRate(row.failureRate) }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+
+        <section class="hify-card">
+          <div class="hify-card__header">
+            <span class="hify-card__title">模型与 Token</span>
+          </div>
+          <el-table :data="overview.models" size="small" v-loading="loading" empty-text="暂无模型调用数据">
+            <el-table-column prop="modelId" label="模型" min-width="150" />
+            <el-table-column prop="providerType" label="Provider" width="110" />
+            <el-table-column prop="callCount" label="调用" width="80" />
+            <el-table-column prop="totalTokens" label="Tokens" width="110">
+              <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
+            </el-table-column>
+            <el-table-column prop="avgLatencyMs" label="平均耗时" width="110">
+              <template #default="{ row }">{{ Math.round(row.avgLatencyMs) }}ms</template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </div>
+
+      <div class="page-grid page-grid--2">
+        <section class="hify-card">
+          <div class="hify-card__header">
+            <span class="hify-card__title">Workflow 成功率</span>
+          </div>
+          <el-table :data="overview.workflows" size="small" v-loading="loading" empty-text="暂无 Workflow 运行数据">
+            <el-table-column prop="workflowName" label="工作流" min-width="160" />
+            <el-table-column prop="runCount" label="运行" width="80" />
+            <el-table-column prop="successCount" label="成功" width="80" />
+            <el-table-column prop="failureCount" label="失败" width="80" />
+            <el-table-column prop="successRate" label="成功率" width="120">
+              <template #default="{ row }">{{ formatRate(row.successRate) }}</template>
+            </el-table-column>
+          </el-table>
+        </section>
+
+        <section class="hify-card">
+          <div class="hify-card__header">
+            <span class="hify-card__title">MCP 失败率</span>
+          </div>
+          <el-table :data="overview.mcpTools" size="small" v-loading="loading" empty-text="暂无 MCP 调用数据">
+            <el-table-column prop="toolName" label="工具" min-width="160" />
+            <el-table-column prop="callCount" label="调用" width="80" />
+            <el-table-column prop="failureCount" label="失败" width="80" />
+            <el-table-column prop="failureRate" label="失败率" width="120">
+              <template #default="{ row }">{{ formatRate(row.failureRate) }}</template>
+            </el-table-column>
+            <el-table-column prop="lastErrorSummary" label="最近错误" min-width="150" />
+          </el-table>
+        </section>
+      </div>
+
       <section class="hify-card">
         <div class="hify-card__header">
-          <span class="hify-card__title">慢 LLM 调用</span>
+          <span class="hify-card__title">错误原因排行</span>
         </div>
-        <el-table :data="overview.slowLlmCalls" size="small" v-loading="loading" empty-text="暂无慢调用数据">
-          <el-table-column prop="traceId" label="traceId" min-width="180" />
-          <el-table-column prop="modelId" label="模型" min-width="140" />
-          <el-table-column prop="latencyMs" label="耗时" width="100">
-            <template #default="{ row }">{{ row.latencyMs }}ms</template>
-          </el-table-column>
-          <el-table-column prop="totalTokens" label="Tokens" width="100">
-            <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
-          </el-table-column>
-          <el-table-column prop="errorCode" label="错误码" min-width="120" />
+        <el-table :data="overview.errors" size="small" v-loading="loading" empty-text="暂无失败记录">
+          <el-table-column prop="sourceType" label="来源" width="140" />
+          <el-table-column prop="errorCode" label="错误码" width="180" />
+          <el-table-column prop="errorMessage" label="错误摘要" min-width="220" />
+          <el-table-column prop="count" label="次数" width="90" />
+          <el-table-column prop="lastSeenAt" label="最近出现" width="180" />
         </el-table>
       </section>
 
-      <section class="hify-card">
-        <div class="hify-card__header">
-          <span class="hify-card__title">风险对话</span>
-        </div>
-        <el-table :data="overview.riskConversations" size="small" v-loading="loading" empty-text="暂无风险对话">
-          <el-table-column prop="traceId" label="traceId" min-width="180" />
-          <el-table-column prop="agentName" label="Agent" min-width="130" />
-          <el-table-column prop="status" label="状态" width="100" />
-          <el-table-column prop="ragHit" label="RAG" width="100">
-            <template #default="{ row }">{{ row.ragTriggered ? (row.ragHit ? '命中' : '未命中') : '-' }}</template>
-          </el-table-column>
-          <el-table-column prop="errorMessage" label="错误摘要" min-width="160" />
-        </el-table>
-      </section>
+      <div class="page-grid page-grid--2">
+        <section class="hify-card">
+          <div class="hify-card__header">
+            <span class="hify-card__title">慢 LLM 调用</span>
+          </div>
+          <el-table :data="overview.slowLlmCalls" size="small" v-loading="loading" empty-text="暂无慢调用数据">
+            <el-table-column prop="traceId" label="traceId" min-width="180" />
+            <el-table-column prop="modelId" label="模型" min-width="140" />
+            <el-table-column prop="latencyMs" label="耗时" width="100">
+              <template #default="{ row }">{{ row.latencyMs }}ms</template>
+            </el-table-column>
+            <el-table-column prop="totalTokens" label="Tokens" width="100">
+              <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
+            </el-table-column>
+            <el-table-column prop="errorCode" label="错误码" min-width="120" />
+          </el-table>
+        </section>
+
+        <section class="hify-card">
+          <div class="hify-card__header">
+            <span class="hify-card__title">风险对话</span>
+          </div>
+          <el-table :data="overview.riskConversations" size="small" v-loading="loading" empty-text="暂无风险对话">
+            <el-table-column prop="traceId" label="traceId" min-width="180" />
+            <el-table-column prop="agentName" label="Agent" min-width="130" />
+            <el-table-column prop="status" label="状态" width="100" />
+            <el-table-column prop="ragHit" label="RAG" width="100">
+              <template #default="{ row }">{{ row.ragTriggered ? (row.ragHit ? '命中' : '未命中') : '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="errorMessage" label="错误摘要" min-width="160" />
+          </el-table>
+        </section>
+      </div>
     </div>
   </div>
 </template>
@@ -282,14 +284,6 @@ function percent(value: number) {
   flex: 0 0 360px;
 }
 
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-  align-items: stretch;
-}
-
 .metric-card {
   display: flex;
   flex-direction: column;
@@ -315,21 +309,6 @@ function percent(value: number) {
   font-size: var(--text-sm);
 }
 
-.analytics-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
-  align-items: stretch;
-}
-
-.analytics-grid > .hify-card,
-.page-content > .hify-card {
-  height: 100%;
-  min-width: 0;
-  overflow: hidden;
-}
-
 .rate-text {
   display: inline-block;
   margin-top: 4px;
@@ -338,13 +317,6 @@ function percent(value: number) {
 }
 
 @media (max-width: 1180px) {
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .analytics-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 720px) {
@@ -352,11 +324,6 @@ function percent(value: number) {
     align-items: stretch;
     flex-direction: column;
     width: 100%;
-  }
-
-  .metric-grid,
-  .analytics-grid {
-    grid-template-columns: 1fr;
   }
 
   .range-picker,

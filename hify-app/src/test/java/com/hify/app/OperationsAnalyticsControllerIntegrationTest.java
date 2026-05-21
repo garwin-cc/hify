@@ -74,5 +74,14 @@ class OperationsAnalyticsControllerIntegrationTest extends HifyMockIntegrationTe
         assertThat(data.path("slowLlmCalls").get(0).path("latencyMs").asInt()).isEqualTo(3000);
         assertThat(data.path("riskConversations").get(0).path("traceId").asText()).isEqualTo("ops-t2");
         assertThat(data.path("riskConversations").get(0).path("ragHit").asBoolean()).isFalse();
+
+        JsonNode diagnostics = data.path("diagnostics");
+        assertThat(diagnostics).hasSizeGreaterThanOrEqualTo(4);
+        assertThat(diagnostics.findValuesAsText("type"))
+                .contains("CONVERSATION_FAILURE", "RAG_MISS", "WORKFLOW_FAILURE", "MCP_FAILURE");
+        JsonNode topDiagnostic = diagnostics.get(0);
+        assertThat(topDiagnostic.path("severity").asText()).isEqualTo("HIGH");
+        assertThat(topDiagnostic.path("impactCount").asInt()).isGreaterThan(0);
+        assertThat(topDiagnostic.path("recommendation").asText()).isNotBlank();
     }
 }

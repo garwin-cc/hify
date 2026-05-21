@@ -15,6 +15,7 @@ public class OperationsAnalyticsOverview {
     private List<ErrorUsage> errors = new ArrayList<>();
     private List<SlowLlmCall> slowLlmCalls = new ArrayList<>();
     private List<RiskConversation> riskConversations = new ArrayList<>();
+    private List<DiagnosticIssue> diagnostics = new ArrayList<>();
 
     @Data
     public static class Summary {
@@ -115,5 +116,19 @@ public class OperationsAnalyticsOverview {
         private String errorCode;
         private String errorMessage;
         private String startedAt;
+    }
+
+    @Data
+    public static class DiagnosticIssue {
+        private String type;
+        private String severity;
+        private String title;
+        private String description;
+        private long impactCount;
+        private double rate;
+        private String primarySignal;
+        private String recommendation;
+        private String traceId;
+        private String lastSeenAt;
     }
 }

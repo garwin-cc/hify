@@ -28,6 +28,32 @@
         </section>
       </div>
 
+      <section class="hify-card">
+        <div class="hify-card__header">
+          <span class="hify-card__title">问题诊断</span>
+        </div>
+        <div v-if="overview.diagnostics.length" class="diagnostic-list">
+          <article v-for="issue in overview.diagnostics" :key="issue.type" class="diagnostic-item">
+            <div class="diagnostic-item__main">
+              <div class="diagnostic-item__title-row">
+                <el-tag :type="severityTagType(issue.severity)" effect="light" size="small">
+                  {{ severityLabel(issue.severity) }}
+                </el-tag>
+                <strong>{{ issue.title }}</strong>
+              </div>
+              <p>{{ issue.description }}</p>
+              <span>{{ issue.recommendation }}</span>
+            </div>
+            <div class="diagnostic-item__meta">
+              <strong>{{ formatNumber(issue.impactCount) }}</strong>
+              <span>{{ issue.primarySignal || formatRate(issue.rate) }}</span>
+              <small v-if="issue.traceId">traceId: {{ issue.traceId }}</small>
+            </div>
+          </article>
+        </div>
+        <el-empty v-else description="暂无诊断问题" :image-size="80" />
+      </section>
+
       <div class="page-grid page-grid--2">
         <section class="hify-card">
           <div class="hify-card__header">
@@ -154,6 +180,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import {
   getOperationsAnalyticsOverview,
   type OperationsAnalyticsOverview,
+  type DiagnosticIssue,
 } from '@/api/analytics'
 import { getProjects, type Project } from '@/api/project'
 
@@ -185,6 +212,7 @@ const emptyOverview = (): OperationsAnalyticsOverview => ({
   errors: [],
   slowLlmCalls: [],
   riskConversations: [],
+  diagnostics: [],
 })
 
 const overview = reactive<OperationsAnalyticsOverview>(emptyOverview())
@@ -263,6 +291,25 @@ function formatRate(value: number) {
 function percent(value: number) {
   return Math.round((value || 0) * 100)
 }
+
+function severityLabel(severity: DiagnosticIssue['severity']) {
+  const labels: Record<DiagnosticIssue['severity'], string> = {
+    HIGH: '高',
+    MEDIUM: '中',
+    LOW: '低',
+  }
+  return labels[severity] || '低'
+}
+
+function severityTagType(severity: DiagnosticIssue['severity']) {
+  if (severity === 'HIGH') {
+    return 'danger'
+  }
+  if (severity === 'MEDIUM') {
+    return 'warning'
+  }
+  return 'info'
+}
 </script>
 
 <style scoped>
@@ -316,6 +363,80 @@ function percent(value: number) {
   font-size: var(--text-xs);
 }
 
+.diagnostic-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.diagnostic-item {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.diagnostic-item__main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diagnostic-item__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.diagnostic-item__title-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-item__main p,
+.diagnostic-item__main span {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.diagnostic-item__meta {
+  display: flex;
+  width: 180px;
+  flex: 0 0 180px;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+.diagnostic-item__meta strong {
+  color: var(--text-primary);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.diagnostic-item__meta span,
+.diagnostic-item__meta small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 1180px) {
 }
 
@@ -330,6 +451,21 @@ function percent(value: number) {
   .project-select {
     width: 100%;
     flex-basis: auto;
+  }
+
+  .diagnostic-list {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostic-item {
+    flex-direction: column;
+  }
+
+  .diagnostic-item__meta {
+    width: 100%;
+    flex-basis: auto;
+    align-items: flex-start;
+    text-align: left;
   }
 }
 </style>

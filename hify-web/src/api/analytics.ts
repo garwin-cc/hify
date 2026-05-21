@@ -93,6 +93,19 @@ export interface RiskConversation {
   startedAt?: string
 }
 
+export interface DiagnosticIssue {
+  type: string
+  severity: 'HIGH' | 'MEDIUM' | 'LOW'
+  title: string
+  description: string
+  impactCount: number
+  rate: number
+  primarySignal?: string
+  recommendation: string
+  traceId?: string
+  lastSeenAt?: string
+}
+
 export interface OperationsAnalyticsOverview {
   summary: OperationsSummary
   agents: AgentUsage[]
@@ -102,6 +115,7 @@ export interface OperationsAnalyticsOverview {
   errors: ErrorUsage[]
   slowLlmCalls: SlowLlmCall[]
   riskConversations: RiskConversation[]
+  diagnostics: DiagnosticIssue[]
 }
 
 export interface OperationsAnalyticsQuery {

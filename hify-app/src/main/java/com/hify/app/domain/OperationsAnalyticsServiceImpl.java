@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +43,102 @@ public class OperationsAnalyticsServiceImpl implements OperationsAnalyticsServic
         overview.setErrors(loadErrors(params));
         overview.setSlowLlmCalls(loadSlowLlmCalls(params));
         overview.setRiskConversations(loadRiskConversations(params));
+        overview.setDiagnostics(buildDiagnostics(overview));
         return overview;
+    }
+
+    private List<OperationsAnalyticsOverview.DiagnosticIssue> buildDiagnostics(OperationsAnalyticsOverview overview) {
+        List<OperationsAnalyticsOverview.DiagnosticIssue> issues = new ArrayList<>();
+        OperationsAnalyticsOverview.Summary summary = overview.getSummary();
+
+        if (summary.getFailedConversationCount() > 0) {
+            OperationsAnalyticsOverview.ErrorUsage topError = first(overview.getErrors());
+            issues.add(issue(
+                    "CONVERSATION_FAILURE",
+                    severity(summary.getConversationFailureRate()),
+                    "对话失败率偏高",
+                    "时间范围内存在失败对话，用户会直接看到系统错误或中断响应。",
+                    summary.getFailedConversationCount(),
+                    summary.getConversationFailureRate(),
+                    topError == null ? "失败对话 " + summary.getFailedConversationCount() + " 次" : topError.getErrorCode(),
+                    "优先打开日志中心按 traceId 查看失败对话，确认是 LLM、RAG、MCP 还是后端异常导致。",
+                    firstTrace(overview.getRiskConversations()),
+                    topError == null ? null : topError.getLastSeenAt()
+            ));
+        }
+
+        long ragMissCount = Math.max(0, summary.getRagTriggeredCount() - summary.getRagHitCount());
+        if (ragMissCount > 0) {
+            double missRate = rate(ragMissCount, summary.getRagTriggeredCount());
+            issues.add(issue(
+                    "RAG_MISS",
+                    severity(missRate),
+                    "RAG 触发但未命中",
+                    "Agent 已触发知识库检索，但部分对话没有召回可用片段，回答可能退化为纯模型能力。",
+                    ragMissCount,
+                    missRate,
+                    ragMissCount + "/" + summary.getRagTriggeredCount() + " 次未命中",
+                    "检查知识库绑定、检索阈值、embedding 模型维度和文档分块状态，必要时重建索引或调低阈值。",
+                    firstRagMissTrace(overview.getRiskConversations()),
+                    null
+            ));
+        }
+
+        long workflowFailureCount = Math.max(0, summary.getWorkflowRunCount() - summary.getWorkflowSuccessCount());
+        if (workflowFailureCount > 0) {
+            double failureRate = rate(workflowFailureCount, summary.getWorkflowRunCount());
+            OperationsAnalyticsOverview.WorkflowUsage workflow = first(overview.getWorkflows());
+            issues.add(issue(
+                    "WORKFLOW_FAILURE",
+                    severity(failureRate),
+                    "Workflow 终态失败",
+                    "工作流存在失败、超时或取消运行，绑定该工作流的 Agent 会出现不可预期输出。",
+                    workflowFailureCount,
+                    failureRate,
+                    workflow == null ? "失败运行 " + workflowFailureCount + " 次" : workflow.getWorkflowName(),
+                    "进入工作流运行详情查看失败节点、节点输入输出和外部调用耗时，先处理失败次数最高的工作流。",
+                    null,
+                    null
+            ));
+        }
+
+        if (summary.getMcpFailureCount() > 0) {
+            OperationsAnalyticsOverview.McpToolUsage tool = first(overview.getMcpTools());
+            issues.add(issue(
+                    "MCP_FAILURE",
+                    severity(summary.getMcpFailureRate()),
+                    "MCP 工具调用失败",
+                    "工具调用失败会让 Agent 的动作能力降级，模型可能只能返回加工后的错误信息。",
+                    summary.getMcpFailureCount(),
+                    summary.getMcpFailureRate(),
+                    tool == null ? "失败调用 " + summary.getMcpFailureCount() + " 次" : tool.getToolName(),
+                    "检查 MCP 服务可达性、工具参数 schema、超时设置和最近错误摘要，必要时先禁用高风险工具。",
+                    null,
+                    null
+            ));
+        }
+
+        OperationsAnalyticsOverview.SlowLlmCall slowLlmCall = first(overview.getSlowLlmCalls());
+        if (slowLlmCall != null && slowLlmCall.getLatencyMs() >= 2000) {
+            issues.add(issue(
+                    "SLOW_LLM",
+                    slowLlmCall.getLatencyMs() >= 10000 ? "HIGH" : "MEDIUM",
+                    "LLM 调用耗时偏高",
+                    "慢模型调用会拖慢 SSE 首包和整体响应，排队时还会放大并发压力。",
+                    1,
+                    0.0,
+                    slowLlmCall.getModelId() + " · " + slowLlmCall.getLatencyMs() + "ms",
+                    "检查模型供应商延迟、输入 token、上下文轮数和 RAG 注入长度，必要时切换模型或降低上下文规模。",
+                    slowLlmCall.getTraceId(),
+                    slowLlmCall.getCreatedAt()
+            ));
+        }
+
+        issues.sort(Comparator
+                .comparingInt((OperationsAnalyticsOverview.DiagnosticIssue issue) -> severityRank(issue.getSeverity()))
+                .thenComparing(OperationsAnalyticsOverview.DiagnosticIssue::getImpactCount, Comparator.reverseOrder())
+                .thenComparing(OperationsAnalyticsOverview.DiagnosticIssue::getType));
+        return issues;
     }
 
     private void fillSummary(OperationsAnalyticsOverview.Summary summary, MapSqlParameterSource params) {
@@ -383,5 +480,68 @@ public class OperationsAnalyticsServiceImpl implements OperationsAnalyticsServic
 
     private Long nullableLong(long value, boolean wasNull) {
         return wasNull ? null : value;
+    }
+
+    private OperationsAnalyticsOverview.DiagnosticIssue issue(
+            String type,
+            String severity,
+            String title,
+            String description,
+            long impactCount,
+            double rate,
+            String primarySignal,
+            String recommendation,
+            String traceId,
+            String lastSeenAt) {
+        OperationsAnalyticsOverview.DiagnosticIssue issue = new OperationsAnalyticsOverview.DiagnosticIssue();
+        issue.setType(type);
+        issue.setSeverity(severity);
+        issue.setTitle(title);
+        issue.setDescription(description);
+        issue.setImpactCount(impactCount);
+        issue.setRate(rate);
+        issue.setPrimarySignal(primarySignal);
+        issue.setRecommendation(recommendation);
+        issue.setTraceId(traceId);
+        issue.setLastSeenAt(lastSeenAt);
+        return issue;
+    }
+
+    private String severity(double rate) {
+        if (rate >= 0.2) {
+            return "HIGH";
+        }
+        if (rate >= 0.1) {
+            return "MEDIUM";
+        }
+        return "LOW";
+    }
+
+    private int severityRank(String severity) {
+        return switch (severity) {
+            case "HIGH" -> 0;
+            case "MEDIUM" -> 1;
+            default -> 2;
+        };
+    }
+
+    private <T> T first(List<T> items) {
+        return items == null || items.isEmpty() ? null : items.get(0);
+    }
+
+    private String firstTrace(List<OperationsAnalyticsOverview.RiskConversation> conversations) {
+        OperationsAnalyticsOverview.RiskConversation conversation = first(conversations);
+        return conversation == null ? null : conversation.getTraceId();
+    }
+
+    private String firstRagMissTrace(List<OperationsAnalyticsOverview.RiskConversation> conversations) {
+        if (conversations == null) {
+            return null;
+        }
+        return conversations.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getRagTriggered()) && !Boolean.TRUE.equals(item.getRagHit()))
+                .map(OperationsAnalyticsOverview.RiskConversation::getTraceId)
+                .findFirst()
+                .orElse(null);
     }
 }

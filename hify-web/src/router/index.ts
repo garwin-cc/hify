@@ -101,6 +101,12 @@ const router = createRouter({
       meta: { roles: ['ADMIN'] },
     },
     {
+      path: '/quality',
+      name: 'QualityEvaluation',
+      component: () => import('@/views/quality/QualityEvaluationView.vue'),
+      meta: { roles: ['ADMIN'] },
+    },
+    {
       path: '/audit',
       name: 'Audit',
       component: () => import('@/views/audit/AuditView.vue'),

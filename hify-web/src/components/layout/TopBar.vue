@@ -63,6 +63,7 @@ const crumbMap: Record<string, string> = {
   '/users':        'nav.users',
   '/projects':     'nav.projects',
   '/analytics':    'nav.analytics',
+  '/quality':      'nav.quality',
   '/logs':         'nav.logs',
   '/audit':        'nav.audit',
   '/settings':     'nav.settings',

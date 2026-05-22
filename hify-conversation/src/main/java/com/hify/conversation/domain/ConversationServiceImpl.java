@@ -396,11 +396,16 @@ public class ConversationServiceImpl implements ConversationService {
             po.setAgentId(session.getAgentId());
             po.setUserId(userId);
         }
-        po.setRating(normalizeFeedbackRating(req == null ? null : req.getRating()));
+        String rating = normalizeFeedbackRating(req == null ? null : req.getRating());
+        po.setRating(rating);
+        po.setTraceId(blankToEmpty(message.getTraceId()));
+        po.setProjectId(resolveFeedbackProjectId(message.getTraceId()));
         po.setIssueType(blankToEmpty(req == null ? null : req.getIssueType()));
         po.setComment(abbreviate(blankToEmpty(req == null ? null : req.getComment()), 1000));
         po.setCorrectedAnswer(req == null ? null : req.getCorrectedAnswer());
         po.setStatus("ACTIVE");
+        po.setReviewStatus("DISLIKE".equals(rating) ? "OPEN" : "RESOLVED");
+        po.setResolutionNote("");
         if (po.getId() == null) {
             messageFeedbackMapper.insert(po);
         } else {
@@ -2122,15 +2127,29 @@ public class ConversationServiceImpl implements ConversationService {
         resp.setMessageId(po.getMessageId());
         resp.setSessionId(po.getSessionId());
         resp.setAgentId(po.getAgentId());
+        resp.setProjectId(po.getProjectId());
+        resp.setTraceId(po.getTraceId());
         resp.setUserId(po.getUserId());
         resp.setRating(po.getRating());
         resp.setIssueType(po.getIssueType());
         resp.setComment(po.getComment());
         resp.setCorrectedAnswer(po.getCorrectedAnswer());
         resp.setStatus(po.getStatus());
+        resp.setReviewStatus(po.getReviewStatus());
+        resp.setResolutionNote(po.getResolutionNote());
         resp.setCreatedAt(po.getCreatedAt());
         resp.setUpdatedAt(po.getUpdatedAt());
         return resp;
+    }
+
+    private Long resolveFeedbackProjectId(String traceId) {
+        if (!StringUtils.hasText(traceId)) {
+            return null;
+        }
+        ConversationTracePo trace = conversationTraceMapper.selectOne(Wrappers.lambdaQuery(ConversationTracePo.class)
+                .eq(ConversationTracePo::getTraceId, traceId)
+                .last("LIMIT 1"));
+        return trace == null ? null : trace.getProjectId();
     }
 
     private static int normalizeLimit(Integer limit, int defaultLimit) {

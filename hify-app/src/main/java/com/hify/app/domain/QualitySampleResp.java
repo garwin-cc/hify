@@ -1,18 +1,15 @@
-package com.hify.conversation.infra;
+package com.hify.app.domain;
 
-import com.baomidou.mybatisplus.annotation.TableName;
-import com.hify.common.entity.BaseEntity;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
 
 @Data
-@TableName("t_message_feedback")
-@EqualsAndHashCode(callSuper = false)
-public class MessageFeedbackPo extends BaseEntity {
+public class QualitySampleResp {
 
+    private Long id;
     private Long messageId;
     private Long sessionId;
     private Long agentId;
+    private String agentName;
     private Long projectId;
     private String traceId;
     private Long userId;
@@ -20,7 +17,14 @@ public class MessageFeedbackPo extends BaseEntity {
     private String issueType;
     private String comment;
     private String correctedAnswer;
-    private String status;
     private String reviewStatus;
     private String resolutionNote;
+    private String userQuestion;
+    private String assistantAnswer;
+    private Boolean ragTriggered;
+    private Boolean ragHit;
+    private Boolean mcpTriggered;
+    private String modelId;
+    private String createdAt;
+    private String updatedAt;
 }

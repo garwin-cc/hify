@@ -106,6 +106,30 @@
               v-html="renderContent(msg)"
             />
             <span v-else>{{ msg.content }}</span>
+            <div v-if="msg.role === 'assistant' && msg.id && !msg.streaming && !msg.waiting" class="feedback-actions">
+              <el-button text size="small" :disabled="msg.feedbackSubmitting" @click="submitFeedback(msg, 'LIKE')">
+                {{ t('conversation.feedback.like') }}
+              </el-button>
+              <el-dropdown trigger="click" :disabled="msg.feedbackSubmitting">
+                <el-button text size="small">
+                  {{ t('conversation.feedback.dislike') }}
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      v-for="reason in feedbackReasons"
+                      :key="reason.value"
+                      @click="submitFeedback(msg, 'DISLIKE', reason.value)"
+                    >
+                      {{ reason.label }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <span v-if="msg.feedbackRating" class="feedback-state">
+                {{ msg.feedbackRating === 'LIKE' ? t('conversation.feedback.liked') : t('conversation.feedback.disliked') }}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -233,6 +257,7 @@ import {
   getConversationMessages,
   getConversationTrace,
   getConversationSessions,
+  submitMessageFeedback,
   streamMessage,
   loadSessions,
   saveSessions,
@@ -253,6 +278,8 @@ interface Message {
   waiting?: boolean
   error?: boolean
   workflowEvents?: string[]
+  feedbackRating?: 'LIKE' | 'DISLIKE'
+  feedbackSubmitting?: boolean
 }
 
 const agents         = ref<AgentOption[]>([])
@@ -268,6 +295,15 @@ const messagesEl = ref<HTMLElement | null>(null)
 const traceDrawerVisible = ref(false)
 const traceLoading = ref(false)
 const traceDetail = ref<ConversationTraceDetail | null>(null)
+const feedbackReasons = computed(() => [
+  { value: 'WRONG_ANSWER', label: t('conversation.feedback.reasons.wrongAnswer') },
+  { value: 'FACT_ERROR', label: t('conversation.feedback.reasons.factError') },
+  { value: 'RAG_MISS', label: t('conversation.feedback.reasons.ragMiss') },
+  { value: 'INCOMPLETE', label: t('conversation.feedback.reasons.incomplete') },
+  { value: 'TOOL_FAILED', label: t('conversation.feedback.reasons.toolFailed') },
+  { value: 'BAD_FORMAT', label: t('conversation.feedback.reasons.badFormat') },
+  { value: 'OTHER', label: t('conversation.feedback.reasons.other') },
+])
 
 const selectedAgentName = computed(() => {
   return agents.value.find(a => a.id === selectedAgentId.value)?.name ?? 'Gemini'
@@ -502,6 +538,18 @@ async function openTrace(msg: Message) {
     traceDetail.value = await getConversationTrace(msg.id)
   } finally {
     traceLoading.value = false
+  }
+}
+
+async function submitFeedback(msg: Message, rating: 'LIKE' | 'DISLIKE', issueType = '') {
+  if (!msg.id || msg.feedbackSubmitting) return
+  msg.feedbackSubmitting = true
+  try {
+    await submitMessageFeedback(msg.id, { rating, issueType })
+    msg.feedbackRating = rating
+    ElMessage.success(t('conversation.feedback.submitted'))
+  } finally {
+    msg.feedbackSubmitting = false
   }
 }
 
@@ -917,6 +965,31 @@ function formatScore(score?: number): string {
 
 .trace-button:hover {
   color: #2f66e8;
+}
+
+.feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  margin-top: 8px;
+  color: #8b95a8;
+}
+
+.feedback-actions :deep(.el-button) {
+  height: 24px;
+  padding: 0 6px;
+  color: #7b8498;
+  font-size: 12px;
+}
+
+.feedback-actions :deep(.el-button:hover) {
+  color: #2f66e8;
+}
+
+.feedback-state {
+  color: #9aa3b6;
+  font-size: 12px;
 }
 
 .bubble--error {

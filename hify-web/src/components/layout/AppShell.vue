@@ -95,6 +95,7 @@ import {
   DataLine,
   Grid,
   Lock,
+  Medal,
   Setting,
   Share,
   Tickets,
@@ -149,6 +150,7 @@ const navGroups = computed(() => {
       items: [
         auth.isAdmin ? { path: '/projects', label: t('nav.projects'), icon: User } : null,
         auth.isAdmin ? { path: '/analytics', label: t('nav.analytics'), icon: TrendCharts } : null,
+        auth.isAdmin ? { path: '/quality', label: t('nav.quality'), icon: Medal } : null,
         auth.isAdmin ? { path: '/logs', label: t('nav.logs'), icon: Tickets } : null,
         auth.isAdmin ? { path: '/audit', label: t('nav.audit'), icon: Lock } : null,
         auth.isAdmin ? { path: '/settings', label: t('nav.settings'), icon: Setting } : null,

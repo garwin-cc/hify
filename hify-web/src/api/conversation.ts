@@ -1,4 +1,4 @@
-import { del, get } from '@/utils/request'
+import { del, get, post } from '@/utils/request'
 import type { PageData } from '@/components/HifyTable.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -31,6 +31,29 @@ export interface ConversationMessage {
   errorMessage?: string
   partial?: number
   createdAt: string
+}
+
+export interface MessageFeedbackReq {
+  userId?: number
+  rating: 'LIKE' | 'DISLIKE'
+  issueType?: string
+  comment?: string
+  correctedAnswer?: string
+}
+
+export interface MessageFeedbackResp {
+  id: number
+  messageId: number
+  sessionId: number
+  agentId: number
+  projectId?: number
+  traceId?: string
+  userId: number
+  rating: string
+  issueType?: string
+  comment?: string
+  status?: string
+  reviewStatus?: string
 }
 
 export interface ConversationTraceDetail {
@@ -164,6 +187,12 @@ export const getConversationMessages = (sessionId: number): Promise<Conversation
 
 export const getConversationTrace = (messageId: number): Promise<ConversationTraceDetail> =>
   get(`/v1/conversations/messages/${messageId}/trace`)
+
+export const submitMessageFeedback = (
+  messageId: number,
+  data: MessageFeedbackReq,
+): Promise<MessageFeedbackResp> =>
+  post(`/v1/conversations/messages/${messageId}/feedback`, data)
 
 export const getConversationSummary = (sessionId: number): Promise<ConversationSummary | null> =>
   get(`/v1/conversations/${sessionId}/summary`)
